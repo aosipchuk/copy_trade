@@ -5,6 +5,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci
 
 COPY . .
+ARG VITE_WALLETCONNECT_PROJECT_ID
 RUN npm run build
 
 # Production image: nginx serving static files
