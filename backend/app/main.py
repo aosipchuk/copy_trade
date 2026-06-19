@@ -1,13 +1,16 @@
-from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging
+from app.core.rate_limit import limiter
 
 configure_logging(
     log_level="DEBUG" if settings.debug else "INFO",
@@ -19,7 +22,9 @@ logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    logger.info("app_startup", environment=settings.environment, hl_network=settings.hl_network)
+    logger.info(
+        "app_startup", environment=settings.environment, hl_network=settings.hl_network
+    )
     yield
     logger.info("app_shutdown")
 
@@ -32,10 +37,14 @@ app = FastAPI(
     docs_url="/docs" if settings.is_development else None,
     redoc_url="/redoc" if settings.is_development else None,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+_DEV_ORIGINS = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.is_development else [],
+    allow_origins=_DEV_ORIGINS if settings.is_development else [],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

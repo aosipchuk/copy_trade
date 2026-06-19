@@ -4,9 +4,11 @@ import json
 import time
 import urllib.parse
 
-import pytest
-
-from app.core.security import create_access_token, decode_access_token, validate_telegram_init_data
+from app.core.security import (
+    create_access_token,
+    decode_access_token,
+    validate_telegram_init_data,
+)
 
 
 def make_init_data(telegram_id: int = 123456789, bot_token: str = "test_token") -> str:
@@ -15,14 +17,18 @@ def make_init_data(telegram_id: int = 123456789, bot_token: str = "test_token") 
     params = {"user": user, "auth_date": auth_date}
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
     secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
-    hash_val = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    hash_val = hmac.new(
+        secret_key, data_check_string.encode(), hashlib.sha256
+    ).hexdigest()
     params["hash"] = hash_val
     return urllib.parse.urlencode(params)
 
 
 class TestTelegramInitDataValidation:
     def test_valid_init_data(self, monkeypatch) -> None:
-        monkeypatch.setattr("app.core.security.settings.telegram_bot_token", "test_token")
+        monkeypatch.setattr(
+            "app.core.security.settings.telegram_bot_token", "test_token"
+        )
         init_data = make_init_data(bot_token="test_token")
         result = validate_telegram_init_data(init_data)
         assert result is not None
@@ -30,7 +36,9 @@ class TestTelegramInitDataValidation:
         assert "auth_date" in result
 
     def test_invalid_hash(self, monkeypatch) -> None:
-        monkeypatch.setattr("app.core.security.settings.telegram_bot_token", "test_token")
+        monkeypatch.setattr(
+            "app.core.security.settings.telegram_bot_token", "test_token"
+        )
         init_data = make_init_data(bot_token="wrong_token")
         result = validate_telegram_init_data(init_data)
         assert result is None

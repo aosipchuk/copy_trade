@@ -1,4 +1,5 @@
-.PHONY: up down build logs shell test lint typecheck migrate makemigrations install clean
+.PHONY: up down build logs shell test lint typecheck migrate makemigrations install clean \
+        prod-up prod-down prod-logs prod-build ssl deploy
 
 ifneq (,$(wildcard ./.env))
   include .env
@@ -22,13 +23,43 @@ logs:
 shell:
 	docker compose exec backend bash
 
+# ─── Production ───────────────────────────────────────────────────────────────
+
+PROD_COMPOSE = docker compose -f docker-compose.yml -f docker-compose.prod.yml
+
+prod-build:
+	$(PROD_COMPOSE) build
+
+prod-up:
+	$(PROD_COMPOSE) up -d
+
+prod-down:
+	$(PROD_COMPOSE) down
+
+prod-logs:
+	$(PROD_COMPOSE) logs -f
+
+# Obtain/renew SSL certificate (run once before prod-up, requires DOMAIN in .env)
+ssl:
+	$(PROD_COMPOSE) run --rm certbot certonly \
+		--webroot -w /var/www/certbot \
+		--email admin@$(DOMAIN) \
+		--agree-tos --no-eff-email \
+		-d $(DOMAIN)
+
+# Full deploy: build → migrate → restart
+deploy:
+	$(PROD_COMPOSE) build backend frontend
+	$(PROD_COMPOSE) run --rm backend sh -c "uv run alembic upgrade head"
+	$(PROD_COMPOSE) up -d --no-deps backend celery-worker celery-beat frontend
+
 # ─── Development ─────────────────────────────────────────────────────────────
 
 install:
 	cd backend && uv sync
 
 run:
-	cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+	cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 worker:
 	cd backend && uv run celery -A app.tasks.celery_app worker --loglevel=info -Q default,signals,execution

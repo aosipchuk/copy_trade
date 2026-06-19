@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install uv --no-cache-dir
 
 # Install Python deps (separate layer for caching)
-COPY pyproject.toml .
-RUN uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
+COPY pyproject.toml uv.lock ./
+RUN uv sync --no-dev --frozen
 
 # Copy source
 COPY . .
@@ -21,5 +21,6 @@ COPY . .
 ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000

@@ -1,5 +1,4 @@
 from celery import Celery
-from celery.schedules import crontab
 
 from app.core.config import settings
 
@@ -11,6 +10,7 @@ celery_app = Celery(
         "app.tasks.hl_tracker",
         "app.tasks.signal_consumer",
         "app.tasks.execution_tasks",
+        "app.tasks.analytics_tasks",
     ],
 )
 
@@ -27,6 +27,7 @@ celery_app.conf.update(
         "app.tasks.hl_tracker.*": {"queue": "default"},
         "app.tasks.signal_consumer.*": {"queue": "signals"},
         "app.tasks.execution_tasks.*": {"queue": "execution"},
+        "app.tasks.analytics_tasks.*": {"queue": "default"},
     },
     beat_schedule={
         "refresh-leaderboard": {
@@ -39,11 +40,15 @@ celery_app.conf.update(
         },
         "check-stop-losses": {
             "task": "app.tasks.execution_tasks.check_stop_losses",
-            "schedule": 300.0,  # every 5 minutes
+            "schedule": 60.0,  # every 60 s; 30 s Redis margin cache limits HL API load
         },
         "monitor-pending-trades": {
             "task": "app.tasks.execution_tasks.monitor_pending_trades",
             "schedule": 30.0,  # every 30 seconds
+        },
+        "compute-quality-metrics": {
+            "task": "app.tasks.analytics_tasks.compute_quality_metrics",
+            "schedule": 14400.0,  # every 4 hours
         },
     },
 )

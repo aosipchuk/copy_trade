@@ -1,0 +1,130 @@
+"""Integration tests for /traders endpoints."""
+
+import itertools
+
+import pytest
+from sqlalchemy import insert
+
+from app.models.trader import Trader, TraderStat
+
+pytestmark = pytest.mark.asyncio(loop_scope="session")
+
+# Each call to _seed_traders uses fresh addresses so unique constraint never fires.
+_trader_counter: itertools.count = itertools.count(1)
+
+
+async def _seed_traders(db_session) -> list[int]:
+    """Insert two test traders with week stats and return their IDs."""
+    ids = []
+    for suffix in ("aa", "bb"):
+        n = next(_trader_counter)
+        address = f"0x{suffix}{n:038x}"
+        result = await db_session.execute(
+            insert(Trader)
+            .values(hl_address=address, display_name=f"Trader-{n}", is_active=True)
+            .returning(Trader.id)
+        )
+        trader_id = result.scalar_one()
+        ids.append(trader_id)
+        await db_session.execute(
+            insert(TraderStat).values(
+                trader_id=trader_id,
+                period="week",
+                pnl_usd=float(n) * 1000,
+                roi_pct=float(n) * 5,
+                volume_usd=float(n) * 50000,
+            )
+        )
+    await db_session.commit()
+    return ids
+
+
+class TestTradersList:
+    @pytest.mark.asyncio
+    async def test_returns_200_with_items(self, client, db_session) -> None:
+        await _seed_traders(db_session)
+        response = await client.get("/api/traders")
+        assert response.status_code == 200
+        body = response.json()
+        assert "items" in body
+        assert isinstance(body["items"], list)
+        assert len(body["items"]) >= 2
+
+    @pytest.mark.asyncio
+    async def test_response_schema(self, client, db_session) -> None:
+        await _seed_traders(db_session)
+        response = await client.get("/api/traders")
+        assert response.status_code == 200
+        item = response.json()["items"][0]
+        assert "id" in item
+        assert "hl_address" in item
+        assert "stats" in item
+        assert isinstance(item["stats"], list)
+
+    @pytest.mark.asyncio
+    async def test_period_filter(self, client, db_session) -> None:
+        await _seed_traders(db_session)
+        response = await client.get("/api/traders?period=week")
+        assert response.status_code == 200
+        assert len(response.json()["items"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_sort_by_roi(self, client, db_session) -> None:
+        await _seed_traders(db_session)
+        response = await client.get("/api/traders?sort=roi&period=week")
+        assert response.status_code == 200
+        items = response.json()["items"]
+        rois = [item["stats"][0]["roi_pct"] for item in items if item["stats"]]
+        assert rois == sorted(rois, reverse=True)
+
+    @pytest.mark.asyncio
+    async def test_limit_respected(self, client, db_session) -> None:
+        await _seed_traders(db_session)
+        response = await client.get("/api/traders?limit=1&period=week")
+        assert response.status_code == 200
+        assert len(response.json()["items"]) <= 1
+
+    @pytest.mark.asyncio
+    async def test_invalid_cursor_returns_400(self, client) -> None:
+        response = await client.get("/api/traders?cursor=not_valid_base64")
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_cursor_pagination(self, client, db_session) -> None:
+        await _seed_traders(db_session)
+        r1 = await client.get("/api/traders?limit=1&period=week")
+        assert r1.status_code == 200
+        cursor = r1.json().get("next_cursor")
+        if cursor:
+            r2 = await client.get(f"/api/traders?limit=1&period=week&cursor={cursor}")
+            assert r2.status_code == 200
+
+
+class TestTraderDetail:
+    @pytest.mark.asyncio
+    async def test_returns_trader_by_id(self, client, db_session) -> None:
+        ids = await _seed_traders(db_session)
+        response = await client.get(f"/api/traders/{ids[0]}")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == ids[0]
+        assert "hl_address" in body
+
+    @pytest.mark.asyncio
+    async def test_returns_404_for_missing_trader(self, client) -> None:
+        response = await client.get("/api/traders/999999")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_equity_curve_returns_list(self, client, db_session) -> None:
+        ids = await _seed_traders(db_session)
+        response = await client.get(f"/api/traders/{ids[0]}/equity-curve")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    @pytest.mark.asyncio
+    async def test_positions_returns_list(self, client, db_session) -> None:
+        ids = await _seed_traders(db_session)
+        response = await client.get(f"/api/traders/{ids[0]}/positions")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)

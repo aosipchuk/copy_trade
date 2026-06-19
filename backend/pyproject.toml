@@ -37,6 +37,9 @@ dependencies = [
     "eth-account>=0.13",
     # Telegram
     "aiogram>=3.14",
+    # Hyperliquid signing
+    "msgpack>=1.0",
+    "slowapi>=0.1.10",
 ]
 
 
@@ -58,11 +61,13 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "N", "UP", "S", "B", "A", "C4", "PIE", "T20", "RET", "SIM"]
-ignore = ["S101", "B008", "RET504"]
+ignore = ["S101", "B008", "RET504", "UP047"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S", "T20"]
-"alembic/*" = ["F401"]
+"tests/*" = ["S", "T20", "E501"]
+"alembic/*" = ["F401", "E501", "W291"]
+"app/models/*" = ["F821"]
+"scripts/*" = ["T20", "S", "E501", "E402", "I001"]
 
 [tool.black]
 line-length = 88
@@ -76,6 +81,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 

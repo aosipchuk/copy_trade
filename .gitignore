@@ -25,6 +25,11 @@ allure-results/
 node_modules/
 frontend/dist/
 frontend/.vite/
+*.tsbuildinfo
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
 
 # Docker
 *.log

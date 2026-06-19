@@ -1,0 +1,344 @@
+import asyncio
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import and_, or_, select
+
+from app.api.deps import DBSession, get_current_user
+from app.core.cache import cached_json
+from app.models.trader import Trader, TraderStat
+from app.schemas.trader import (
+    ClosedTradeItem,
+    EquityPoint,
+    FillItem,
+    PositionItem,
+    TraderDetail,
+    TraderListItem,
+    TraderListResponse,
+    TraderStatSchema,
+    TraderSummaryResponse,
+    decode_cursor,
+    encode_cursor,
+)
+from app.services.analytics.metrics import (
+    _realized_pnl_for_period,
+    fetch_trader_fills,
+    get_closed_trades,
+    get_equity_curve,
+    get_fills,
+    get_open_positions,
+    get_trader_by_id,
+    get_trader_stats,
+)
+from app.services.hyperliquid.info_client import HyperliquidInfoClient
+
+router = APIRouter(
+    prefix="/traders",
+    tags=["traders"],
+    dependencies=[Depends(get_current_user)],
+)
+
+_CACHE_TTL_LIST = 30
+_CACHE_TTL_STATS = 30
+_CACHE_TTL_POSITIONS = 5
+_DEFAULT_LIMIT = 50
+
+
+def _f(val: object) -> float | None:
+    return float(val) if val is not None else None  # type: ignore[arg-type]
+
+
+def _make_stat_schema(stat: TraderStat) -> TraderStatSchema:
+    return TraderStatSchema(
+        period=stat.period,
+        pnl_usd=_f(stat.pnl_usd),
+        roi_pct=_f(stat.roi_pct),
+        volume_usd=_f(stat.volume_usd),
+        win_rate_pct=_f(stat.win_rate_pct),
+        max_drawdown_usd=_f(stat.max_drawdown_usd),
+        max_drawdown_pct=_f(stat.max_drawdown_pct),
+        trade_count=stat.trade_count,
+        avg_trade_duration_hrs=_f(stat.avg_trade_duration_hrs),
+        first_trade_at=stat.first_trade_at,
+        sharpe_ratio=_f(stat.sharpe_ratio),
+        sortino_ratio=_f(stat.sortino_ratio),
+    )
+
+
+@router.get("", response_model=TraderListResponse)
+async def list_traders(
+    db: DBSession,
+    period: Literal["day", "week", "month", "allTime"] = "week",
+    sort: Literal["roi", "pnl", "volume"] = "roi",
+    limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=200),
+    cursor: str | None = None,
+    address: str | None = Query(default=None, max_length=100),
+    # Quality filters
+    min_days: int = Query(default=0, ge=0, le=365),
+    min_win_rate: float = Query(default=0, ge=0, le=100),
+    max_drawdown: float = Query(default=100, ge=0, le=100),
+    min_trades: int = Query(default=0, ge=0),
+    min_volume: float = Query(default=0, ge=0),
+    quality: bool = Query(default=False),
+) -> TraderListResponse:
+    sort_col = {
+        "roi": TraderStat.roi_pct,
+        "pnl": TraderStat.pnl_usd,
+        "volume": TraderStat.volume_usd,
+    }[sort]
+
+    query = (
+        select(Trader, TraderStat)
+        .join(TraderStat, TraderStat.trader_id == Trader.id)
+        .where(Trader.is_active == True, TraderStat.period == period)  # noqa: E712
+        .order_by(sort_col.desc().nulls_last(), Trader.id.desc())
+        .limit(limit + 1)
+    )
+
+    if address:
+        query = query.where(Trader.hl_address.ilike(f"%{address}%"))
+
+    # Quality preset: verified traders with solid track record
+    if quality:
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
+        query = query.where(
+            TraderStat.first_trade_at <= cutoff,
+            TraderStat.win_rate_pct >= 40,
+            TraderStat.max_drawdown_pct <= 60,
+            TraderStat.trade_count >= 10,
+        )
+
+    # Individual filters: NULL metric = not yet computed → include the trader.
+    # Only the quality preset strictly requires all metrics to be present.
+    if min_days > 0:
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=min_days)
+        col = TraderStat.first_trade_at
+        query = query.where(or_(col <= cutoff, col.is_(None)))
+    if min_win_rate > 0:
+        col_wr = TraderStat.win_rate_pct
+        query = query.where(or_(col_wr >= min_win_rate, col_wr.is_(None)))
+    if max_drawdown < 100:
+        col_dd = TraderStat.max_drawdown_pct
+        query = query.where(or_(col_dd <= max_drawdown, col_dd.is_(None)))
+    if min_trades > 0:
+        col_tc = TraderStat.trade_count
+        query = query.where(or_(col_tc >= min_trades, col_tc.is_(None)))
+    if min_volume > 0:
+        query = query.where(TraderStat.volume_usd >= min_volume)
+
+    if cursor:
+        try:
+            cursor_val, cursor_id = decode_cursor(cursor)
+        except Exception as cursor_exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
+            ) from cursor_exc
+
+        if cursor_val is not None:
+            query = query.where(
+                or_(
+                    sort_col < cursor_val,
+                    and_(sort_col == cursor_val, Trader.id < cursor_id),
+                )
+            )
+        else:
+            query = query.where(and_(sort_col.is_(None), Trader.id < cursor_id))
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    has_next = len(rows) > limit
+    rows = rows[:limit]
+
+    items: list[TraderListItem] = []
+    for trader, stat in rows:
+        items.append(
+            TraderListItem(
+                id=trader.id,
+                hl_address=trader.hl_address,
+                display_name=trader.display_name,
+                stats=[_make_stat_schema(stat)],
+            )
+        )
+
+    next_cursor: str | None = None
+    if has_next and items:
+        last = items[-1]
+        last_stat = last.stats[0] if last.stats else None
+        if last_stat is None:
+            sort_val = None
+        elif sort == "roi":
+            sort_val = last_stat.roi_pct
+        elif sort == "pnl":
+            sort_val = last_stat.pnl_usd
+        else:
+            sort_val = last_stat.volume_usd
+        next_cursor = encode_cursor(sort_val, last.id)
+
+    return TraderListResponse(items=items, next_cursor=next_cursor)
+
+
+@router.get("/{trader_id}", response_model=TraderDetail)
+async def get_trader(trader_id: int, db: DBSession) -> TraderDetail:
+    trader = await get_trader_by_id(db, trader_id)
+    if trader is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Trader not found"
+        )
+
+    stats = await get_trader_stats(db, trader_id)
+    return TraderDetail(
+        id=trader.id,
+        hl_address=trader.hl_address,
+        display_name=trader.display_name,
+        is_active=trader.is_active,
+        last_seen_at=trader.last_seen_at,
+        stats=stats,
+    )
+
+
+@router.get("/{trader_id}/equity-curve", response_model=list[EquityPoint])
+async def trader_equity_curve(
+    trader_id: int,
+    db: DBSession,
+    period: Literal["day", "week", "month", "allTime"] = "week",
+) -> list[EquityPoint]:
+    trader = await get_trader_by_id(db, trader_id)
+    if trader is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Trader not found"
+        )
+
+    async def _fetch() -> list[dict[str, Any]]:
+        points = await get_equity_curve(trader.hl_address, period)
+        return [p.model_dump(mode="json") for p in points]
+
+    cache_key = f"analytics:equity:{trader_id}:{period}"
+    raw = await cached_json(cache_key, _CACHE_TTL_STATS, _fetch)
+    return [EquityPoint(**r) for r in raw]
+
+
+@router.get("/{trader_id}/positions", response_model=list[PositionItem])
+async def trader_positions(trader_id: int, db: DBSession) -> list[PositionItem]:
+    trader = await get_trader_by_id(db, trader_id)
+    if trader is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Trader not found"
+        )
+
+    async def _fetch() -> list[dict[str, Any]]:
+        client = HyperliquidInfoClient()
+        positions = await client.get_positions(trader.hl_address)
+        return [
+            PositionItem(
+                coin=p.coin,
+                side=p.side,
+                size=float(p.abs_size),
+                entry_px=float(p.entry_px) if p.entry_px is not None else None,
+                unrealized_pnl=float(p.unrealized_pnl),
+                leverage=p.leverage.value,
+            ).model_dump()
+            for p in positions
+        ]
+
+    cache_key = f"analytics:positions:{trader_id}"
+    raw = await cached_json(cache_key, _CACHE_TTL_POSITIONS, _fetch)
+    return [PositionItem(**r) for r in raw]
+
+
+@router.get("/{trader_id}/fills", response_model=list[FillItem])
+async def trader_fills(
+    trader_id: int,
+    db: DBSession,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[FillItem]:
+    trader = await get_trader_by_id(db, trader_id)
+    if trader is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Trader not found"
+        )
+
+    async def _fetch() -> list[dict[str, Any]]:
+        fills = await get_fills(trader.hl_address, limit=limit)
+        return [f.model_dump() for f in fills]
+
+    cache_key = f"analytics:fills:{trader_id}:{limit}"
+    raw = await cached_json(cache_key, _CACHE_TTL_STATS, _fetch)
+    return [FillItem(**r) for r in raw]
+
+
+@router.get("/{trader_id}/closed-trades", response_model=list[ClosedTradeItem])
+async def trader_closed_trades(
+    trader_id: int,
+    db: DBSession,
+    limit: int = Query(default=20, ge=1, le=500),
+) -> list[ClosedTradeItem]:
+    trader = await get_trader_by_id(db, trader_id)
+    if trader is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Trader not found"
+        )
+
+    async def _fetch() -> list[dict[str, Any]]:
+        trades = await get_closed_trades(trader.hl_address, limit=limit)
+        return [t.model_dump() for t in trades]
+
+    cache_key = f"analytics:closed_trades:{trader_id}:{limit}"
+    raw = await cached_json(cache_key, _CACHE_TTL_STATS, _fetch)
+    return [ClosedTradeItem(**r) for r in raw]
+
+
+_CACHE_TTL_SUMMARY = 60
+
+
+@router.get("/{trader_id}/summary", response_model=TraderSummaryResponse)
+async def trader_summary(trader_id: int, db: DBSession) -> TraderSummaryResponse:
+    """Full trader profile in one request: stats (all periods), week equity curve,
+    open positions, and last 10 closed trades. Cached for 60 s."""
+    trader = await get_trader_by_id(db, trader_id)
+    if trader is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Trader not found"
+        )
+
+    async def _fetch() -> dict[str, Any]:
+        fills, stats_list, positions = await asyncio.gather(
+            fetch_trader_fills(trader.hl_address),
+            get_trader_stats(db, trader_id),
+            get_open_positions(trader.hl_address),
+        )
+        equity_curve, trades = await asyncio.gather(
+            get_equity_curve(trader.hl_address, "week", fills=fills),
+            get_closed_trades(trader.hl_address, limit=10, fills=fills),
+        )
+
+        # Replace leaderboard pnl_usd (includes unrealized) with realized-only
+        periods = ("day", "week", "month", "allTime")
+        realized = {p: _realized_pnl_for_period(fills, p) for p in periods}
+        patched_stats = [
+            s.model_copy(update={"pnl_usd": realized.get(s.period, s.pnl_usd)})
+            for s in stats_list
+        ]
+
+        return {
+            "id": trader.id,
+            "hl_address": trader.hl_address,
+            "display_name": trader.display_name,
+            "stats": {s.period: s.model_dump(mode="json") for s in patched_stats},
+            "equity_curve_week": [e.model_dump(mode="json") for e in equity_curve],
+            "open_positions": [p.model_dump() for p in positions],
+            "recent_trades": [t.model_dump() for t in trades],
+        }
+
+    cache_key = f"analytics:summary:{trader_id}"
+    raw = await cached_json(cache_key, _CACHE_TTL_SUMMARY, _fetch)
+    return TraderSummaryResponse(
+        id=raw["id"],
+        hl_address=raw["hl_address"],
+        display_name=raw["display_name"],
+        stats={k: TraderStatSchema(**v) for k, v in raw["stats"].items()},
+        equity_curve_week=[EquityPoint(**e) for e in raw["equity_curve_week"]],
+        open_positions=[PositionItem(**p) for p in raw["open_positions"]],
+        recent_trades=[ClosedTradeItem(**t) for t in raw["recent_trades"]],
+    )
