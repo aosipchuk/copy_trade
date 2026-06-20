@@ -9,13 +9,17 @@ endif
 # ─── Docker ──────────────────────────────────────────────────────────────────
 
 up:
-	docker compose up -d
+	docker compose up -d --build
 
 down:
 	docker compose down
 
 build:
 	docker compose build
+
+rebuild:
+	docker compose build frontend backend
+	docker compose up -d --no-deps frontend backend
 
 logs:
 	docker compose logs -f
