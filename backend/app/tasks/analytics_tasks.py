@@ -2,25 +2,42 @@ import asyncio
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
+from sqlalchemy.orm import aliased
 
 from app.core.database import get_task_db_session
 from app.core.logging import get_logger
 from app.models.trader import Trader, TraderStat
-from app.services.analytics.metrics import compute_trader_quality_metrics
+from app.services.analytics.metrics import (
+    compute_composite_score,
+    compute_trader_quality_metrics,
+)
 from app.tasks.celery_app import celery_app
 
 logger = get_logger(__name__)
 
-_TOP_N_QUALITY = 200
-_BATCH_SIZE = 20
-_BATCH_PAUSE_SEC = 2.0
+_BATCH_SIZE = 10
+_BATCH_PAUSE_SEC = 5.0
 
 
-async def _compute_and_save(trader_id: int, hl_address: str) -> bool:
+async def _compute_and_save(
+    trader_id: int, hl_address: str, roi_30d_pct: float | None
+) -> bool:
     try:
         metrics = await compute_trader_quality_metrics(hl_address)
         if metrics is None:
             return False
+
+        metrics.composite_score = compute_composite_score(
+            roi_30d_pct=roi_30d_pct,
+            win_rate_pct=metrics.win_rate_pct,
+            sharpe_ratio=metrics.sharpe_ratio,
+            sortino_ratio=metrics.sortino_ratio,
+            max_drawdown_pct=metrics.max_drawdown_pct,
+            profit_factor=metrics.profit_factor,
+            profitable_days_pct=metrics.profitable_days_pct,
+            max_losing_streak=metrics.max_losing_streak,
+            avg_trades_per_day=metrics.avg_trades_per_day,
+        )
 
         now = datetime.now(UTC).replace(tzinfo=None)
         values = {**metrics.to_dict(), "updated_at": now}
@@ -40,25 +57,28 @@ async def _compute_and_save(trader_id: int, hl_address: str) -> bool:
 
 
 async def _compute_quality_metrics_async() -> int:
+    trader_stat_month = aliased(TraderStat)
     async with get_task_db_session() as db:
         result = await db.execute(
-            select(Trader.id, Trader.hl_address)
-            .join(TraderStat, TraderStat.trader_id == Trader.id)
-            .where(
-                Trader.is_active == True,  # noqa: E712
-                TraderStat.period == "week",
-                TraderStat.roi_pct.isnot(None),
+            select(Trader.id, Trader.hl_address, trader_stat_month.roi_pct)
+            .outerjoin(
+                trader_stat_month,
+                (trader_stat_month.trader_id == Trader.id)
+                & (trader_stat_month.period == "month"),
             )
-            .order_by(TraderStat.roi_pct.desc().nulls_last())
-            .limit(_TOP_N_QUALITY)
+            .where(Trader.is_active == True)  # noqa: E712
         )
         traders = result.all()
 
+    logger.info("quality_metrics_started", total=len(traders))
     processed = 0
     for i in range(0, len(traders), _BATCH_SIZE):
         batch = traders[i : i + _BATCH_SIZE]
         results = await asyncio.gather(
-            *[_compute_and_save(tid, addr) for tid, addr in batch],
+            *[
+                _compute_and_save(tid, addr, float(roi) if roi is not None else None)
+                for tid, addr, roi in batch
+            ],
             return_exceptions=True,
         )
         processed += sum(1 for r in results if r is True)
@@ -75,7 +95,7 @@ async def _compute_quality_metrics_async() -> int:
     max_retries=2,
 )
 def compute_quality_metrics(self) -> None:  # type: ignore[no-untyped-def]
-    """Compute quality metrics (win rate, drawdown, trade count) for top-200 traders."""
+    """Compute quality metrics and composite score for all active traders."""
     try:
         count = asyncio.run(_compute_quality_metrics_async())
         logger.info("quality_metrics_computed", processed=count)

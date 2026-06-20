@@ -49,6 +49,18 @@ async def get_trader_stats(db: AsyncSession, trader_id: int) -> list[TraderStatS
             first_trade_at=r.first_trade_at,
             sharpe_ratio=_f(r.sharpe_ratio),
             sortino_ratio=_f(r.sortino_ratio),
+            profit_factor=_f(r.profit_factor),
+            avg_pnl_per_trade=_f(r.avg_pnl_per_trade),
+            max_losing_streak=r.max_losing_streak,
+            profitable_days_pct=_f(r.profitable_days_pct),
+            avg_trades_per_day=_f(r.avg_trades_per_day),
+            daily_pnl_std_dev=_f(r.daily_pnl_std_dev),
+            long_ratio_pct=_f(r.long_ratio_pct),
+            avg_position_size_usd=_f(r.avg_position_size_usd),
+            fees_paid_usd=_f(r.fees_paid_usd),
+            calmar_ratio=_f(r.calmar_ratio),
+            composite_score=_f(r.composite_score),
+            max_drawdown_duration_days=_f(r.max_drawdown_duration_days),
         )
         for r in rows
     ]
@@ -74,9 +86,7 @@ def _realized_pnl_for_period(fills: list[Fill], period: str) -> float:
     window_ms = _PERIOD_MS.get(period)
     cutoff_ms = now_ms - window_ms if window_ms is not None else None
     return sum(
-        float(f.closed_pnl)
-        for f in fills
-        if cutoff_ms is None or f.time >= cutoff_ms
+        float(f.closed_pnl) for f in fills if cutoff_ms is None or f.time >= cutoff_ms
     )
 
 
@@ -278,6 +288,158 @@ async def get_closed_trades(
     return trades[:limit]
 
 
+# ── Composite score helpers ────────────────────────────────────────────────────
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _roi_score(roi: float) -> float:
+    if roi <= 0:
+        return 0.0
+    if roi <= 10:
+        return roi * 5
+    if roi <= 50:
+        return 50.0 + (roi - 10) * 1.25
+    return max(0.0, 100.0 - (roi - 50) * 2)
+
+
+def _risk_score(sharpe: float, sortino: float, mdd_pct: float) -> float:
+    s = _clamp(sharpe / 3 * 50, 0, 50)
+    so = _clamp(sortino / 4 * 30, 0, 30)
+    dd = _clamp((20 - mdd_pct) / 20 * 20, 0, 20)
+    return _clamp(s + so + dd, 0, 100)
+
+
+def _consistency_score(
+    pf: float, profitable_days_pct: float, max_losing_streak: int
+) -> float:
+    pf_s = _clamp((pf - 1) / 1.5 * 50, 0, 50)
+    pd_s = _clamp((profitable_days_pct - 50) / 30 * 30, 0, 30)
+    ls_s = _clamp((5 - max_losing_streak) / 5 * 20, 0, 20)
+    return _clamp(pf_s + pd_s + ls_s, 0, 100)
+
+
+def _win_rate_score(wr: float) -> float:
+    if wr < 50:
+        return max(0.0, (wr - 30) / 20 * 50)
+    if wr <= 70:
+        return 50.0 + (wr - 50) / 20 * 50
+    return max(0.0, 100.0 - (wr - 70) / 10 * 40)
+
+
+def _activity_score(tpd: float) -> float:
+    if tpd <= 0:
+        return 0.0
+    if tpd <= 1:
+        return tpd * 50
+    if tpd <= 10:
+        return 50.0 + (tpd - 1) / 9 * 40
+    if tpd <= 20:
+        return max(60.0, 90.0 - (tpd - 10) * 3)
+    return max(0.0, 60.0 - (tpd - 20) * 3)
+
+
+def _sharpe_score(sharpe: float, sortino: float) -> float:
+    return _clamp(sharpe / 3 * 70 + sortino / 4 * 30, 0, 100)
+
+
+def compute_composite_score(
+    roi_30d_pct: float | None,
+    win_rate_pct: float | None,
+    sharpe_ratio: float | None,
+    sortino_ratio: float | None,
+    max_drawdown_pct: float | None,
+    profit_factor: float | None,
+    profitable_days_pct: float | None,
+    max_losing_streak: int | None,
+    avg_trades_per_day: float | None,
+) -> float | None:
+    """Compute composite score (0–100) from trader quality metrics.
+
+    Returns None when essential inputs are unavailable.
+    Passing score: ≥ 70.
+    """
+    if roi_30d_pct is None or win_rate_pct is None:
+        return None
+
+    # Neutral substitutes for missing data: chosen so each unknown component
+    # contributes 0 bonus points rather than the best or worst possible value.
+    # mdd_pct=50 → dd=0; pf=1.0 → pf_s=0; pdp=50 → pd_s=0; mls=5 → ls_s=0.
+    score = (
+        0.25 * _roi_score(roi_30d_pct)
+        + 0.20
+        * _risk_score(
+            sharpe_ratio if sharpe_ratio is not None else 0.0,
+            sortino_ratio if sortino_ratio is not None else 0.0,
+            max_drawdown_pct if max_drawdown_pct is not None else 50.0,
+        )
+        + 0.20
+        * _consistency_score(
+            profit_factor if profit_factor is not None else 1.0,
+            profitable_days_pct if profitable_days_pct is not None else 50.0,
+            max_losing_streak if max_losing_streak is not None else 5,
+        )
+        + 0.15 * _win_rate_score(win_rate_pct)
+        + 0.10
+        * _activity_score(avg_trades_per_day if avg_trades_per_day is not None else 0.0)
+        + 0.10
+        * _sharpe_score(
+            sharpe_ratio if sharpe_ratio is not None else 0.0,
+            sortino_ratio if sortino_ratio is not None else 0.0,
+        )
+    )
+    return round(_clamp(score, 0, 100), 2)
+
+
+# ── Quality metrics helpers ────────────────────────────────────────────────────
+
+
+def _max_losing_streak(pnls: list[float]) -> int:
+    """Count the longest consecutive sequence of losing (negative) trades."""
+    max_streak = current = 0
+    for p in pnls:
+        if p < 0:
+            current += 1
+            max_streak = max(max_streak, current)
+        else:
+            current = 0
+    return max_streak
+
+
+def _max_drawdown_duration_days(equity_curve: list[EquityPoint]) -> float:
+    """Return the longest calendar duration (days) between a peak and full recovery."""
+    if len(equity_curve) < 2:
+        return 0.0
+
+    peak_pnl = equity_curve[0].pnl
+    peak_ts = equity_curve[0].ts
+    in_drawdown = False
+    dd_start_ts: datetime | None = None
+    max_duration = 0.0
+
+    for point in equity_curve:
+        if point.pnl > peak_pnl:
+            if in_drawdown and dd_start_ts is not None:
+                duration = (point.ts - dd_start_ts).total_seconds() / 86400
+                max_duration = max(max_duration, duration)
+            peak_pnl = point.pnl
+            peak_ts = point.ts
+            in_drawdown = False
+            dd_start_ts = None
+        elif point.pnl < peak_pnl and not in_drawdown:
+            in_drawdown = True
+            dd_start_ts = peak_ts
+
+    # Still in drawdown at end of series
+    if in_drawdown and dd_start_ts is not None:
+        duration = (equity_curve[-1].ts - dd_start_ts).total_seconds() / 86400
+        max_duration = max(max_duration, duration)
+
+    return round(max_duration, 2)
+
+
 class QualityMetrics:
     """Container for computed trader quality metrics."""
 
@@ -291,6 +453,18 @@ class QualityMetrics:
         first_trade_at: datetime | None,
         sharpe_ratio: float | None,
         sortino_ratio: float | None,
+        profit_factor: float | None,
+        avg_pnl_per_trade: float | None,
+        max_losing_streak: int | None,
+        profitable_days_pct: float | None,
+        avg_trades_per_day: float | None,
+        daily_pnl_std_dev: float | None,
+        long_ratio_pct: float | None,
+        avg_position_size_usd: float | None,
+        fees_paid_usd: float | None,
+        calmar_ratio: float | None,
+        max_drawdown_duration_days: float | None,
+        composite_score: float | None = None,
     ) -> None:
         self.win_rate_pct = win_rate_pct
         self.max_drawdown_usd = max_drawdown_usd
@@ -300,6 +474,18 @@ class QualityMetrics:
         self.first_trade_at = first_trade_at
         self.sharpe_ratio = sharpe_ratio
         self.sortino_ratio = sortino_ratio
+        self.profit_factor = profit_factor
+        self.avg_pnl_per_trade = avg_pnl_per_trade
+        self.max_losing_streak = max_losing_streak
+        self.profitable_days_pct = profitable_days_pct
+        self.avg_trades_per_day = avg_trades_per_day
+        self.daily_pnl_std_dev = daily_pnl_std_dev
+        self.long_ratio_pct = long_ratio_pct
+        self.avg_position_size_usd = avg_position_size_usd
+        self.fees_paid_usd = fees_paid_usd
+        self.calmar_ratio = calmar_ratio
+        self.max_drawdown_duration_days = max_drawdown_duration_days
+        self.composite_score = composite_score
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -311,12 +497,24 @@ class QualityMetrics:
             "first_trade_at": self.first_trade_at,
             "sharpe_ratio": self.sharpe_ratio,
             "sortino_ratio": self.sortino_ratio,
+            "profit_factor": self.profit_factor,
+            "avg_pnl_per_trade": self.avg_pnl_per_trade,
+            "max_losing_streak": self.max_losing_streak,
+            "profitable_days_pct": self.profitable_days_pct,
+            "avg_trades_per_day": self.avg_trades_per_day,
+            "daily_pnl_std_dev": self.daily_pnl_std_dev,
+            "long_ratio_pct": self.long_ratio_pct,
+            "avg_position_size_usd": self.avg_position_size_usd,
+            "fees_paid_usd": self.fees_paid_usd,
+            "calmar_ratio": self.calmar_ratio,
+            "max_drawdown_duration_days": self.max_drawdown_duration_days,
+            "composite_score": self.composite_score,
         }
 
 
 async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
-    """
-    Compute quality metrics for a trader from their fill history.
+    """Compute quality metrics for a trader from their fill history.
+
     Makes a single HTTP request to HL API.
     Returns None if no fills are available.
     """
@@ -331,44 +529,114 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
         all_fills_sorted[0].time / 1000, tz=UTC
     ).replace(tzinfo=None)
 
-    # Group closing fills by order id
+    # ── Group fills by direction ───────────────────────────────────────────────
     closing_by_oid: dict[int, list[Fill]] = defaultdict(list)
+    open_fills_by_coin: dict[str, list[Fill]] = defaultdict(list)
     for f in all_fills:
         if f.dir.startswith("Close"):
             closing_by_oid[f.oid].append(f)
+        elif f.dir.startswith("Open"):
+            open_fills_by_coin[f.coin].append(f)
 
+    for coin_fills in open_fills_by_coin.values():
+        coin_fills.sort(key=lambda f: f.time)
+
+    # ── Per-trade metrics ─────────────────────────────────────────────────────
     trade_count: int | None = None
     win_rate_pct: float | None = None
     avg_trade_duration_hrs: float | None = None
+    profit_factor: float | None = None
+    avg_pnl_per_trade: float | None = None
+    max_losing_streak_val: int | None = None
 
     if closing_by_oid:
         trade_count = len(closing_by_oid)
-        winning = sum(
-            1
-            for fills in closing_by_oid.values()
-            if sum(float(f.closed_pnl) for f in fills) > 0
-        )
+        trade_pnls: list[float] = []
+        durations_hrs: list[float] = []
+
+        for close_fills in closing_by_oid.values():
+            pnl = sum(float(f.closed_pnl) for f in close_fills)
+            trade_pnls.append(pnl)
+
+            # Correct hold-time: find the most recent open fill for this coin
+            # that occurred before the first fill of this close group.
+            coin = close_fills[0].coin
+            close_min_time = min(f.time for f in close_fills)
+            open_candidates = [
+                f for f in open_fills_by_coin.get(coin, []) if f.time < close_min_time
+            ]
+            if open_candidates:
+                open_time = max(f.time for f in open_candidates)
+                durations_hrs.append((close_min_time - open_time) / 1000 / 3600)
+
+        winning = sum(1 for p in trade_pnls if p > 0)
         win_rate_pct = (winning / trade_count) * 100
 
-        # Average time between consecutive trade closures as proxy for holding period
-        close_times = sorted(
-            min(f.time for f in fills) for fills in closing_by_oid.values()
-        )
-        if len(close_times) > 1:
-            deltas_hrs = [
-                (close_times[i + 1] - close_times[i]) / 1000 / 3600
-                for i in range(len(close_times) - 1)
-            ]
-            avg_trade_duration_hrs = sum(deltas_hrs) / len(deltas_hrs)
-        else:
-            avg_trade_duration_hrs = 0.0
+        winners = [p for p in trade_pnls if p > 0]
+        losers = [abs(p) for p in trade_pnls if p < 0]
+        profit_factor = sum(winners) / sum(losers) if losers else None
+        avg_pnl_per_trade = sum(trade_pnls) / len(trade_pnls)
+        max_losing_streak_val = _max_losing_streak(trade_pnls)
 
-    # Max drawdown and Sharpe/Sortino from allTime equity curve
+        if durations_hrs:
+            avg_trade_duration_hrs = sum(durations_hrs) / len(durations_hrs)
+
+    # ── Daily aggregates ──────────────────────────────────────────────────────
+    daily_pnl_map: dict[str, float] = defaultdict(float)
+    for f in all_fills:
+        day = datetime.fromtimestamp(f.time / 1000, tz=UTC).date().isoformat()
+        daily_pnl_map[day] += float(f.closed_pnl)
+
+    profitable_days_pct: float | None = None
+    avg_trades_per_day: float | None = None
+    daily_pnl_std_dev: float | None = None
+
+    if daily_pnl_map:
+        profitable_days_pct = (
+            sum(1 for v in daily_pnl_map.values() if v > 0) / len(daily_pnl_map) * 100
+        )
+
+    # active_days = distinct calendar days on which a trade was *closed*,
+    # matching the denominator of trade_count (closing fills only).
+    close_day_set: set[str] = {
+        datetime.fromtimestamp(min(f.time for f in fills_list) / 1000, tz=UTC)
+        .date()
+        .isoformat()
+        for fills_list in closing_by_oid.values()
+    }
+    active_days = len(close_day_set)
+    if active_days > 0 and trade_count:
+        avg_trades_per_day = trade_count / active_days
+
+    daily_vals = list(daily_pnl_map.values())
+    if len(daily_vals) >= 2:
+        daily_pnl_std_dev = statistics.stdev(daily_vals)
+
+    # ── Fill-level aggregates ─────────────────────────────────────────────────
+    open_fills_flat = [f for f in all_fills if f.dir.startswith("Open")]
+    open_long_count = sum(1 for f in open_fills_flat if "Long" in f.dir)
+    long_ratio_pct: float | None = (
+        open_long_count / len(open_fills_flat) * 100 if open_fills_flat else None
+    )
+    # Use only opening fills so we measure the size of initiated positions,
+    # not the closing legs (which would halve the average for each round-trip).
+    avg_position_size_usd: float | None = (
+        sum(float(f.px * f.sz) for f in open_fills_flat) / len(open_fills_flat)
+        if open_fills_flat
+        else None
+    )
+    # Store 0.0 when the API returns no fee data (field defaults to 0) so the
+    # column is not misleadingly NULL for traders with genuinely zero fees.
+    fees_paid_usd: float | None = sum(float(f.fee) for f in all_fills)
+
+    # ── Equity curve, drawdown, Sharpe/Sortino, Calmar ───────────────────────
     equity_curve = _build_equity_curve_from_fills(all_fills, "allTime")
     max_dd_usd: float | None = None
     max_dd_pct: float | None = None
     sharpe: float | None = None
     sortino: float | None = None
+    calmar_ratio: float | None = None
+    max_dd_duration_days: float | None = None
 
     if equity_curve:
         max_dd_usd = get_max_drawdown(equity_curve)
@@ -384,6 +652,16 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
         sharpe = sharpe_raw if sharpe_raw != 0.0 else None
         sortino = sortino_raw if sortino_raw != 0.0 else None
 
+        alltime_pnl = equity_curve[-1].pnl
+        # Non-standard Calmar proxy: USD PnL / USD max-drawdown (not annualised %).
+        # Standard Calmar uses annualised_return% / max_drawdown%; filter accordingly.
+        calmar_ratio = (
+            alltime_pnl / max_dd_usd if max_dd_usd and max_dd_usd > 0 else None
+        )
+
+        dd_duration = _max_drawdown_duration_days(equity_curve)
+        max_dd_duration_days = dd_duration if dd_duration > 0 else None
+
     return QualityMetrics(
         win_rate_pct=win_rate_pct,
         max_drawdown_usd=max_dd_usd,
@@ -393,6 +671,17 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
         first_trade_at=first_trade_at,
         sharpe_ratio=sharpe,
         sortino_ratio=sortino,
+        profit_factor=profit_factor,
+        avg_pnl_per_trade=avg_pnl_per_trade,
+        max_losing_streak=max_losing_streak_val,
+        profitable_days_pct=profitable_days_pct,
+        avg_trades_per_day=avg_trades_per_day,
+        daily_pnl_std_dev=daily_pnl_std_dev,
+        long_ratio_pct=long_ratio_pct,
+        avg_position_size_usd=avg_position_size_usd,
+        fees_paid_usd=fees_paid_usd,
+        calmar_ratio=calmar_ratio,
+        max_drawdown_duration_days=max_dd_duration_days,
     )
 
 

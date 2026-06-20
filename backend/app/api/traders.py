@@ -5,8 +5,9 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
 
-from app.api.deps import DBSession, get_current_user
+from app.api.deps import CurrentUser, DBSession, get_current_user
 from app.core.cache import cached_json
+from app.models.subscription import Subscription
 from app.models.trader import Trader, TraderStat
 from app.schemas.trader import (
     ClosedTradeItem,
@@ -39,7 +40,6 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)],
 )
 
-_CACHE_TTL_LIST = 30
 _CACHE_TTL_STATS = 30
 _CACHE_TTL_POSITIONS = 5
 _DEFAULT_LIMIT = 50
@@ -63,12 +63,25 @@ def _make_stat_schema(stat: TraderStat) -> TraderStatSchema:
         first_trade_at=stat.first_trade_at,
         sharpe_ratio=_f(stat.sharpe_ratio),
         sortino_ratio=_f(stat.sortino_ratio),
+        profit_factor=_f(stat.profit_factor),
+        avg_pnl_per_trade=_f(stat.avg_pnl_per_trade),
+        max_losing_streak=stat.max_losing_streak,
+        profitable_days_pct=_f(stat.profitable_days_pct),
+        avg_trades_per_day=_f(stat.avg_trades_per_day),
+        daily_pnl_std_dev=_f(stat.daily_pnl_std_dev),
+        long_ratio_pct=_f(stat.long_ratio_pct),
+        avg_position_size_usd=_f(stat.avg_position_size_usd),
+        fees_paid_usd=_f(stat.fees_paid_usd),
+        calmar_ratio=_f(stat.calmar_ratio),
+        composite_score=_f(stat.composite_score),
+        max_drawdown_duration_days=_f(stat.max_drawdown_duration_days),
     )
 
 
 @router.get("", response_model=TraderListResponse)
 async def list_traders(
     db: DBSession,
+    current_user: CurrentUser,
     period: Literal["day", "week", "month", "allTime"] = "week",
     sort: Literal["roi", "pnl", "volume"] = "roi",
     limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=200),
@@ -81,6 +94,14 @@ async def list_traders(
     min_trades: int = Query(default=0, ge=0),
     min_volume: float = Query(default=0, ge=0),
     quality: bool = Query(default=False),
+    subscribed_only: bool = Query(default=False),
+    # Scoring filters (Phase 6)
+    min_composite_score: float = Query(default=0, ge=0, le=100),
+    min_profit_factor: float = Query(default=0, ge=0),
+    max_losing_streak: int | None = Query(default=None, ge=0),
+    min_profitable_days_pct: float = Query(default=0, ge=0, le=100),
+    max_avg_trades_per_day: float | None = Query(default=None, ge=0),
+    min_calmar: float = Query(default=0, ge=0),
 ) -> TraderListResponse:
     sort_col = {
         "roi": TraderStat.roi_pct,
@@ -126,6 +147,35 @@ async def list_traders(
         query = query.where(or_(col_tc >= min_trades, col_tc.is_(None)))
     if min_volume > 0:
         query = query.where(TraderStat.volume_usd >= min_volume)
+
+    if subscribed_only:
+        query = query.join(
+            Subscription,
+            and_(
+                Subscription.trader_id == Trader.id,
+                Subscription.user_id == current_user.id,
+                Subscription.is_active.is_(True),
+            ),
+        )
+
+    # Scoring-metric filters: NULL composite_score excluded; other NULLs included
+    if min_composite_score > 0:
+        query = query.where(TraderStat.composite_score >= min_composite_score)
+    if min_profit_factor > 0:
+        col_pf = TraderStat.profit_factor
+        query = query.where(or_(col_pf >= min_profit_factor, col_pf.is_(None)))
+    if max_losing_streak is not None:
+        col_ls = TraderStat.max_losing_streak
+        query = query.where(or_(col_ls <= max_losing_streak, col_ls.is_(None)))
+    if min_profitable_days_pct > 0:
+        col_pd = TraderStat.profitable_days_pct
+        query = query.where(or_(col_pd >= min_profitable_days_pct, col_pd.is_(None)))
+    if max_avg_trades_per_day is not None:
+        col_tpd = TraderStat.avg_trades_per_day
+        query = query.where(or_(col_tpd <= max_avg_trades_per_day, col_tpd.is_(None)))
+    if min_calmar > 0:
+        col_cal = TraderStat.calmar_ratio
+        query = query.where(or_(col_cal >= min_calmar, col_cal.is_(None)))
 
     if cursor:
         try:

@@ -103,6 +103,7 @@ class Fill(BaseModel):
     closed_pnl: Decimal = Field(alias="closedPnl")
     dir: str  # "Open Long", "Close Short", etc.
     oid: int
+    fee: Decimal = Field(default=Decimal("0"))
 
 
 class AssetMeta(BaseModel):

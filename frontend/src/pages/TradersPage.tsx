@@ -28,7 +28,20 @@ const MIN_DAYS_OPTIONS = [
 ]
 
 function filtersActive(f: TraderFilters): number {
-  return [f.quality, f.subscribed_only, f.min_win_rate > 0, f.max_drawdown < 100, f.min_days > 0, f.min_trades > 0].filter(Boolean).length
+  return [
+    f.quality,
+    f.subscribed_only,
+    f.min_win_rate > 0,
+    f.max_drawdown < 100,
+    f.min_days > 0,
+    f.min_trades > 0,
+    f.min_composite_score > 0,
+    f.min_profit_factor > 0,
+    f.max_losing_streak != null,
+    f.min_profitable_days_pct > 0,
+    f.max_avg_trades_per_day != null,
+    f.min_calmar > 0,
+  ].filter(Boolean).length
 }
 
 export function TradersPage() {
@@ -44,7 +57,7 @@ export function TradersPage() {
   const [initialLoading, setInitialLoading] = useState(true)
   const [searchInput, setSearchInput] = useState('')
   const [addressQuery, setAddressQuery] = useState('')
-  const loaderRef = useRef<HTMLDivElement>(null)
+  const [loaderNode, setLoaderNode] = useState<HTMLDivElement | null>(null)
   const loadingRef = useRef(false)
   const cursorRef = useRef<string | null>(null)
 
@@ -75,14 +88,13 @@ export function TradersPage() {
         const res = await fetchTraders({
           period,
           sort,
-          limit: filters.subscribed_only ? 200 : undefined,
           cursor: reset ? null : cursorRef.current,
           filters,
           address: addressQuery || undefined,
         })
         setTraders((prev) => (reset ? res.items : [...prev, ...res.items]))
         setCursor(res.next_cursor)
-        setHasMore(!filters.subscribed_only && res.next_cursor !== null)
+        setHasMore(res.next_cursor !== null)
       } finally {
         loadingRef.current = false
         setLoading(false)
@@ -107,16 +119,16 @@ export function TradersPage() {
 
   // Infinite scroll
   useEffect(() => {
-    if (!loaderRef.current) return
+    if (!loaderNode) return
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMore && !loadingRef.current) load(false)
       },
       { threshold: 0.1 },
     )
-    observer.observe(loaderRef.current)
+    observer.observe(loaderNode)
     return () => observer.disconnect()
-  }, [hasMore, load])
+  }, [loaderNode, hasMore, load])
 
   const openFilters = () => {
     setDraftFilters(filters)
@@ -133,9 +145,7 @@ export function TradersPage() {
   }
 
   const activeCount = filtersActive(filters)
-  const displayedTraders = filters.subscribed_only
-    ? traders.filter((t) => realSubIds.has(t.id) || demoSubIds.has(t.id))
-    : traders
+  const displayedTraders = traders
 
   return (
     <div className="flex flex-col h-full">
@@ -237,7 +247,7 @@ export function TradersPage() {
             {displayedTraders.map((t) => (
               <TraderCard key={t.id} trader={t} sort={sort} isRealSubscribed={realSubIds.has(t.id)} isDemoSubscribed={demoSubIds.has(t.id)} />
             ))}
-            <div ref={loaderRef} className="flex justify-center py-4">
+            <div ref={setLoaderNode} className="flex justify-center py-4">
               {loading && <LoadingSpinner />}
             </div>
           </>
@@ -265,6 +275,32 @@ export function TradersPage() {
 
             {/* Контролы — скроллятся если не влезают */}
             <div className="overflow-y-auto flex-1 px-4 space-y-5 pb-3">
+              {/* Top Rated toggle — composite_score >= 70 */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-tg-text">Top Rated</p>
+                  <p className="text-xs text-tg-hint mt-0.5">Composite score ≥ 70 (risk, consistency, returns)</p>
+                </div>
+                <button
+                  onClick={() =>
+                    setDraftFilters((f) => ({
+                      ...f,
+                      min_composite_score: f.min_composite_score > 0 ? 0 : 70,
+                    }))
+                  }
+                  className={`w-11 h-6 rounded-full transition-colors relative flex-shrink-0 ${
+                    draftFilters.min_composite_score > 0 ? '' : 'bg-gray-300 dark:bg-gray-600'
+                  }`}
+                  style={draftFilters.min_composite_score > 0 ? { background: 'var(--tg-theme-button-color)' } : {}}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                      draftFilters.min_composite_score > 0 ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
               {/* Verified only toggle */}
               <div className="flex items-center justify-between">
                 <div>

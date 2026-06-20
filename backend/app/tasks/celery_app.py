@@ -48,7 +48,7 @@ celery_app.conf.update(
         },
         "compute-quality-metrics": {
             "task": "app.tasks.analytics_tasks.compute_quality_metrics",
-            "schedule": 14400.0,  # every 4 hours
+            "schedule": 10800.0,  # every 3 hours
         },
     },
 )

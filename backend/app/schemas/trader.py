@@ -18,6 +18,18 @@ class TraderStatSchema(BaseModel):
     first_trade_at: datetime | None = None
     sharpe_ratio: float | None = None
     sortino_ratio: float | None = None
+    profit_factor: float | None = None
+    avg_pnl_per_trade: float | None = None
+    max_losing_streak: int | None = None
+    profitable_days_pct: float | None = None
+    avg_trades_per_day: float | None = None
+    daily_pnl_std_dev: float | None = None
+    long_ratio_pct: float | None = None
+    avg_position_size_usd: float | None = None
+    fees_paid_usd: float | None = None
+    calmar_ratio: float | None = None
+    composite_score: float | None = None
+    max_drawdown_duration_days: float | None = None
 
 
 class TraderListItem(BaseModel):

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Numeric, Text
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, Numeric, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -46,6 +46,18 @@ class TraderStat(Base):
     first_trade_at: Mapped[datetime | None] = mapped_column()
     sharpe_ratio: Mapped[float | None] = mapped_column(Numeric(10, 4))
     sortino_ratio: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    profit_factor: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    avg_pnl_per_trade: Mapped[float | None] = mapped_column(Numeric(20, 4))
+    max_losing_streak: Mapped[int | None] = mapped_column(Integer)
+    profitable_days_pct: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    avg_trades_per_day: Mapped[float | None] = mapped_column(Numeric(8, 4))
+    daily_pnl_std_dev: Mapped[float | None] = mapped_column(Numeric(20, 4))
+    long_ratio_pct: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    avg_position_size_usd: Mapped[float | None] = mapped_column(Numeric(20, 2))
+    fees_paid_usd: Mapped[float | None] = mapped_column(Numeric(20, 4))
+    calmar_ratio: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    composite_score: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    max_drawdown_duration_days: Mapped[float | None] = mapped_column(Numeric(8, 2))
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()
     )

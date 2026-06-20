@@ -11,6 +11,18 @@ export interface TraderStats {
   first_trade_at: string | null
   sharpe_ratio: number | null
   sortino_ratio: number | null
+  profit_factor: number | null
+  avg_pnl_per_trade: number | null
+  max_losing_streak: number | null
+  profitable_days_pct: number | null
+  avg_trades_per_day: number | null
+  daily_pnl_std_dev: number | null
+  long_ratio_pct: number | null
+  avg_position_size_usd: number | null
+  fees_paid_usd: number | null
+  calmar_ratio: number | null
+  composite_score: number | null
+  max_drawdown_duration_days: number | null
 }
 
 export interface TraderFilters {
@@ -20,6 +32,12 @@ export interface TraderFilters {
   max_drawdown: number
   min_days: number
   min_trades: number
+  min_composite_score: number
+  min_profit_factor: number
+  max_losing_streak: number | null
+  min_profitable_days_pct: number
+  max_avg_trades_per_day: number | null
+  min_calmar: number
 }
 
 export interface TraderListItem {

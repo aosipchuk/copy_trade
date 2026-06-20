@@ -20,8 +20,10 @@ from app.tasks.celery_app import celery_app
 
 logger = get_logger(__name__)
 
-_LEADERBOARD_TOP_N = 500
-_SNAPSHOT_TTL = 60  # seconds in Redis
+_MIN_ALLTIME_PNL_USD = 10_000   # Level 1: minimum all-time PnL
+_MIN_ACCOUNT_VALUE_USD = 1_000  # skip empty / abandoned accounts
+_MAX_TRADERS = 5_000            # safety cap against unexpected leaderboard growth
+_SNAPSHOT_TTL = 60              # seconds in Redis
 _position_adapter: TypeAdapter[list[Position]] = TypeAdapter(list[Position])
 
 
@@ -68,10 +70,28 @@ def _write_positions_to_clickhouse(address: str, positions: list[Position]) -> N
 # ─── Async business logic ─────────────────────────────────────────────────────
 
 
+def _filter_leaderboard(all_rows: list) -> list:  # type: ignore[type-arg]
+    """Level-1 gate: keep traders with meaningful all-time PnL and account balance."""
+    filtered = [
+        row
+        for row in all_rows
+        if (alltime := row.get_perf("allTime")) is not None
+        and alltime.pnl > _MIN_ALLTIME_PNL_USD
+        and row.account_value >= _MIN_ACCOUNT_VALUE_USD
+    ]
+    return filtered[:_MAX_TRADERS]
+
+
 async def _refresh_leaderboard_async() -> int:
     client = HyperliquidInfoClient()
-    rows = await client.get_leaderboard()
-    rows = rows[:_LEADERBOARD_TOP_N]
+    all_rows = await client.get_leaderboard()
+    rows = _filter_leaderboard(all_rows)
+
+    logger.info(
+        "leaderboard_filtered",
+        total=len(all_rows),
+        passed=len(rows),
+    )
 
     now = _utcnow()
     ch = get_ch_client()
@@ -229,7 +249,7 @@ async def _poll_trader_positions_async(trader_address: str) -> int:
     name="app.tasks.hl_tracker.refresh_leaderboard", bind=True, max_retries=3
 )
 def refresh_leaderboard(self) -> None:  # type: ignore[no-untyped-def]
-    """Fetch top-500 traders from Hyperliquid leaderboard and upsert to DB."""
+    """Fetch leaderboard, apply Level-1 filter, and upsert surviving traders to DB."""
     try:
         count = asyncio.run(_refresh_leaderboard_async())
         logger.info("leaderboard_refreshed", upserted=count)
