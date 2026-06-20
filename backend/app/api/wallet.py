@@ -141,7 +141,7 @@ async def wallet_approve(
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Wallet approval failed. Please retry or contact support.",
+                detail=f"Wallet approval failed: {hl_error}",
             )
 
     from datetime import UTC, datetime
@@ -385,7 +385,7 @@ async def builder_fee_approve(
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Builder fee approval failed. Please retry or contact support.",
+                detail=f"Builder fee approval failed: {hl_error}",
             )
 
     from datetime import UTC, datetime

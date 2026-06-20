@@ -250,11 +250,14 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
   const { walletProvider } = useAppKitProvider<Eip1193Provider>('eip155')
   const pendingSign = useRef(false)
 
-  const splitSig = (rawSig: string) => ({
-    r: rawSig.slice(0, 66),
-    s: '0x' + rawSig.slice(66, 130),
-    v: parseInt(rawSig.slice(130, 132), 16),
-  })
+  const splitSig = (rawSig: string) => {
+    const v = parseInt(rawSig.slice(130, 132), 16)
+    return {
+      r: rawSig.slice(0, 66),
+      s: '0x' + rawSig.slice(66, 130),
+      v: v < 27 ? v + 27 : v,
+    }
+  }
 
   const doSign = useCallback(async (provider: Eip1193Provider, payload: Record<string, unknown>, sigNonce: number) => {
     setLoading(true)
@@ -646,11 +649,14 @@ function BuilderApprovalGate({ onComplete }: { onComplete: () => void }) {
   const onCompleteRef = useRef(onComplete)
   useEffect(() => { onCompleteRef.current = onComplete }, [onComplete])
 
-  const splitSig = (rawSig: string) => ({
-    r: rawSig.slice(0, 66),
-    s: '0x' + rawSig.slice(66, 130),
-    v: parseInt(rawSig.slice(130, 132), 16),
-  })
+  const splitSig = (rawSig: string) => {
+    const v = parseInt(rawSig.slice(130, 132), 16)
+    return {
+      r: rawSig.slice(0, 66),
+      s: '0x' + rawSig.slice(66, 130),
+      v: v < 27 ? v + 27 : v,
+    }
+  }
 
   useEffect(() => {
     walletBuilderSetup()
