@@ -76,3 +76,8 @@ async def log_requests(request: Request, call_next: object) -> Response:
 
 
 app.include_router(api_router, prefix="/api")
+
+
+@app.get("/health", include_in_schema=False)
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
