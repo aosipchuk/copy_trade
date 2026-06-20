@@ -72,9 +72,9 @@ services:
       clickhouse:
         condition: service_started
     volumes:
-      - ./backend:/app
-      - backend_venv:/app/.venv
-    command: sh -c "uv sync --no-dev --frozen && uv run alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app"
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+    command: sh -c "uv run alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 10s
@@ -100,9 +100,8 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./backend:/app
-      - celery_worker_venv:/app/.venv
-    command: sh -c "uv sync --no-dev --frozen && uv run celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 -Q default,signals,execution"
+      - ./backend/app:/app/app
+    command: uv run celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 -Q default,signals,execution
 
   celery-beat:
     build:
@@ -118,9 +117,8 @@ services:
     depends_on:
       - celery-worker
     volumes:
-      - ./backend:/app
-      - celery_beat_venv:/app/.venv
-    command: sh -c "uv sync --no-dev --frozen && uv run celery -A app.tasks.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler"
+      - ./backend/app:/app/app
+    command: uv run celery -A app.tasks.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler
 
   frontend:
     build:
@@ -145,6 +143,3 @@ volumes:
   postgres_data:
   redis_data:
   clickhouse_data:
-  backend_venv:
-  celery_worker_venv:
-  celery_beat_venv:
