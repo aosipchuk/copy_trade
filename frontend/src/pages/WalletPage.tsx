@@ -235,6 +235,7 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
   const [loading, setLoading] = useState(false)
   const [waitingForWallet, setWaitingForWallet] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [depositReason, setDepositReason] = useState<'initial' | 'need-deposit'>('initial')
 
   // Builder fee state
   const [builderNonce, setBuilderNonce] = useState<number>(0)
@@ -291,8 +292,14 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
       }
     } catch (err: unknown) {
       const axiosDetail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(axiosDetail ?? (err instanceof Error ? err.message : 'Signing failed'))
-      if (axiosDetail) setStep('setup')
+      const errMsg = axiosDetail ?? (err instanceof Error ? err.message : 'Signing failed')
+      if (errMsg.includes('Must deposit')) {
+        setDepositReason('need-deposit')
+        setStep('deposit')
+      } else {
+        setError(errMsg)
+        if (axiosDetail) setStep('setup')
+      }
     } finally {
       setLoading(false)
       setWaitingForWallet(false)
@@ -584,9 +591,19 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
       {/* Step: deposit — QR code for funding */}
       {step === 'deposit' && (
         <div className="space-y-4">
-          <p className="text-sm text-tg-text text-center">
-            Fund your Hyperliquid account to start copy trading
-          </p>
+          {depositReason === 'need-deposit' ? (
+            <div className="rounded-xl p-3 border border-yellow-400" style={{ background: 'var(--tg-theme-secondary-bg-color)' }}>
+              <p className="text-xs font-semibold text-tg-text mb-1">Deposit required before connecting</p>
+              <p className="text-xs text-tg-hint">
+                Hyperliquid requires at least one deposit before you can register an agent wallet.
+                Fund the address below, then tap "Retry" to complete setup.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-tg-text text-center">
+              Fund your Hyperliquid account to start copy trading
+            </p>
+          )}
 
           <div className="flex flex-col items-center gap-3 rounded-xl p-6" style={{ background: 'var(--tg-theme-secondary-bg-color)' }}>
             <QRCodeSVG
@@ -609,16 +626,29 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
             </ol>
           </div>
 
-          <button
-            className="w-full py-3 rounded-xl font-semibold text-tg-button-text"
-            style={{ background: 'var(--tg-theme-button-color)' }}
-            onClick={() => {
-              setStep('done')
-              setTimeout(onComplete, 1200)
-            }}
-          >
-            I've funded my account
-          </button>
+          {depositReason === 'need-deposit' ? (
+            <button
+              className="w-full py-3 rounded-xl font-semibold text-tg-button-text"
+              style={{ background: 'var(--tg-theme-button-color)' }}
+              onClick={() => {
+                setDepositReason('initial')
+                setStep('sign')
+              }}
+            >
+              I've funded my account — Retry
+            </button>
+          ) : (
+            <button
+              className="w-full py-3 rounded-xl font-semibold text-tg-button-text"
+              style={{ background: 'var(--tg-theme-button-color)' }}
+              onClick={() => {
+                setStep('done')
+                setTimeout(onComplete, 1200)
+              }}
+            >
+              I've funded my account
+            </button>
+          )}
         </div>
       )}
 

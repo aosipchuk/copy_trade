@@ -74,7 +74,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
-    command: sh -c "uv run alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 10s
@@ -101,7 +101,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
-    command: uv run celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 -Q default,signals,execution
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 -Q default,signals,execution
 
   celery-beat:
     build:
@@ -118,7 +118,7 @@ services:
       - celery-worker
     volumes:
       - ./backend/app:/app/app
-    command: uv run celery -A app.tasks.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler
+    command: celery -A app.tasks.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler
 
   frontend:
     build:
