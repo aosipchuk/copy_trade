@@ -245,6 +245,7 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
   const [newAddress, setNewAddress] = useState('')
   const [newPrivkey, setNewPrivkey] = useState('')
   const [privkeyCopied, setPrivkeyCopied] = useState(false)
+  const [newWalletKey, setNewWalletKey] = useState<string | null>(null)
 
   const { open } = useAppKit()
   const { isConnected, address: connectedAddress } = useAppKitAccount()
@@ -368,14 +369,26 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
     }
   }
 
-  // Variant B: generate keypair in browser, sign EIP-712 without MetaMask
-  const handleNewAccount = async () => {
+  // Variant B: generate keypair in browser — show key first, then deposit, then approve
+  const handleNewAccount = () => {
     if (!eip712Payload) return
+    const wallet = Wallet.createRandom()
+    setNewWalletKey(wallet.privateKey)
+    setNewAddress(wallet.address)
+    setNewPrivkey(wallet.privateKey)
+    setDepositReason('need-deposit')
+    setStep('new-account')
+  }
+
+  // Called after user funds the new account — refresh setup + sign with stored private key
+  const handleNewAccountSign = async () => {
+    if (!newWalletKey) return
     setLoading(true)
     setError(null)
     try {
-      const wallet = Wallet.createRandom()
-      const { domain, types, message } = eip712Payload as {
+      const wallet = new Wallet(newWalletKey)
+      const res = await walletSetup()
+      const { domain, types, message } = res.eip712_payload as {
         domain: Record<string, unknown>
         types: Record<string, { name: string; type: string }[]>
         message: Record<string, unknown>
@@ -383,9 +396,7 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
       }
       const { EIP712Domain: _, ...filteredTypes } = types as Record<string, { name: string; type: string }[]>
       const rawSig: string = await wallet.signTypedData(domain, filteredTypes, message)
-
-      await walletApprove({ nonce, userAddress: wallet.address, signature: splitSig(rawSig) })
-
+      await walletApprove({ nonce: res.nonce, userAddress: wallet.address, signature: splitSig(rawSig) })
       try {
         const builderRes = await walletBuilderSetup()
         const { domain: bd, types: bt, message: bm } = builderRes.eip712_payload as {
@@ -397,16 +408,13 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
         const { EIP712Domain: _bd, ...bFilteredTypes } = bt as Record<string, { name: string; type: string }[]>
         const bRawSig: string = await wallet.signTypedData(bd, bFilteredTypes, bm)
         await walletBuilderApprove({ nonce: builderRes.nonce, signature: splitSig(bRawSig) })
-      } catch {
-        // builder fee not configured or failed — continue anyway
-      }
-
-      setNewAddress(wallet.address)
-      setNewPrivkey(wallet.privateKey)
-      setStep('new-account')
+      } catch { /* builder not configured */ }
+      setDepositReason('initial')
+      setStep('done')
+      setTimeout(onComplete, 1500)
     } catch (err: unknown) {
       const axiosDetail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(axiosDetail ?? (err instanceof Error ? err.message : 'Failed to create account'))
+      setError(axiosDetail ?? (err instanceof Error ? err.message : 'Connection failed'))
     } finally {
       setLoading(false)
     }
@@ -626,18 +634,28 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
             </ol>
           </div>
 
-          {depositReason === 'need-deposit' ? (
+          {depositReason === 'need-deposit' && newWalletKey ? (
+            // New-account path: sign with the stored browser wallet
             <button
-              className="w-full py-3 rounded-xl font-semibold text-tg-button-text"
+              className="w-full py-3 rounded-xl font-semibold text-tg-button-text flex items-center justify-center gap-2 disabled:opacity-50"
               style={{ background: 'var(--tg-theme-button-color)' }}
-              onClick={() => {
-                setDepositReason('initial')
-                setStep('sign')
-              }}
+              onClick={handleNewAccountSign}
+              disabled={loading}
             >
-              I've funded my account — Retry
+              {loading ? <LoadingSpinner size="sm" /> : "I've funded — Connect Wallet"}
+            </button>
+          ) : depositReason === 'need-deposit' ? (
+            // WalletConnect path: refresh setup to get fresh nonce, then sign
+            <button
+              className="w-full py-3 rounded-xl font-semibold text-tg-button-text flex items-center justify-center gap-2 disabled:opacity-50"
+              style={{ background: 'var(--tg-theme-button-color)' }}
+              onClick={async () => { setDepositReason('initial'); await handleSetup() }}
+              disabled={loading}
+            >
+              {loading ? <LoadingSpinner size="sm" /> : "I've funded — Retry Approval"}
             </button>
           ) : (
+            // Initial flow: setup was complete, just continue
             <button
               className="w-full py-3 rounded-xl font-semibold text-tg-button-text"
               style={{ background: 'var(--tg-theme-button-color)' }}
