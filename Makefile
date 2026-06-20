@@ -1,5 +1,5 @@
 .PHONY: up down build logs shell test lint typecheck migrate makemigrations install clean \
-        prod-up prod-down prod-logs prod-build ssl deploy
+        prod-up prod-down prod-logs prod-build ssl deploy deploy-backend deploy-frontend
 
 ifneq (,$(wildcard ./.env))
   include .env
@@ -51,11 +51,22 @@ ssl:
 		--agree-tos --no-eff-email \
 		-d $(DOMAIN)
 
-# Full deploy: build → migrate → restart
+# Full deploy: build → migrate → restart (use when frontend changed)
 deploy:
 	$(PROD_COMPOSE) build backend frontend
 	$(PROD_COMPOSE) run --rm backend sh -c "uv run alembic upgrade head"
 	$(PROD_COMPOSE) up -d --no-deps backend celery-worker celery-beat frontend
+
+# Backend-only deploy: ~30s (use when only Python code or migrations changed)
+deploy-backend:
+	$(PROD_COMPOSE) build backend
+	$(PROD_COMPOSE) run --rm backend sh -c "uv run alembic upgrade head"
+	$(PROD_COMPOSE) up -d --no-deps backend celery-worker celery-beat
+
+# Frontend-only deploy: ~25 min on VPS (use when only UI changed, no migrations)
+deploy-frontend:
+	$(PROD_COMPOSE) build frontend
+	$(PROD_COMPOSE) up -d --no-deps frontend
 
 # ─── Development ─────────────────────────────────────────────────────────────
 
