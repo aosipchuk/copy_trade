@@ -7,6 +7,8 @@ import { FullPageSpinner, LoadingSpinner } from '../components/LoadingSpinner'
 import type { ActivityItem, AgentStatus, PortfolioRisk, PositionItem, WalletBalance } from '../types'
 import { fmt } from '../utils/format'
 
+const WALLET_HINT = 'Signing request sent — open your wallet app to confirm'
+
 type WizardStep = 'setup' | 'sign' | 'builder' | 'new-account' | 'deposit' | 'done'
 
 const ACTION_ICON: Record<string, string> = {
@@ -28,7 +30,7 @@ export function WalletPage() {
   const [loading, setLoading] = useState(true)
   const [closingAll, setClosingAll] = useState(false)
 
-  const reload = () => {
+  const reload = useCallback(() => {
     setLoading(true)
     fetchAgentStatus()
       .then((s) => {
@@ -49,9 +51,9 @@ export function WalletPage() {
         }
       })
       .finally(() => setLoading(false))
-  }
+  }, [])
 
-  useEffect(reload, [])
+  useEffect(reload, [reload])
 
   if (loading) return <FullPageSpinner />
 
@@ -231,6 +233,7 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
   const [nonce, setNonce] = useState<number>(0)
   const [eip712Payload, setEip712Payload] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(false)
+  const [waitingForWallet, setWaitingForWallet] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Builder fee state
@@ -268,7 +271,9 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
         primaryType: string
       }
       const { EIP712Domain: _, ...filteredTypes } = types as Record<string, { name: string; type: string }[]>
+      setWaitingForWallet(true)
       const rawSig: string = await signer.signTypedData(domain, filteredTypes, message)
+      setWaitingForWallet(false)
 
       await walletApprove({ nonce: sigNonce, userAddress, signature: splitSig(rawSig) })
       try {
@@ -287,6 +292,7 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
       if (axiosDetail) setStep('setup')
     } finally {
       setLoading(false)
+      setWaitingForWallet(false)
     }
   }, [onComplete])
 
@@ -304,7 +310,9 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
         primaryType: string
       }
       const { EIP712Domain: _, ...filteredTypes } = types as Record<string, { name: string; type: string }[]>
+      setWaitingForWallet(true)
       const rawSig: string = await signer.signTypedData(domain, filteredTypes, message)
+      setWaitingForWallet(false)
       await walletBuilderApprove({ nonce: builderNonce, signature: splitSig(rawSig) })
       setStep('deposit')
     } catch (err: unknown) {
@@ -312,6 +320,7 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
       setError(axiosDetail ?? (err instanceof Error ? err.message : 'Builder signing failed'))
     } finally {
       setLoading(false)
+      setWaitingForWallet(false)
     }
   }, [builderPayload, builderNonce])
 
@@ -484,6 +493,12 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
             {loading ? <LoadingSpinner size="sm" /> : 'Sign with Wallet'}
           </button>
 
+          {waitingForWallet && (
+            <p className="text-sm text-tg-hint text-center animate-pulse">
+              {WALLET_HINT}
+            </p>
+          )}
+
           <div className="text-center">
             <span className="text-xs text-tg-hint">New to Hyperliquid? </span>
             <button
@@ -554,6 +569,12 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
           >
             {loading ? <LoadingSpinner size="sm" /> : 'Authorize Platform Fee (0.05%)'}
           </button>
+
+          {waitingForWallet && (
+            <p className="text-sm text-tg-hint text-center animate-pulse">
+              {WALLET_HINT}
+            </p>
+          )}
         </div>
       )}
 
@@ -614,6 +635,7 @@ function BuilderApprovalGate({ onComplete }: { onComplete: () => void }) {
   const [nonce, setNonce] = useState<number>(0)
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(false)
+  const [waitingForWallet, setWaitingForWallet] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notRequired, setNotRequired] = useState(false)
 
@@ -621,6 +643,8 @@ function BuilderApprovalGate({ onComplete }: { onComplete: () => void }) {
   const { isConnected } = useAppKitAccount()
   const { walletProvider } = useAppKitProvider<Eip1193Provider>('eip155')
   const pendingSign = useRef(false)
+  const onCompleteRef = useRef(onComplete)
+  useEffect(() => { onCompleteRef.current = onComplete }, [onComplete])
 
   const splitSig = (rawSig: string) => ({
     r: rawSig.slice(0, 66),
@@ -637,9 +661,10 @@ function BuilderApprovalGate({ onComplete }: { onComplete: () => void }) {
       .catch(() => {
         // Builder not configured on server — let user through
         setNotRequired(true)
-        onComplete()
+        onCompleteRef.current()
       })
-  }, [onComplete])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const doSign = async (provider: Eip1193Provider) => {
     if (!payload) return
@@ -655,14 +680,17 @@ function BuilderApprovalGate({ onComplete }: { onComplete: () => void }) {
         primaryType: string
       }
       const { EIP712Domain: _, ...filteredTypes } = types as Record<string, { name: string; type: string }[]>
+      setWaitingForWallet(true)
       const rawSig: string = await signer.signTypedData(domain, filteredTypes, message)
+      setWaitingForWallet(false)
       await walletBuilderApprove({ nonce, signature: splitSig(rawSig) })
-      onComplete()
+      onCompleteRef.current()
     } catch (err: unknown) {
       const axiosDetail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setError(axiosDetail ?? (err instanceof Error ? err.message : 'Signing failed'))
     } finally {
       setLoading(false)
+      setWaitingForWallet(false)
     }
   }
 
@@ -671,6 +699,7 @@ function BuilderApprovalGate({ onComplete }: { onComplete: () => void }) {
       pendingSign.current = false
       doSign(walletProvider)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, walletProvider, payload])
 
   const handleSign = () => {
@@ -706,6 +735,12 @@ function BuilderApprovalGate({ onComplete }: { onComplete: () => void }) {
       >
         {loading ? <LoadingSpinner size="sm" /> : 'Authorize Platform Fee (0.05%)'}
       </button>
+
+      {waitingForWallet && (
+        <p className="text-sm text-tg-hint text-center animate-pulse">
+          {WALLET_HINT}
+        </p>
+      )}
     </div>
   )
 }
