@@ -489,7 +489,16 @@ function WalletSetupWizard({ onComplete }: { onComplete: () => void }) {
 
           {connectedAddress && (
             <div className="rounded-xl p-4" style={{ background: 'var(--tg-theme-secondary-bg-color)' }}>
-              <div className="text-xs text-tg-hint mb-1">Connected Wallet</div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs text-tg-hint">Connected Wallet</div>
+                <button
+                  className="text-xs underline"
+                  style={{ color: 'var(--tg-theme-button-color)' }}
+                  onClick={() => open({ view: 'Account' })}
+                >
+                  Change
+                </button>
+              </div>
               <div className="text-xs font-mono text-tg-text break-all">{connectedAddress}</div>
             </div>
           )}
@@ -691,7 +700,7 @@ function BuilderApprovalGate({ onComplete }: { onComplete: () => void }) {
   const [notRequired, setNotRequired] = useState(false)
 
   const { open } = useAppKit()
-  const { isConnected } = useAppKitAccount()
+  const { isConnected, address: connectedAddress } = useAppKitAccount()
   const { walletProvider } = useAppKitProvider<Eip1193Provider>('eip155')
   const pendingSign = useRef(false)
   const onCompleteRef = useRef(onComplete)
@@ -780,6 +789,21 @@ function BuilderApprovalGate({ onComplete }: { onComplete: () => void }) {
           This is how we keep the service running — the fee is taken by Hyperliquid on your behalf.
         </p>
       </div>
+      {connectedAddress && (
+        <div className="w-full rounded-xl p-3" style={{ background: 'var(--tg-theme-secondary-bg-color)' }}>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs text-tg-hint">Connected Wallet</div>
+            <button
+              className="text-xs underline"
+              style={{ color: 'var(--tg-theme-button-color)' }}
+              onClick={() => open({ view: 'Account' })}
+            >
+              Change
+            </button>
+          </div>
+          <div className="text-xs font-mono text-tg-text break-all">{connectedAddress}</div>
+        </div>
+      )}
       {error && <p className="text-sm text-red-500 text-center">{error}</p>}
       <button
         className="w-full py-3 rounded-xl font-semibold text-tg-button-text flex items-center justify-center gap-2 disabled:opacity-50"
