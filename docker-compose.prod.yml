@@ -44,13 +44,13 @@ services:
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
     command: >
-      sh -c "uv run alembic upgrade head &&
-             uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 800M
 
   celery-worker:
     volumes: !reset []
