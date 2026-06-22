@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     hl_mainnet_api_url: str = "https://api.hyperliquid.xyz"
     hl_stats_url: str = "https://stats-data.hyperliquid.xyz/Mainnet"
 
+    # Hydromancer (human-score filtering)
+    hydromancer_api_key: str = ""
+    hydromancer_api_url: str = "https://api.hydromancer.xyz"
+
     # Builder Code (monetization)
     builder_address: str = ""  # 0x... our wallet for receiving fees
     builder_fee_rate: int = 50  # tenth-bps: 50 = 0.05%, 100 = 0.1%

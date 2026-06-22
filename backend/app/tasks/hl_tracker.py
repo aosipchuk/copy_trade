@@ -2,16 +2,18 @@ import asyncio
 from datetime import UTC, datetime
 
 from pydantic import TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import func
 
 from app.core.clickhouse_client import get_ch_client
+from app.core.config import settings
 from app.core.database import get_task_db_session
 from app.core.logging import get_logger
 from app.core.redis_client import get_redis_client
 from app.models.subscription import Subscription
 from app.models.trader import Trader, TraderStat
+from app.services.hydromancer.client import HydromancerClient
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import Position
 from app.services.signal_detector import SignalEvent, detect_changes
@@ -286,3 +288,61 @@ def poll_trader_positions(self, trader_address: str) -> None:  # type: ignore[no
     except Exception as exc:
         logger.error("poll_positions_failed", trader=trader_address, error=str(exc))
         raise self.retry(exc=exc, countdown=10) from exc
+
+
+async def _refresh_human_scores_async() -> int:
+    """Fetch human scores from Hydromancer and update the traders table.
+
+    Only updates rows that already exist in our DB — does not insert new traders.
+    Traders absent from Hydromancer's response keep their previous score.
+    """
+    if not settings.hydromancer_api_key:
+        logger.info("hydromancer_skipped", reason="HYDROMANCER_API_KEY not set")
+        return 0
+
+    client = HydromancerClient(settings.hydromancer_api_key)
+    users = await client.get_human_scores(window="all", min_human_score=0)
+
+    if not users:
+        return 0
+
+    score_map: dict[str, int] = {u.user.lower(): u.human_score for u in users}
+
+    to_update: list[tuple[int, int]] = []
+    async with get_task_db_session() as db:
+        result = await db.execute(select(Trader.id, Trader.hl_address))
+        rows = result.all()
+        to_update = [
+            (tid, score_map[addr.lower()])
+            for tid, addr in rows
+            if addr.lower() in score_map
+        ]
+        if to_update:
+            ids = [tid for tid, _ in to_update]
+            await db.execute(
+                update(Trader)
+                .where(Trader.id.in_(ids))
+                .values(
+                    human_score=case(
+                        {tid: score for tid, score in to_update},
+                        value=Trader.id,
+                    )
+                )
+            )
+    updated = len(to_update)
+
+    logger.info("human_scores_updated", updated=updated, total=len(users))
+    return updated
+
+
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="app.tasks.hl_tracker.refresh_human_scores", bind=True, max_retries=2
+)
+def refresh_human_scores(self) -> None:  # type: ignore[no-untyped-def]
+    """Sync Hydromancer human scores for all known traders."""
+    try:
+        count = asyncio.run(_refresh_human_scores_async())
+        logger.info("human_scores_refreshed", updated=count)
+    except Exception as exc:
+        logger.error("human_scores_refresh_failed", error=str(exc))
+        raise self.retry(exc=exc, countdown=300) from exc

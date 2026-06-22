@@ -50,5 +50,9 @@ celery_app.conf.update(
             "task": "app.tasks.analytics_tasks.compute_quality_metrics",
             "schedule": 10800.0,  # every 3 hours
         },
+        "refresh-human-scores": {
+            "task": "app.tasks.hl_tracker.refresh_human_scores",
+            "schedule": 14400.0,  # every 4 hours
+        },
     },
 )

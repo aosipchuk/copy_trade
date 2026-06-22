@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import Select, and_, or_, select
 
 from app.api.deps import CurrentUser, DBSession, get_current_user
 from app.core.cache import cached_json
@@ -44,6 +44,103 @@ _CACHE_TTL_STATS = 30
 _CACHE_TTL_POSITIONS = 5
 _DEFAULT_LIMIT = 50
 
+# Hard gate thresholds (Level 1–4). NULL = not yet computed → trader passes through.
+_GATE_MIN_ACTIVE_DAYS: int = 90
+_GATE_MIN_TRADES: int = 50
+_GATE_MIN_AVG_DURATION_HRS: float = 5 / 60  # 5 minutes — cuts scalpers and HFT bots
+_GATE_MAX_DRAWDOWN_PCT: float = 20.0
+_GATE_MIN_SHARPE: float = 1.0
+_GATE_MIN_SORTINO: float = 1.5
+_GATE_MAX_AVG_LEVERAGE: float = 5.0
+_GATE_MIN_WIN_RATE: float = 50.0
+_GATE_MAX_WIN_RATE: float = 75.0  # above 80% is suspicious
+_GATE_MIN_PROFIT_FACTOR: float = 1.5
+_GATE_MIN_AVG_PNL_PER_TRADE: float = 0.0
+_GATE_MAX_LOSING_STREAK: int = 5
+_GATE_MIN_TRADES_PER_DAY: float = 1.0
+_GATE_MAX_TRADES_PER_DAY: float = 20.0
+_GATE_MIN_PROFITABLE_DAYS_PCT: float = 55.0
+_GATE_MAX_DD_DURATION_DAYS: float = 30.0
+_GATE_MIN_COMPOSITE_SCORE: float = 70.0
+_GATE_MIN_HUMAN_SCORE: int = 60
+
+
+def _apply_hard_gates(query: Select) -> Select:  # type: ignore[type-arg]
+    """Apply Level 1–4 quality gates. NULL = not yet computed → trader passes through."""
+    return query.where(
+        or_(
+            TraderStat.active_trading_days >= _GATE_MIN_ACTIVE_DAYS,
+            TraderStat.active_trading_days.is_(None),
+        ),
+        or_(
+            TraderStat.trade_count >= _GATE_MIN_TRADES,
+            TraderStat.trade_count.is_(None),
+        ),
+        or_(
+            TraderStat.avg_trade_duration_hrs >= _GATE_MIN_AVG_DURATION_HRS,
+            TraderStat.avg_trade_duration_hrs.is_(None),
+        ),
+        or_(
+            TraderStat.max_drawdown_pct <= _GATE_MAX_DRAWDOWN_PCT,
+            TraderStat.max_drawdown_pct.is_(None),
+        ),
+        or_(
+            TraderStat.sharpe_ratio >= _GATE_MIN_SHARPE,
+            TraderStat.sharpe_ratio.is_(None),
+        ),
+        or_(
+            TraderStat.sortino_ratio >= _GATE_MIN_SORTINO,
+            TraderStat.sortino_ratio.is_(None),
+        ),
+        or_(
+            TraderStat.avg_leverage <= _GATE_MAX_AVG_LEVERAGE,
+            TraderStat.avg_leverage.is_(None),
+        ),
+        or_(
+            TraderStat.win_rate_pct.between(_GATE_MIN_WIN_RATE, _GATE_MAX_WIN_RATE),
+            TraderStat.win_rate_pct.is_(None),
+        ),
+        or_(
+            TraderStat.profit_factor >= _GATE_MIN_PROFIT_FACTOR,
+            TraderStat.profit_factor.is_(None),
+        ),
+        or_(
+            TraderStat.avg_pnl_per_trade > _GATE_MIN_AVG_PNL_PER_TRADE,
+            TraderStat.avg_pnl_per_trade.is_(None),
+        ),
+        or_(
+            TraderStat.max_losing_streak <= _GATE_MAX_LOSING_STREAK,
+            TraderStat.max_losing_streak.is_(None),
+        ),
+        or_(
+            TraderStat.avg_trades_per_day.between(
+                _GATE_MIN_TRADES_PER_DAY, _GATE_MAX_TRADES_PER_DAY
+            ),
+            TraderStat.avg_trades_per_day.is_(None),
+        ),
+        or_(
+            TraderStat.daily_pnl_std_dev < 2 * TraderStat.avg_pnl_per_trade,
+            TraderStat.daily_pnl_std_dev.is_(None),
+            TraderStat.avg_pnl_per_trade.is_(None),
+        ),
+        or_(
+            TraderStat.profitable_days_pct >= _GATE_MIN_PROFITABLE_DAYS_PCT,
+            TraderStat.profitable_days_pct.is_(None),
+        ),
+        or_(
+            TraderStat.max_drawdown_duration_days <= _GATE_MAX_DD_DURATION_DAYS,
+            TraderStat.max_drawdown_duration_days.is_(None),
+        ),
+        or_(
+            TraderStat.composite_score >= _GATE_MIN_COMPOSITE_SCORE,
+            TraderStat.composite_score.is_(None),
+        ),
+        or_(
+            Trader.human_score >= _GATE_MIN_HUMAN_SCORE,
+            Trader.human_score.is_(None),
+        ),
+    )
+
 
 def _f(val: object) -> float | None:
     return float(val) if val is not None else None  # type: ignore[arg-type]
@@ -75,6 +172,8 @@ def _make_stat_schema(stat: TraderStat) -> TraderStatSchema:
         calmar_ratio=_f(stat.calmar_ratio),
         composite_score=_f(stat.composite_score),
         max_drawdown_duration_days=_f(stat.max_drawdown_duration_days),
+        active_trading_days=stat.active_trading_days,
+        avg_leverage=_f(stat.avg_leverage),
     )
 
 
@@ -109,10 +208,13 @@ async def list_traders(
         "volume": TraderStat.volume_usd,
     }[sort]
 
-    query = (
+    query = _apply_hard_gates(
         select(Trader, TraderStat)
         .join(TraderStat, TraderStat.trader_id == Trader.id)
-        .where(Trader.is_active == True, TraderStat.period == period)  # noqa: E712
+        .where(
+            Trader.is_active == True,  # noqa: E712
+            TraderStat.period == period,
+        )
         .order_by(sort_col.desc().nulls_last(), Trader.id.desc())
         .limit(limit + 1)
     )

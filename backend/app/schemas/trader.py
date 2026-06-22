@@ -30,6 +30,8 @@ class TraderStatSchema(BaseModel):
     calmar_ratio: float | None = None
     composite_score: float | None = None
     max_drawdown_duration_days: float | None = None
+    active_trading_days: int | None = None
+    avg_leverage: float | None = None
 
 
 class TraderListItem(BaseModel):

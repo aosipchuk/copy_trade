@@ -14,6 +14,7 @@ class Trader(Base):
     hl_address: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    human_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
@@ -58,6 +59,8 @@ class TraderStat(Base):
     calmar_ratio: Mapped[float | None] = mapped_column(Numeric(10, 4))
     composite_score: Mapped[float | None] = mapped_column(Numeric(6, 2))
     max_drawdown_duration_days: Mapped[float | None] = mapped_column(Numeric(8, 2))
+    active_trading_days: Mapped[int | None] = mapped_column(Integer)
+    avg_leverage: Mapped[float | None] = mapped_column(Numeric(6, 2))
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()
     )

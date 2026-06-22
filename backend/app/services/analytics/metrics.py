@@ -4,6 +4,7 @@ import statistics
 from collections import defaultdict
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import NamedTuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +62,8 @@ async def get_trader_stats(db: AsyncSession, trader_id: int) -> list[TraderStatS
             calmar_ratio=_f(r.calmar_ratio),
             composite_score=_f(r.composite_score),
             max_drawdown_duration_days=_f(r.max_drawdown_duration_days),
+            active_trading_days=r.active_trading_days,
+            avg_leverage=_f(r.avg_leverage),
         )
         for r in rows
     ]
@@ -131,6 +134,24 @@ async def get_equity_curve(
         client = HyperliquidInfoClient(base_url=settings.hl_mainnet_api_url)
         fills = await client.get_fills(address, limit=None)
     return _build_equity_curve_from_fills(fills, period)
+
+
+def _ch_avg_leverage(address: str) -> float | None:
+    ch = get_ch_client()
+    rows = ch.execute(
+        """
+        SELECT avg(leverage)
+        FROM copytrade.trader_positions
+        WHERE trader_address = %(addr)s
+          AND szi != 0
+          AND leverage > 0
+        """,
+        {"addr": address},
+    )
+    if not rows or rows[0][0] is None:
+        return None
+    value = float(rows[0][0])
+    return value if value > 0 else None
 
 
 def _ch_open_positions(
@@ -440,6 +461,136 @@ def _max_drawdown_duration_days(equity_curve: list[EquityPoint]) -> float:
     return round(max_duration, 2)
 
 
+class _TradeMetrics(NamedTuple):
+    trade_count: int | None
+    win_rate_pct: float | None
+    avg_trade_duration_hrs: float | None
+    profit_factor: float | None
+    avg_pnl_per_trade: float | None
+    max_losing_streak: int | None
+
+
+class _DailyMetrics(NamedTuple):
+    profitable_days_pct: float | None
+    avg_trades_per_day: float | None
+    daily_pnl_std_dev: float | None
+    active_trading_days: int | None
+
+
+class _RiskMetrics(NamedTuple):
+    max_drawdown_usd: float | None
+    max_drawdown_pct: float | None
+    sharpe_ratio: float | None
+    sortino_ratio: float | None
+    calmar_ratio: float | None
+    max_drawdown_duration_days: float | None
+
+
+def _compute_per_trade_metrics(
+    closing_by_oid: dict[int, list[Fill]],
+    open_fills_by_coin: dict[str, list[Fill]],
+) -> _TradeMetrics:
+    if not closing_by_oid:
+        return _TradeMetrics(None, None, None, None, None, None)
+
+    trade_count = len(closing_by_oid)
+    trade_pnls: list[float] = []
+    durations_hrs: list[float] = []
+
+    for close_fills in closing_by_oid.values():
+        pnl = sum(float(f.closed_pnl) for f in close_fills)
+        trade_pnls.append(pnl)
+
+        coin = close_fills[0].coin
+        close_min_time = min(f.time for f in close_fills)
+        open_candidates = [
+            f for f in open_fills_by_coin.get(coin, []) if f.time < close_min_time
+        ]
+        if open_candidates:
+            open_time = max(f.time for f in open_candidates)
+            durations_hrs.append((close_min_time - open_time) / 1000 / 3600)
+
+    winning = sum(1 for p in trade_pnls if p > 0)
+    winners = [p for p in trade_pnls if p > 0]
+    losers = [abs(p) for p in trade_pnls if p < 0]
+
+    return _TradeMetrics(
+        trade_count=trade_count,
+        win_rate_pct=(winning / trade_count) * 100,
+        avg_trade_duration_hrs=sum(durations_hrs) / len(durations_hrs) if durations_hrs else None,
+        profit_factor=sum(winners) / sum(losers) if losers else None,
+        avg_pnl_per_trade=sum(trade_pnls) / len(trade_pnls),
+        max_losing_streak=_max_losing_streak(trade_pnls),
+    )
+
+
+def _compute_daily_metrics(
+    all_fills: list[Fill],
+    closing_by_oid: dict[int, list[Fill]],
+    trade_count: int | None,
+) -> _DailyMetrics:
+    daily_pnl_map: dict[str, float] = defaultdict(float)
+    for f in all_fills:
+        day = datetime.fromtimestamp(f.time / 1000, tz=UTC).date().isoformat()
+        daily_pnl_map[day] += float(f.closed_pnl)
+
+    profitable_days_pct: float | None = (
+        sum(1 for v in daily_pnl_map.values() if v > 0) / len(daily_pnl_map) * 100
+        if daily_pnl_map
+        else None
+    )
+
+    close_day_set: set[str] = {
+        datetime.fromtimestamp(min(f.time for f in fills_list) / 1000, tz=UTC)
+        .date()
+        .isoformat()
+        for fills_list in closing_by_oid.values()
+    }
+    active_days = len(close_day_set)
+    avg_trades_per_day: float | None = (
+        trade_count / active_days if active_days > 0 and trade_count else None
+    )
+
+    daily_vals = list(daily_pnl_map.values())
+    daily_pnl_std_dev: float | None = (
+        statistics.stdev(daily_vals) if len(daily_vals) >= 2 else None
+    )
+
+    return _DailyMetrics(
+        profitable_days_pct=profitable_days_pct,
+        avg_trades_per_day=avg_trades_per_day,
+        daily_pnl_std_dev=daily_pnl_std_dev,
+        active_trading_days=active_days if active_days > 0 else None,
+    )
+
+
+def _compute_risk_metrics(equity_curve: list[EquityPoint]) -> _RiskMetrics:
+    if not equity_curve:
+        return _RiskMetrics(None, None, None, None, None, None)
+
+    max_dd_usd = get_max_drawdown(equity_curve)
+    peak_pnl = max(p.pnl for p in equity_curve)
+    if peak_pnl > 0:
+        max_dd_pct: float = min((max_dd_usd / peak_pnl) * 100, 999.99)
+    elif max_dd_usd > 0:
+        max_dd_pct = 999.99
+    else:
+        max_dd_pct = 0.0
+
+    sharpe_raw, sortino_raw = compute_sharpe_sortino(equity_curve)
+    alltime_pnl = equity_curve[-1].pnl
+    dd_duration = _max_drawdown_duration_days(equity_curve)
+
+    return _RiskMetrics(
+        max_drawdown_usd=max_dd_usd,
+        max_drawdown_pct=max_dd_pct,
+        sharpe_ratio=sharpe_raw if sharpe_raw != 0.0 else None,
+        sortino_ratio=sortino_raw if sortino_raw != 0.0 else None,
+        calmar_ratio=alltime_pnl / max_dd_usd if max_dd_usd and max_dd_usd > 0 else None,
+        max_drawdown_duration_days=dd_duration if dd_duration > 0 else None,
+    )
+
+
 class QualityMetrics:
     """Container for computed trader quality metrics."""
 
@@ -464,6 +615,8 @@ class QualityMetrics:
         fees_paid_usd: float | None,
         calmar_ratio: float | None,
         max_drawdown_duration_days: float | None,
+        active_trading_days: int | None,
+        avg_leverage: float | None,
         composite_score: float | None = None,
     ) -> None:
         self.win_rate_pct = win_rate_pct
@@ -485,6 +638,8 @@ class QualityMetrics:
         self.fees_paid_usd = fees_paid_usd
         self.calmar_ratio = calmar_ratio
         self.max_drawdown_duration_days = max_drawdown_duration_days
+        self.active_trading_days = active_trading_days
+        self.avg_leverage = avg_leverage
         self.composite_score = composite_score
 
     def to_dict(self) -> dict[str, object]:
@@ -508,6 +663,8 @@ class QualityMetrics:
             "fees_paid_usd": self.fees_paid_usd,
             "calmar_ratio": self.calmar_ratio,
             "max_drawdown_duration_days": self.max_drawdown_duration_days,
+            "active_trading_days": self.active_trading_days,
+            "avg_leverage": self.avg_leverage,
             "composite_score": self.composite_score,
         }
 
@@ -519,7 +676,10 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
     Returns None if no fills are available.
     """
     client = HyperliquidInfoClient(base_url=settings.hl_mainnet_api_url)
-    all_fills = await client.get_fills(address, limit=None)
+    all_fills, avg_leverage = await asyncio.gather(
+        client.get_fills(address, limit=None),
+        asyncio.to_thread(_ch_avg_leverage, address),
+    )
 
     if not all_fills:
         return None
@@ -529,7 +689,7 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
         all_fills_sorted[0].time / 1000, tz=UTC
     ).replace(tzinfo=None)
 
-    # ── Group fills by direction ───────────────────────────────────────────────
+    # Group fills by direction
     closing_by_oid: dict[int, list[Fill]] = defaultdict(list)
     open_fills_by_coin: dict[str, list[Fill]] = defaultdict(list)
     for f in all_fills:
@@ -537,151 +697,51 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
             closing_by_oid[f.oid].append(f)
         elif f.dir.startswith("Open"):
             open_fills_by_coin[f.coin].append(f)
-
     for coin_fills in open_fills_by_coin.values():
         coin_fills.sort(key=lambda f: f.time)
 
-    # ── Per-trade metrics ─────────────────────────────────────────────────────
-    trade_count: int | None = None
-    win_rate_pct: float | None = None
-    avg_trade_duration_hrs: float | None = None
-    profit_factor: float | None = None
-    avg_pnl_per_trade: float | None = None
-    max_losing_streak_val: int | None = None
+    trade = _compute_per_trade_metrics(closing_by_oid, open_fills_by_coin)
+    daily = _compute_daily_metrics(all_fills, closing_by_oid, trade.trade_count)
 
-    if closing_by_oid:
-        trade_count = len(closing_by_oid)
-        trade_pnls: list[float] = []
-        durations_hrs: list[float] = []
-
-        for close_fills in closing_by_oid.values():
-            pnl = sum(float(f.closed_pnl) for f in close_fills)
-            trade_pnls.append(pnl)
-
-            # Correct hold-time: find the most recent open fill for this coin
-            # that occurred before the first fill of this close group.
-            coin = close_fills[0].coin
-            close_min_time = min(f.time for f in close_fills)
-            open_candidates = [
-                f for f in open_fills_by_coin.get(coin, []) if f.time < close_min_time
-            ]
-            if open_candidates:
-                open_time = max(f.time for f in open_candidates)
-                durations_hrs.append((close_min_time - open_time) / 1000 / 3600)
-
-        winning = sum(1 for p in trade_pnls if p > 0)
-        win_rate_pct = (winning / trade_count) * 100
-
-        winners = [p for p in trade_pnls if p > 0]
-        losers = [abs(p) for p in trade_pnls if p < 0]
-        profit_factor = sum(winners) / sum(losers) if losers else None
-        avg_pnl_per_trade = sum(trade_pnls) / len(trade_pnls)
-        max_losing_streak_val = _max_losing_streak(trade_pnls)
-
-        if durations_hrs:
-            avg_trade_duration_hrs = sum(durations_hrs) / len(durations_hrs)
-
-    # ── Daily aggregates ──────────────────────────────────────────────────────
-    daily_pnl_map: dict[str, float] = defaultdict(float)
-    for f in all_fills:
-        day = datetime.fromtimestamp(f.time / 1000, tz=UTC).date().isoformat()
-        daily_pnl_map[day] += float(f.closed_pnl)
-
-    profitable_days_pct: float | None = None
-    avg_trades_per_day: float | None = None
-    daily_pnl_std_dev: float | None = None
-
-    if daily_pnl_map:
-        profitable_days_pct = (
-            sum(1 for v in daily_pnl_map.values() if v > 0) / len(daily_pnl_map) * 100
-        )
-
-    # active_days = distinct calendar days on which a trade was *closed*,
-    # matching the denominator of trade_count (closing fills only).
-    close_day_set: set[str] = {
-        datetime.fromtimestamp(min(f.time for f in fills_list) / 1000, tz=UTC)
-        .date()
-        .isoformat()
-        for fills_list in closing_by_oid.values()
-    }
-    active_days = len(close_day_set)
-    if active_days > 0 and trade_count:
-        avg_trades_per_day = trade_count / active_days
-
-    daily_vals = list(daily_pnl_map.values())
-    if len(daily_vals) >= 2:
-        daily_pnl_std_dev = statistics.stdev(daily_vals)
-
-    # ── Fill-level aggregates ─────────────────────────────────────────────────
+    # Fill-level aggregates (use only opening fills to measure initiated position size)
     open_fills_flat = [f for f in all_fills if f.dir.startswith("Open")]
     open_long_count = sum(1 for f in open_fills_flat if "Long" in f.dir)
     long_ratio_pct: float | None = (
         open_long_count / len(open_fills_flat) * 100 if open_fills_flat else None
     )
-    # Use only opening fills so we measure the size of initiated positions,
-    # not the closing legs (which would halve the average for each round-trip).
     avg_position_size_usd: float | None = (
         sum(float(f.px * f.sz) for f in open_fills_flat) / len(open_fills_flat)
         if open_fills_flat
         else None
     )
-    # Store 0.0 when the API returns no fee data (field defaults to 0) so the
-    # column is not misleadingly NULL for traders with genuinely zero fees.
+    # Store 0.0 when the API returns no fee data so the column is not misleadingly NULL.
     fees_paid_usd: float | None = sum(float(f.fee) for f in all_fills)
 
-    # ── Equity curve, drawdown, Sharpe/Sortino, Calmar ───────────────────────
     equity_curve = _build_equity_curve_from_fills(all_fills, "allTime")
-    max_dd_usd: float | None = None
-    max_dd_pct: float | None = None
-    sharpe: float | None = None
-    sortino: float | None = None
-    calmar_ratio: float | None = None
-    max_dd_duration_days: float | None = None
-
-    if equity_curve:
-        max_dd_usd = get_max_drawdown(equity_curve)
-        peak_pnl = max(p.pnl for p in equity_curve)
-        if peak_pnl > 0:
-            max_dd_pct = min((max_dd_usd / peak_pnl) * 100, 999.99)
-        elif max_dd_usd > 0:
-            max_dd_pct = 999.99
-        else:
-            max_dd_pct = 0.0
-
-        sharpe_raw, sortino_raw = compute_sharpe_sortino(equity_curve)
-        sharpe = sharpe_raw if sharpe_raw != 0.0 else None
-        sortino = sortino_raw if sortino_raw != 0.0 else None
-
-        alltime_pnl = equity_curve[-1].pnl
-        # Non-standard Calmar proxy: USD PnL / USD max-drawdown (not annualised %).
-        # Standard Calmar uses annualised_return% / max_drawdown%; filter accordingly.
-        calmar_ratio = (
-            alltime_pnl / max_dd_usd if max_dd_usd and max_dd_usd > 0 else None
-        )
-
-        dd_duration = _max_drawdown_duration_days(equity_curve)
-        max_dd_duration_days = dd_duration if dd_duration > 0 else None
+    risk = _compute_risk_metrics(equity_curve)
 
     return QualityMetrics(
-        win_rate_pct=win_rate_pct,
-        max_drawdown_usd=max_dd_usd,
-        max_drawdown_pct=max_dd_pct,
-        trade_count=trade_count,
-        avg_trade_duration_hrs=avg_trade_duration_hrs,
+        win_rate_pct=trade.win_rate_pct,
+        max_drawdown_usd=risk.max_drawdown_usd,
+        max_drawdown_pct=risk.max_drawdown_pct,
+        trade_count=trade.trade_count,
+        avg_trade_duration_hrs=trade.avg_trade_duration_hrs,
         first_trade_at=first_trade_at,
-        sharpe_ratio=sharpe,
-        sortino_ratio=sortino,
-        profit_factor=profit_factor,
-        avg_pnl_per_trade=avg_pnl_per_trade,
-        max_losing_streak=max_losing_streak_val,
-        profitable_days_pct=profitable_days_pct,
-        avg_trades_per_day=avg_trades_per_day,
-        daily_pnl_std_dev=daily_pnl_std_dev,
+        sharpe_ratio=risk.sharpe_ratio,
+        sortino_ratio=risk.sortino_ratio,
+        profit_factor=trade.profit_factor,
+        avg_pnl_per_trade=trade.avg_pnl_per_trade,
+        max_losing_streak=trade.max_losing_streak,
+        profitable_days_pct=daily.profitable_days_pct,
+        avg_trades_per_day=daily.avg_trades_per_day,
+        daily_pnl_std_dev=daily.daily_pnl_std_dev,
         long_ratio_pct=long_ratio_pct,
         avg_position_size_usd=avg_position_size_usd,
         fees_paid_usd=fees_paid_usd,
-        calmar_ratio=calmar_ratio,
-        max_drawdown_duration_days=max_dd_duration_days,
+        calmar_ratio=risk.calmar_ratio,
+        max_drawdown_duration_days=risk.max_drawdown_duration_days,
+        active_trading_days=daily.active_trading_days,
+        avg_leverage=avg_leverage,
     )
 
 
