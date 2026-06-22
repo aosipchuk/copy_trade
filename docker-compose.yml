@@ -14,6 +14,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
@@ -27,6 +32,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.3-alpine
@@ -50,6 +60,11 @@ services:
       timeout: 5s
       retries: 30
       start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
 
   backend:
     build:
@@ -82,6 +97,11 @@ services:
       retries: 30
       start_period: 60s
     restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
 
   celery-worker:
     build:
@@ -102,6 +122,11 @@ services:
     volumes:
       - ./backend/app:/app/app
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 -Q default,signals,execution
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+        max-file: "5"
 
   celery-beat:
     build:
@@ -119,6 +144,11 @@ services:
     volumes:
       - ./backend/app:/app/app
     command: celery -A app.tasks.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   frontend:
     build:
@@ -127,6 +157,11 @@ services:
       args:
         VITE_WALLETCONNECT_PROJECT_ID: ${VITE_WALLETCONNECT_PROJECT_ID:-}
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   nginx:
     image: nginx:1.27-alpine
@@ -138,6 +173,11 @@ services:
       - backend
       - frontend
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
 
 volumes:
   postgres_data:
