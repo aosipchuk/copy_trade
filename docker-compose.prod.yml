@@ -84,6 +84,11 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
 
+  # Disable dev nginx on prod — nginx-proxy handles ports 80/443 instead.
+  nginx:
+    profiles:
+      - dev
+
   nginx-proxy:
     image: nginx:1.27-alpine
     ports:
