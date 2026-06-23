@@ -1,7 +1,10 @@
 .PHONY: up down build logs shell test lint typecheck migrate makemigrations install clean \
         prod-up prod-down prod-logs prod-build ssl deploy deploy-backend deploy-frontend
 
-ifneq (,$(wildcard ./.env))
+ifneq (,$(wildcard ./.env.prod))
+  include .env.prod
+  export
+else ifneq (,$(wildcard ./.env))
   include .env
   export
 endif
