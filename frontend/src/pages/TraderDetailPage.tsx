@@ -35,6 +35,7 @@ export function TraderDetailPage() {
   const [subStopLoss, setSubStopLoss] = useState(20)
   const [subMaxLeverage, setSubMaxLeverage] = useState(10)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useBackButton(useCallback(() => navigate(-1), [navigate]))
 
@@ -44,6 +45,7 @@ export function TraderDetailPage() {
   // Initial load via summary endpoint — replaces 4 separate requests
   const reload = useCallback(() => {
     setLoading(true)
+    setLoadError(null)
     fetchTraderSummary(traderId)
       .then((s) => {
         setSummary(s)
@@ -62,7 +64,10 @@ export function TraderDetailPage() {
         const demoSub = demoSubs.find((s) => s.trader_id === traderId && s.is_active) ?? null
         setExistingDemoSub(demoSub)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        const status = (err as { response?: { status?: number } })?.response?.status
+        setLoadError(status === 404 ? 'not_found' : 'error')
+      })
       .finally(() => setLoading(false))
   }, [traderId])
 
@@ -121,7 +126,9 @@ export function TraderDetailPage() {
   if (!summary) return (
     <div className="flex flex-col items-center justify-center h-full gap-3 text-tg-hint">
       <span className="text-4xl">⚠️</span>
-      <p className="text-sm">Trader not found</p>
+      <p className="text-sm">
+        {loadError === 'not_found' ? 'Trader not found' : 'Failed to load trader'}
+      </p>
       <button className="text-sm text-tg-button underline" onClick={() => navigate(-1)}>Go back</button>
     </div>
   )

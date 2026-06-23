@@ -7,6 +7,7 @@ from sqlalchemy import Select, and_, or_, select
 
 from app.api.deps import CurrentUser, DBSession, get_current_user
 from app.core.cache import cached_json
+from app.core.logging import get_logger
 from app.models.subscription import Subscription
 from app.models.trader import Trader, TraderStat
 from app.schemas.trader import (
@@ -34,6 +35,8 @@ from app.services.analytics.metrics import (
 )
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 
+logger = get_logger(__name__)
+
 router = APIRouter(
     prefix="/traders",
     tags=["traders"],
@@ -45,24 +48,25 @@ _CACHE_TTL_POSITIONS = 5
 _DEFAULT_LIMIT = 50
 
 # Hard gate thresholds (Level 1–4). NULL = not yet computed → trader passes through.
-_GATE_MIN_ACTIVE_DAYS: int = 90
-_GATE_MIN_TRADES: int = 50
+# active_trading_days is measured from ClickHouse fills since system launch, not real history.
+_GATE_MIN_ACTIVE_DAYS: int = 7
+_GATE_MIN_TRADES: int = 10
 _GATE_MIN_AVG_DURATION_HRS: float = 5 / 60  # 5 minutes — cuts scalpers and HFT bots
-_GATE_MAX_DRAWDOWN_PCT: float = 20.0
-_GATE_MIN_SHARPE: float = 1.0
-_GATE_MIN_SORTINO: float = 1.5
-_GATE_MAX_AVG_LEVERAGE: float = 5.0
-_GATE_MIN_WIN_RATE: float = 50.0
-_GATE_MAX_WIN_RATE: float = 75.0  # above 80% is suspicious
-_GATE_MIN_PROFIT_FACTOR: float = 1.5
+_GATE_MAX_DRAWDOWN_PCT: float = 80.0
+_GATE_MIN_SHARPE: float = 0.3
+_GATE_MIN_SORTINO: float = 0.5
+_GATE_MAX_AVG_LEVERAGE: float = 20.0
+_GATE_MIN_WIN_RATE: float = 30.0
+_GATE_MAX_WIN_RATE: float = 95.0
+_GATE_MIN_PROFIT_FACTOR: float = 1.0
 _GATE_MIN_AVG_PNL_PER_TRADE: float = 0.0
-_GATE_MAX_LOSING_STREAK: int = 5
-_GATE_MIN_TRADES_PER_DAY: float = 1.0
-_GATE_MAX_TRADES_PER_DAY: float = 20.0
-_GATE_MIN_PROFITABLE_DAYS_PCT: float = 55.0
-_GATE_MAX_DD_DURATION_DAYS: float = 30.0
-_GATE_MIN_COMPOSITE_SCORE: float = 70.0
-_GATE_MIN_HUMAN_SCORE: int = 60
+_GATE_MAX_LOSING_STREAK: int = 15
+_GATE_MIN_TRADES_PER_DAY: float = 0.1
+_GATE_MAX_TRADES_PER_DAY: float = 100.0
+_GATE_MIN_PROFITABLE_DAYS_PCT: float = 30.0
+_GATE_MAX_DD_DURATION_DAYS: float = 180.0
+_GATE_MIN_COMPOSITE_SCORE: float = 30.0
+_GATE_MIN_HUMAN_SCORE: int = 30
 
 
 def _apply_hard_gates(query: Select) -> Select:  # type: ignore[type-arg]
@@ -455,22 +459,34 @@ async def trader_summary(trader_id: int, db: DBSession) -> TraderSummaryResponse
         )
 
     async def _fetch() -> dict[str, Any]:
-        fills, stats_list, positions = await asyncio.gather(
+        fills_res, stats_list, positions_res = await asyncio.gather(
             fetch_trader_fills(trader.hl_address),
             get_trader_stats(db, trader_id),
             get_open_positions(trader.hl_address),
+            return_exceptions=True,
         )
+        fills: list = fills_res if not isinstance(fills_res, BaseException) else []
+        stats_list_safe: list = stats_list if not isinstance(stats_list, BaseException) else []
+        positions: list = positions_res if not isinstance(positions_res, BaseException) else []
+        if isinstance(fills_res, BaseException):
+            logger.warning("summary_fills_failed", trader=trader.hl_address, error=str(fills_res))
+        if isinstance(positions_res, BaseException):
+            logger.warning("summary_positions_failed", trader=trader.hl_address, error=str(positions_res))
+
         equity_curve, trades = await asyncio.gather(
             get_equity_curve(trader.hl_address, "week", fills=fills),
             get_closed_trades(trader.hl_address, limit=10, fills=fills),
+            return_exceptions=True,
         )
+        equity_curve = equity_curve if not isinstance(equity_curve, BaseException) else []
+        trades = trades if not isinstance(trades, BaseException) else []
 
         # Replace leaderboard pnl_usd (includes unrealized) with realized-only
         periods = ("day", "week", "month", "allTime")
         realized = {p: _realized_pnl_for_period(fills, p) for p in periods}
         patched_stats = [
             s.model_copy(update={"pnl_usd": realized.get(s.period, s.pnl_usd)})
-            for s in stats_list
+            for s in stats_list_safe
         ]
 
         return {
