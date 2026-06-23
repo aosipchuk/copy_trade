@@ -59,7 +59,6 @@ _GATE_MAX_AVG_LEVERAGE: float = 20.0
 _GATE_MIN_WIN_RATE: float = 30.0
 _GATE_MAX_WIN_RATE: float = 95.0
 _GATE_MIN_PROFIT_FACTOR: float = 1.0
-_GATE_MIN_AVG_PNL_PER_TRADE: float = 0.0
 _GATE_MAX_LOSING_STREAK: int = 15
 _GATE_MIN_TRADES_PER_DAY: float = 0.1
 _GATE_MAX_TRADES_PER_DAY: float = 100.0
@@ -109,10 +108,6 @@ def _apply_hard_gates(query: Select) -> Select:  # type: ignore[type-arg]
             TraderStat.profit_factor.is_(None),
         ),
         or_(
-            TraderStat.avg_pnl_per_trade > _GATE_MIN_AVG_PNL_PER_TRADE,
-            TraderStat.avg_pnl_per_trade.is_(None),
-        ),
-        or_(
             TraderStat.max_losing_streak <= _GATE_MAX_LOSING_STREAK,
             TraderStat.max_losing_streak.is_(None),
         ),
@@ -121,11 +116,6 @@ def _apply_hard_gates(query: Select) -> Select:  # type: ignore[type-arg]
                 _GATE_MIN_TRADES_PER_DAY, _GATE_MAX_TRADES_PER_DAY
             ),
             TraderStat.avg_trades_per_day.is_(None),
-        ),
-        or_(
-            TraderStat.daily_pnl_std_dev < 2 * TraderStat.avg_pnl_per_trade,
-            TraderStat.daily_pnl_std_dev.is_(None),
-            TraderStat.avg_pnl_per_trade.is_(None),
         ),
         or_(
             TraderStat.profitable_days_pct >= _GATE_MIN_PROFITABLE_DAYS_PCT,
