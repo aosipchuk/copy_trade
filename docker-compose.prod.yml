@@ -10,6 +10,10 @@
 services:
   postgres:
     ports: !reset []            # remove dev port mapping
+    deploy:
+      resources:
+        limits:
+          memory: 300M
 
   redis:
     ports: !reset []
@@ -20,6 +24,10 @@ services:
       --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in production}
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+    deploy:
+      resources:
+        limits:
+          memory: 300M
 
   clickhouse:
     ports: !reset []
@@ -28,10 +36,16 @@ services:
       CLICKHOUSE_USER: default
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set in production}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      # Prevent ClickHouse from consuming all available RAM (default: 80% of total)
+      CLICKHOUSE_MAX_SERVER_MEMORY_USAGE: "536870912"   # 512 MB
     healthcheck:
       test:
         - "CMD-SHELL"
         - "clickhouse-client --user default --password ${CLICKHOUSE_PASSWORD} --query 'SELECT 1' || exit 1"
+    deploy:
+      resources:
+        limits:
+          memory: 600M
 
   backend:
     build:
@@ -50,7 +64,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 800M
+          memory: 400M
 
   celery-worker:
     volumes: !reset []
@@ -62,9 +76,13 @@ services:
     command: >
       uv run celery -A app.tasks.celery_app worker
         --loglevel=warning
-        --concurrency=4
+        --concurrency=2
         -Q default,signals,execution
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 400M
 
   celery-beat:
     volumes: !reset []
@@ -77,12 +95,20 @@ services:
         --loglevel=warning
         --scheduler celery.beat.PersistentScheduler
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 150M
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 100M
 
   # Disable dev nginx on prod — nginx-proxy handles port 80 instead.
   nginx:
