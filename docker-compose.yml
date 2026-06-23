@@ -17,8 +17,8 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "50m"
-        max-file: "3"
+        max-size: "10m"
+        max-file: "2"
 
   redis:
     image: redis:7-alpine
@@ -35,8 +35,8 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "20m"
-        max-file: "3"
+        max-size: "10m"
+        max-file: "2"
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.3-alpine
@@ -63,8 +63,8 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "100m"
-        max-file: "3"
+        max-size: "20m"
+        max-file: "2"
 
   backend:
     build:
@@ -100,8 +100,8 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "100m"
-        max-file: "5"
+        max-size: "20m"
+        max-file: "2"
 
   celery-worker:
     build:
@@ -121,12 +121,12 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/app:/app/app
-    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4 -Q default,signals,execution
+    command: celery -A app.tasks.celery_app worker --loglevel=warning --concurrency=4 -Q default,signals,execution
     logging:
       driver: "json-file"
       options:
-        max-size: "200m"
-        max-file: "5"
+        max-size: "20m"
+        max-file: "2"
 
   celery-beat:
     build:
@@ -143,12 +143,12 @@ services:
       - celery-worker
     volumes:
       - ./backend/app:/app/app
-    command: celery -A app.tasks.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler
+    command: celery -A app.tasks.celery_app beat --loglevel=warning --scheduler celery.beat.PersistentScheduler
     logging:
       driver: "json-file"
       options:
-        max-size: "50m"
-        max-file: "3"
+        max-size: "10m"
+        max-file: "2"
 
   frontend:
     build:
@@ -160,8 +160,8 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "20m"
-        max-file: "3"
+        max-size: "5m"
+        max-file: "2"
 
   nginx:
     image: nginx:1.27-alpine
@@ -176,8 +176,8 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "50m"
-        max-file: "3"
+        max-size: "10m"
+        max-file: "2"
 
 volumes:
   postgres_data:
