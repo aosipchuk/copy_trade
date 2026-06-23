@@ -47,34 +47,28 @@ _CACHE_TTL_STATS = 30
 _CACHE_TTL_POSITIONS = 5
 _DEFAULT_LIMIT = 50
 
-# Hard gate thresholds (Level 1–4). NULL = not yet computed → trader passes through.
-# active_trading_days is measured from ClickHouse fills since system launch, not real history.
-_GATE_MIN_ACTIVE_DAYS: int = 7
-_GATE_MIN_TRADES: int = 10
-_GATE_MIN_AVG_DURATION_HRS: float = 5 / 60  # 5 minutes — cuts scalpers and HFT bots
-_GATE_MAX_DRAWDOWN_PCT: float = 80.0
-_GATE_MIN_SHARPE: float = 0.3
-_GATE_MIN_SORTINO: float = 0.5
-_GATE_MAX_AVG_LEVERAGE: float = 20.0
-_GATE_MIN_WIN_RATE: float = 30.0
-_GATE_MAX_WIN_RATE: float = 95.0
-_GATE_MIN_PROFIT_FACTOR: float = 1.0
-_GATE_MAX_LOSING_STREAK: int = 15
-_GATE_MIN_TRADES_PER_DAY: float = 0.1
-_GATE_MAX_TRADES_PER_DAY: float = 100.0
-_GATE_MIN_PROFITABLE_DAYS_PCT: float = 30.0
-_GATE_MAX_DD_DURATION_DAYS: float = 180.0
-_GATE_MIN_COMPOSITE_SCORE: float = 30.0
-_GATE_MIN_HUMAN_SCORE: int = 30
+# Hard gate thresholds. NULL = not yet computed → trader passes through.
+# ClickHouse-derived metrics (active_days, avg_trades_per_day) are omitted as gates
+# because ClickHouse only has data since system launch — early values are misleading.
+_GATE_MIN_TRADES: int = 5
+_GATE_MIN_AVG_DURATION_HRS: float = 5 / 60  # 5 min — cuts pure HFT bots
+_GATE_MAX_DRAWDOWN_PCT: float = 90.0
+_GATE_MIN_SHARPE: float = 0.0
+_GATE_MIN_SORTINO: float = 0.0
+_GATE_MAX_AVG_LEVERAGE: float = 50.0
+_GATE_MIN_WIN_RATE: float = 20.0
+_GATE_MAX_WIN_RATE: float = 99.0
+_GATE_MIN_PROFIT_FACTOR: float = 0.5
+_GATE_MAX_LOSING_STREAK: int = 30
+_GATE_MIN_PROFITABLE_DAYS_PCT: float = 20.0
+_GATE_MAX_DD_DURATION_DAYS: float = 365.0
+_GATE_MIN_COMPOSITE_SCORE: float = 10.0
+_GATE_MIN_HUMAN_SCORE: int = 0
 
 
 def _apply_hard_gates(query: Select) -> Select:  # type: ignore[type-arg]
-    """Apply Level 1–4 quality gates. NULL = not yet computed → trader passes through."""
+    """Apply quality gates. NULL = not yet computed → trader passes through."""
     return query.where(
-        or_(
-            TraderStat.active_trading_days >= _GATE_MIN_ACTIVE_DAYS,
-            TraderStat.active_trading_days.is_(None),
-        ),
         or_(
             TraderStat.trade_count >= _GATE_MIN_TRADES,
             TraderStat.trade_count.is_(None),
@@ -110,12 +104,6 @@ def _apply_hard_gates(query: Select) -> Select:  # type: ignore[type-arg]
         or_(
             TraderStat.max_losing_streak <= _GATE_MAX_LOSING_STREAK,
             TraderStat.max_losing_streak.is_(None),
-        ),
-        or_(
-            TraderStat.avg_trades_per_day.between(
-                _GATE_MIN_TRADES_PER_DAY, _GATE_MAX_TRADES_PER_DAY
-            ),
-            TraderStat.avg_trades_per_day.is_(None),
         ),
         or_(
             TraderStat.profitable_days_pct >= _GATE_MIN_PROFITABLE_DAYS_PCT,
