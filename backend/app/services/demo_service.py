@@ -7,7 +7,12 @@ from app.core.logging import get_logger
 from app.models.subscription import Subscription
 from app.models.trade import UserTrade
 from app.models.trader import Trader
-from app.schemas.subscription import DemoOpenPosition, DemoPortfolioResponse, DemoTradeItem
+from app.schemas.subscription import (
+    DemoClosedPositionItem,
+    DemoOpenPosition,
+    DemoPortfolioResponse,
+    DemoTradeItem,
+)
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 
 logger = get_logger(__name__)
@@ -190,3 +195,91 @@ async def get_demo_subscription_trades(
         )
         for t in trades
     ]
+
+
+async def get_demo_closed_position_cycles(
+    db: AsyncSession, user_id: int, subscription_id: int, limit: int = 100
+) -> list[DemoClosedPositionItem]:
+    """Return completed position cycles (open→close pairs) for a demo subscription.
+
+    Fetches only the `limit` most recent close trades, then pulls the open trades
+    for those specific coins so the full in-memory set stays bounded.
+    """
+    sub_result = await db.execute(
+        select(Subscription).where(
+            Subscription.id == subscription_id,
+            Subscription.user_id == user_id,
+            Subscription.is_demo.is_(True),
+        )
+    )
+    if sub_result.scalar_one_or_none() is None:
+        return []
+
+    # Step 1: fetch the most recent `limit` close trades (bounded)
+    close_result = await db.execute(
+        select(UserTrade)
+        .where(
+            UserTrade.subscription_id == subscription_id,
+            UserTrade.is_demo.is_(True),
+            UserTrade.status == "filled",
+            UserTrade.trade_type == "close",
+            UserTrade.realized_pnl.is_not(None),
+        )
+        .order_by(UserTrade.executed_at.desc())
+        .limit(limit)
+    )
+    close_trades = close_result.scalars().all()
+    if not close_trades:
+        return []
+
+    # Step 2: fetch open trades for the same coins up to the latest close
+    coins = {t.coin for t in close_trades if t.coin}
+    latest_close_at = max(t.executed_at for t in close_trades)
+    open_result = await db.execute(
+        select(UserTrade)
+        .where(
+            UserTrade.subscription_id == subscription_id,
+            UserTrade.is_demo.is_(True),
+            UserTrade.status == "filled",
+            UserTrade.trade_type == "open",
+            UserTrade.coin.in_(coins),
+            UserTrade.executed_at <= latest_close_at,
+        )
+        .order_by(UserTrade.executed_at.asc())
+    )
+    open_trades = open_result.scalars().all()
+
+    # Step 3: LIFO matching — process combined timeline chronologically
+    all_trades = sorted(
+        [*open_trades, *close_trades],
+        key=lambda t: t.executed_at,
+    )
+    open_stack: dict[str, list[UserTrade]] = {}
+    cycles: list[DemoClosedPositionItem] = []
+
+    for trade in all_trades:
+        coin = trade.coin or ""
+        if trade.trade_type == "open":
+            open_stack.setdefault(coin, []).append(trade)
+        elif trade.trade_type == "close" and trade.realized_pnl is not None:
+            stack = open_stack.get(coin)
+            if stack:
+                open_trade = stack.pop()
+                size = float(open_trade.size) if open_trade.size is not None else 0.0
+                entry = float(open_trade.price) if open_trade.price is not None else 0.0
+                close = float(trade.price) if trade.price is not None else 0.0
+                cycles.append(
+                    DemoClosedPositionItem(
+                        coin=coin,
+                        direction=open_trade.side or "long",
+                        size=size,
+                        entry_price=entry,
+                        close_price=close,
+                        realized_pnl=float(trade.realized_pnl),
+                        opened_at=open_trade.executed_at,
+                        closed_at=trade.executed_at,
+                    )
+                )
+
+    cycles.sort(key=lambda c: c.closed_at, reverse=True)
+    return cycles

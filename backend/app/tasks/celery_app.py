@@ -11,6 +11,7 @@ celery_app = Celery(
         "app.tasks.signal_consumer",
         "app.tasks.execution_tasks",
         "app.tasks.analytics_tasks",
+        "app.tasks.demo_reconcile",
     ],
 )
 
@@ -53,6 +54,10 @@ celery_app.conf.update(
         "refresh-human-scores": {
             "task": "app.tasks.hl_tracker.refresh_human_scores",
             "schedule": 14400.0,  # every 4 hours
+        },
+        "reconcile-demo-positions": {
+            "task": "app.tasks.demo_reconcile.reconcile_demo_positions",
+            "schedule": 300.0,  # every 5 minutes
         },
     },
 )

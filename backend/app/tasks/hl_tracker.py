@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from pydantic import TypeAdapter
 from sqlalchemy import case, select, update
@@ -22,7 +23,7 @@ from app.tasks.celery_app import celery_app
 
 logger = get_logger(__name__)
 
-_MIN_ALLTIME_PNL_USD = 10_000   # Level 1: minimum all-time PnL
+_MIN_30D_ROI = Decimal("0.03")  # Level 1: minimum 30-day ROI (3%)
 _MIN_ACCOUNT_VALUE_USD = 1_000  # skip empty / abandoned accounts
 _MAX_TRADERS = 5_000            # safety cap against unexpected leaderboard growth
 _SNAPSHOT_TTL = 60              # seconds in Redis
@@ -73,12 +74,12 @@ def _write_positions_to_clickhouse(address: str, positions: list[Position]) -> N
 
 
 def _filter_leaderboard(all_rows: list) -> list:  # type: ignore[type-arg]
-    """Level-1 gate: keep traders with meaningful all-time PnL and account balance."""
+    """Level-1 gate: keep traders with positive 30-day ROI and non-empty account."""
     filtered = [
         row
         for row in all_rows
-        if (alltime := row.get_perf("allTime")) is not None
-        and alltime.pnl > _MIN_ALLTIME_PNL_USD
+        if (month := row.get_perf("month")) is not None
+        and month.roi > _MIN_30D_ROI
         and row.account_value >= _MIN_ACCOUNT_VALUE_USD
     ]
     return filtered[:_MAX_TRADERS]

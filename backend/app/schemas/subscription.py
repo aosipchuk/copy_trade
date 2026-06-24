@@ -79,3 +79,14 @@ class DemoTradeItem(BaseModel):
     trade_type: str
     realized_pnl: float | None
     executed_at: datetime
+
+
+class DemoClosedPositionItem(BaseModel):
+    coin: str
+    direction: str
+    size: float
+    entry_price: float
+    close_price: float
+    realized_pnl: float
+    opened_at: datetime
+    closed_at: datetime

@@ -1,4 +1,4 @@
-import type { DemoPortfolioResponse, DemoTradeItem } from '../types'
+import type { DemoClosedPositionItem, DemoPortfolioResponse, DemoTradeItem } from '../types'
 import { http } from './http'
 
 export async function fetchDemoPortfolio(): Promise<DemoPortfolioResponse> {
@@ -12,6 +12,17 @@ export async function fetchDemoSubscriptionTrades(
 ): Promise<DemoTradeItem[]> {
   const res = await http.get<DemoTradeItem[]>(
     `/demo/subscription/${subscriptionId}/trades`,
+    { params: { limit } },
+  )
+  return res.data
+}
+
+export async function fetchDemoClosedPositions(
+  subscriptionId: number,
+  limit = 100,
+): Promise<DemoClosedPositionItem[]> {
+  const res = await http.get<DemoClosedPositionItem[]>(
+    `/demo/subscription/${subscriptionId}/closed-positions`,
     { params: { limit } },
   )
   return res.data

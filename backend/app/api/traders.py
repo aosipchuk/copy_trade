@@ -217,9 +217,8 @@ async def list_traders(
     # Individual filters: NULL metric = not yet computed → include the trader.
     # Only the quality preset strictly requires all metrics to be present.
     if min_days > 0:
-        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=min_days)
-        col = TraderStat.first_trade_at
-        query = query.where(or_(col <= cutoff, col.is_(None)))
+        col_ad = TraderStat.active_trading_days
+        query = query.where(or_(col_ad >= min_days, col_ad.is_(None)))
     if min_win_rate > 0:
         col_wr = TraderStat.win_rate_pct
         query = query.where(or_(col_wr >= min_win_rate, col_wr.is_(None)))

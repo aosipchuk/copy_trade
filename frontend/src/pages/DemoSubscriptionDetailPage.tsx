@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { fetchDemoPortfolio, fetchDemoSubscriptionTrades } from '../api/demo'
+import { fetchDemoClosedPositions, fetchDemoPortfolio } from '../api/demo'
 import { deleteSubscription, listSubscriptions } from '../api/subscriptions'
 import { FullPageSpinner } from '../components/LoadingSpinner'
 import { useBackButton } from '../hooks/useTelegram'
-import type { DemoOpenPosition, DemoTradeItem, Subscription } from '../types'
+import type { DemoClosedPositionItem, DemoOpenPosition, Subscription } from '../types'
 import { fmt } from '../utils/format'
 
 export function DemoSubscriptionDetailPage() {
@@ -14,8 +14,9 @@ export function DemoSubscriptionDetailPage() {
 
   const [sub, setSub] = useState<Subscription | null>(null)
   const [openPositions, setOpenPositions] = useState<DemoOpenPosition[]>([])
-  const [trades, setTrades] = useState<DemoTradeItem[]>([])
+  const [closedPositions, setClosedPositions] = useState<DemoClosedPositionItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [activeTab, setActiveTab] = useState<'positions' | 'trades'>('positions')
   const [stopping, setStopping] = useState(false)
 
@@ -23,18 +24,19 @@ export function DemoSubscriptionDetailPage() {
 
   const load = useCallback(() => {
     setLoading(true)
+    setLoadError(false)
     Promise.all([
       listSubscriptions(true),
       fetchDemoPortfolio(),
-      fetchDemoSubscriptionTrades(subscriptionId),
+      fetchDemoClosedPositions(subscriptionId),
     ])
-      .then(([subs, portfolio, tradeHistory]) => {
+      .then(([subs, portfolio, cycles]) => {
         const found = subs.find((s) => s.id === subscriptionId) ?? null
         setSub(found)
         setOpenPositions(portfolio.open_positions.filter((p) => p.subscription_id === subscriptionId))
-        setTrades(tradeHistory)
+        setClosedPositions(cycles)
       })
-      .catch(() => {})
+      .catch(() => setLoadError(true))
       .finally(() => setLoading(false))
   }, [subscriptionId])
 
@@ -51,6 +53,17 @@ export function DemoSubscriptionDetailPage() {
   }
 
   if (loading) return <FullPageSpinner />
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 text-tg-hint">
+        <p className="text-sm">Failed to load demo subscription</p>
+        <button className="text-sm text-tg-button underline" onClick={load}>
+          Retry
+        </button>
+      </div>
+    )
+  }
 
   if (!sub) {
     return (
@@ -70,8 +83,8 @@ export function DemoSubscriptionDetailPage() {
 
   const totalPnl = sub.realized_pnl + sub.unrealized_pnl
   const unrealizedPnl = openPositions.reduce((acc, p) => acc + p.unrealized_pnl, 0)
-  const closedCount = trades.filter((t) => t.trade_type === 'close').length
-  const winCount = trades.filter((t) => t.trade_type === 'close' && (t.realized_pnl ?? 0) > 0).length
+  const closedCount = closedPositions.length
+  const winCount = closedPositions.filter((p) => p.realized_pnl > 0).length
   const winRate = closedCount > 0 ? (winCount / closedCount) * 100 : 0
 
   return (
@@ -146,9 +159,9 @@ export function DemoSubscriptionDetailPage() {
               className="rounded-xl overflow-hidden"
               style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
             >
-              {openPositions.map((pos, i) => (
+              {openPositions.map((pos) => (
                 <div
-                  key={i}
+                  key={`${pos.subscription_id}-${pos.coin}`}
                   className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 last:border-b-0"
                 >
                   <div className="flex items-center justify-between">
@@ -186,7 +199,7 @@ export function DemoSubscriptionDetailPage() {
 
       {activeTab === 'trades' && (
         <div className="mt-2 px-4 pb-4">
-          {trades.length === 0 ? (
+          {closedPositions.length === 0 ? (
             <p className="text-sm text-tg-hint py-3 px-1">No completed trades yet</p>
           ) : (
             <div
@@ -195,16 +208,15 @@ export function DemoSubscriptionDetailPage() {
             >
               <div
                 className="grid px-3 py-1.5 border-b border-gray-200 dark:border-gray-700"
-                style={{ gridTemplateColumns: '4rem 3rem 1fr 3rem 4rem' }}
+                style={{ gridTemplateColumns: '4rem 3.5rem 1fr 4rem' }}
               >
                 <span className="text-xs text-tg-hint">Asset</span>
                 <span className="text-xs text-tg-hint">Side</span>
-                <span className="text-xs text-tg-hint text-right">Size · Price</span>
-                <span className="text-xs text-tg-hint text-right">Type</span>
+                <span className="text-xs text-tg-hint text-right">Entry · Close</span>
                 <span className="text-xs text-tg-hint text-right">PnL</span>
               </div>
-              {trades.map((t) => (
-                <TradeRow key={t.id} trade={t} />
+              {closedPositions.map((pos) => (
+                <ClosedPositionRow key={`${pos.coin}-${pos.closed_at}`} pos={pos} />
               ))}
             </div>
           )}
@@ -266,42 +278,38 @@ function TabBtn({ active, onClick, label }: { active: boolean; onClick: () => vo
   )
 }
 
-function TradeRow({ trade }: { trade: DemoTradeItem }) {
+function ClosedPositionRow({ pos }: { pos: DemoClosedPositionItem }) {
   return (
     <div
       className="grid items-center px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 last:border-b-0"
-      style={{ gridTemplateColumns: '4rem 3rem 1fr 3rem 4rem' }}
+      style={{ gridTemplateColumns: '4rem 3.5rem 1fr 4rem' }}
     >
       <div>
-        <div className="text-xs font-medium text-tg-text">{trade.coin}</div>
-        <div className="text-[10px] text-tg-hint">
-          {new Date(trade.executed_at).toLocaleDateString()}
+        <div className="text-sm font-medium text-tg-text">{pos.coin}</div>
+        <div className="text-xs text-tg-hint">
+          {new Date(pos.closed_at).toLocaleDateString()}{' '}
+          {new Date(pos.closed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </div>
       </div>
       <span
-        className={`text-xs font-semibold px-1 py-0.5 rounded self-start mt-0.5 ${
-          trade.side === 'long' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+        className={`text-xs font-semibold px-1.5 py-0.5 rounded self-start mt-0.5 ${
+          pos.direction === 'long' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
         }`}
       >
-        {trade.side.slice(0, 1).toUpperCase()}
+        {pos.direction.toUpperCase()}
       </span>
       <div className="text-right">
-        <div className="text-xs text-tg-text">{fmt.qty(trade.size)}</div>
-        <div className="text-xs text-tg-hint">@ ${fmt.price(trade.price)}</div>
-      </div>
-      <div className="text-right text-xs text-tg-hint">
-        {trade.trade_type === 'close' ? 'Close' : 'Open'}
+        <div className="text-xs text-tg-text">{fmt.qty(pos.size)}</div>
+        <div className="text-xs text-tg-hint">
+          ${fmt.price(pos.entry_price)} → ${fmt.price(pos.close_price)}
+        </div>
       </div>
       <div
         className={`text-xs font-semibold text-right ${
-          trade.realized_pnl == null
-            ? 'text-tg-hint'
-            : trade.realized_pnl >= 0
-              ? 'text-green-500'
-              : 'text-red-500'
+          pos.realized_pnl >= 0 ? 'text-green-500' : 'text-red-500'
         }`}
       >
-        {trade.realized_pnl != null ? fmt.usd(trade.realized_pnl) : '—'}
+        {fmt.usd(pos.realized_pnl)}
       </div>
     </div>
   )

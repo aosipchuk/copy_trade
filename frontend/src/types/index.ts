@@ -219,3 +219,14 @@ export interface DemoTradeItem {
   realized_pnl: number | null
   executed_at: string
 }
+
+export interface DemoClosedPositionItem {
+  coin: string
+  direction: string
+  size: number
+  entry_price: number
+  close_price: number
+  realized_pnl: number
+  opened_at: string
+  closed_at: string
+}
