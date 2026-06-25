@@ -19,7 +19,7 @@ services:
     ports: !reset []
     command: >
       redis-server
-      --maxmemory 256mb
+      --maxmemory 400mb
       --maxmemory-policy allkeys-lru
       --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in production}
     healthcheck:
@@ -27,7 +27,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 300M
+          memory: 450M
 
   backend:
     build:
@@ -43,7 +43,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 400M
+          memory: 700M
 
   frontend:
     build:

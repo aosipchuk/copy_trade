@@ -62,67 +62,77 @@ def _filter_leaderboard(all_rows: list) -> list:  # type: ignore[type-arg]
     return filtered[:_MAX_TRADERS]
 
 
+_LEADERBOARD_BATCH_SIZE = 50
+
+
 async def refresh_leaderboard_async() -> int:
     client = HyperliquidInfoClient()
     all_rows = await client.get_leaderboard()
     rows = _filter_leaderboard(all_rows)
+    total_filtered = len(all_rows)
+    del all_rows  # release leaderboard memory before DB work
 
     logger.info(
         "leaderboard_filtered",
-        total=len(all_rows),
+        total=total_filtered,
         passed=len(rows),
     )
 
     now = _utcnow()
+    active_addresses: list[str] = []
 
-    async with get_db_session() as db:
-        for row in rows:
-            stmt = (
-                pg_insert(Trader)
-                .values(
-                    hl_address=row.eth_address,
-                    display_name=row.display_name,
-                    is_active=True,
-                    last_seen_at=now,
-                )
-                .on_conflict_do_update(
-                    index_elements=["hl_address"],
-                    set_={
-                        "display_name": row.display_name,
-                        "last_seen_at": now,
-                        "is_active": True,
-                    },
-                )
-                .returning(Trader.id)
-            )
-            result = await db.execute(stmt)
-            trader_id: int = result.scalar_one()
-
-            for period, perf in row.window_performances:
-                stat_stmt = (
-                    pg_insert(TraderStat)
+    # Upsert in batches to avoid holding a single large transaction + all objects in memory.
+    for batch_start in range(0, len(rows), _LEADERBOARD_BATCH_SIZE):
+        batch = rows[batch_start : batch_start + _LEADERBOARD_BATCH_SIZE]
+        async with get_db_session() as db:
+            for row in batch:
+                stmt = (
+                    pg_insert(Trader)
                     .values(
-                        trader_id=trader_id,
-                        period=period,
-                        pnl_usd=float(perf.pnl),
-                        roi_pct=float(perf.roi),
-                        volume_usd=float(perf.vlm),
+                        hl_address=row.eth_address,
+                        display_name=row.display_name,
+                        is_active=True,
+                        last_seen_at=now,
                     )
                     .on_conflict_do_update(
-                        constraint="trader_stats_pkey",
+                        index_elements=["hl_address"],
                         set_={
-                            "pnl_usd": float(perf.pnl),
-                            "roi_pct": float(perf.roi),
-                            "volume_usd": float(perf.vlm),
-                            "updated_at": func.now(),
+                            "display_name": row.display_name,
+                            "last_seen_at": now,
+                            "is_active": True,
                         },
                     )
+                    .returning(Trader.id)
                 )
-                await db.execute(stat_stmt)
+                result = await db.execute(stmt)
+                trader_id: int = result.scalar_one()
+                active_addresses.append(row.eth_address)
 
-        # Deactivate traders that no longer pass the leaderboard filter.
-        # Skip traders that have active subscriptions so users aren't surprised.
-        active_addresses = [row.eth_address for row in rows]
+                for period, perf in row.window_performances:
+                    stat_stmt = (
+                        pg_insert(TraderStat)
+                        .values(
+                            trader_id=trader_id,
+                            period=period,
+                            pnl_usd=float(perf.pnl),
+                            roi_pct=float(perf.roi),
+                            volume_usd=float(perf.vlm),
+                        )
+                        .on_conflict_do_update(
+                            constraint="trader_stats_pkey",
+                            set_={
+                                "pnl_usd": float(perf.pnl),
+                                "roi_pct": float(perf.roi),
+                                "volume_usd": float(perf.vlm),
+                                "updated_at": func.now(),
+                            },
+                        )
+                    )
+                    await db.execute(stat_stmt)
+
+    # Deactivate traders that no longer pass the leaderboard filter.
+    # Skip traders that have active subscriptions so users aren't surprised.
+    async with get_db_session() as db:
         subscribed_ids = select(Subscription.trader_id).where(
             Subscription.is_active == True  # noqa: E712
         )
