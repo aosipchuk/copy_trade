@@ -19,6 +19,11 @@ from app.services.hyperliquid.models import (
     Meta,
     Position,
 )
+from app.services.hyperliquid.rate_limiter import (
+    hl_priority_low,
+    hl_rate_limiter,
+    weight_for_payload,
+)
 
 logger = get_logger(__name__)
 
@@ -39,6 +44,8 @@ class HyperliquidInfoClient:
         reraise=True,
     )
     async def _get(self, url: str) -> Any:
+        # Leaderboard fetch is heavy; throttle it like a heavy info call.
+        await hl_rate_limiter.acquire(20.0, hl_priority_low.get())
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(url)
             resp.raise_for_status()
@@ -51,6 +58,9 @@ class HyperliquidInfoClient:
         reraise=True,
     )
     async def _post(self, payload: dict[str, Any]) -> Any:
+        await hl_rate_limiter.acquire(
+            weight_for_payload(payload), hl_priority_low.get()
+        )
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(self._info_url, json=payload)
             resp.raise_for_status()

@@ -11,16 +11,21 @@ from app.services.analytics.metrics import (
     compute_composite_score,
     compute_trader_quality_metrics,
 )
+from app.services.hyperliquid.rate_limiter import hl_priority_low
 
 logger = get_logger(__name__)
 
-_BATCH_SIZE = 10
-_BATCH_PAUSE_SEC = 5.0
+_BATCH_SIZE = 10         # coroutines in flight per inner batch
+_CHUNK_SIZE = 300        # traders per priority chunk (ordered by 30d ROI)
+_CHUNK_PAUSE_SEC = 5.0   # breather between chunks; rate limiter governs real pace
 
 
 async def _compute_and_save(
     trader_id: int, hl_address: str, roi_30d_pct: float | None
 ) -> bool:
+    # Mark this task's HL calls as background so the rate limiter prioritizes
+    # real-time polling and user-facing requests over analytics.
+    hl_priority_low.set(True)
     try:
         metrics = await compute_trader_quality_metrics(hl_address)
         if metrics is None:
@@ -66,24 +71,40 @@ async def _compute_quality_metrics_async() -> int:
                 & (trader_stat_month.period == "month"),
             )
             .where(Trader.is_active == True)  # noqa: E712
+            # Highest 30-day ROI first: the traders users are most likely to view
+            # get fresh metrics earliest each cycle. NULL ROI processed last.
+            .order_by(trader_stat_month.roi_pct.desc().nulls_last())
         )
         traders = result.all()
 
     logger.info("quality_metrics_started", total=len(traders))
     processed = 0
-    for i in range(0, len(traders), _BATCH_SIZE):
-        batch = traders[i : i + _BATCH_SIZE]
-        results = await asyncio.gather(
-            *[
-                _compute_and_save(tid, addr, float(roi) if roi is not None else None)
-                for tid, addr, roi in batch
-            ],
-            return_exceptions=True,
-        )
-        processed += sum(1 for r in results if r is True)
+    # Walk the ROI-ordered list in priority chunks of _CHUNK_SIZE. The global HL
+    # rate limiter caps the real API rate; the chunk pause adds breathing room and
+    # marks progress for the most-viewed traders first.
+    for chunk_start in range(0, len(traders), _CHUNK_SIZE):
+        chunk = traders[chunk_start : chunk_start + _CHUNK_SIZE]
+        for i in range(0, len(chunk), _BATCH_SIZE):
+            batch = chunk[i : i + _BATCH_SIZE]
+            results = await asyncio.gather(
+                *[
+                    _compute_and_save(
+                        tid, addr, float(roi) if roi is not None else None
+                    )
+                    for tid, addr, roi in batch
+                ],
+                return_exceptions=True,
+            )
+            processed += sum(1 for r in results if r is True)
 
-        if i + _BATCH_SIZE < len(traders):
-            await asyncio.sleep(_BATCH_PAUSE_SEC)
+        logger.info(
+            "quality_metrics_chunk_done",
+            done=min(chunk_start + _CHUNK_SIZE, len(traders)),
+            total=len(traders),
+            processed=processed,
+        )
+        if chunk_start + _CHUNK_SIZE < len(traders):
+            await asyncio.sleep(_CHUNK_PAUSE_SEC)
 
     return processed
 
