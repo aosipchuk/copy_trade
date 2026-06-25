@@ -9,6 +9,7 @@ import { UnsubscribeModal } from '../components/UnsubscribeModal'
 import { useBackButton } from '../hooks/useTelegram'
 import { useTraderPositionsWS } from '../hooks/useWebSocket'
 import type { ClosedTradeItem, EquityPoint, Period, PositionItem, Subscription, TraderSummary } from '../types'
+import { exportPortfolioCsv } from '../utils/exportPortfolio'
 import { fmt } from '../utils/format'
 
 export function TraderDetailPage() {
@@ -36,6 +37,7 @@ export function TraderDetailPage() {
   const [subMaxLeverage, setSubMaxLeverage] = useState(10)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   useBackButton(useCallback(() => navigate(-1), [navigate]))
 
@@ -110,6 +112,33 @@ export function TraderDetailPage() {
     setEditingSub(false)
   }
 
+  // Export the trader's portfolio as CSV. Pull the full closed-trade history
+  // (not just the recent_trades preview) so the file is complete regardless of
+  // which tabs the user opened.
+  const handleExport = async () => {
+    if (!summary || exporting) return
+    setExporting(true)
+    try {
+      const targetCount = summary.stats['allTime']?.trade_count ?? 0
+      let trades = closedTrades
+      if (!trades || trades.length < targetCount) {
+        try {
+          trades = await fetchClosedTrades(traderId, 500)
+        } catch {
+          trades = closedTrades ?? summary.recent_trades
+        }
+      }
+      exportPortfolioCsv(
+        summary,
+        livePositions,
+        trades ?? summary.recent_trades,
+        summary.equity_curve_week,
+      )
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const handleSaveEdit = async () => {
     if (!existingSub) return
     await updateSubscription(existingSub.id, {
@@ -139,11 +168,20 @@ export function TraderDetailPage() {
   return (
     <div className="pb-48 h-full overflow-y-auto">
       {/* Header */}
-      <div className="px-4 pt-4 pb-3 border-b border-gray-100 dark:border-gray-800">
-        <h1 className="text-base font-semibold text-tg-text truncate">
-          {summary.display_name ?? `${summary.hl_address.slice(0, 8)}…`}
-        </h1>
-        <p className="text-xs text-tg-hint mt-0.5 font-mono">{summary.hl_address}</p>
+      <div className="px-4 pt-4 pb-3 border-b border-gray-100 dark:border-gray-800 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-base font-semibold text-tg-text truncate">
+            {summary.display_name ?? `${summary.hl_address.slice(0, 8)}…`}
+          </h1>
+          <p className="text-xs text-tg-hint mt-0.5 font-mono truncate">{summary.hl_address}</p>
+        </div>
+        <button
+          className="shrink-0 py-1.5 px-3 rounded-lg text-xs border border-tg-button text-tg-button disabled:opacity-50"
+          onClick={handleExport}
+          disabled={exporting}
+        >
+          {exporting ? 'Exporting…' : 'Export'}
+        </button>
       </div>
 
       {/* Period stats grid */}
