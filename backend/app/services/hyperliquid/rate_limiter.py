@@ -22,8 +22,11 @@ hl_priority_low: ContextVar[bool] = ContextVar("hl_priority_low", default=False)
 
 # Budget tuned to stay under HL's ~1200 weight/min with headroom.
 _RATE_PER_SEC = 18.0       # sustained weight/second (~1080/min)
-_CAPACITY = 40.0           # max burst weight
-_LOW_PRIO_RESERVE = 20.0   # weight kept free for high-priority calls
+# Capacity must absorb one polling burst (all subscribed traders fetched at the
+# start of each 5s cycle, ~2 weight each) so essential polling never stalls, while
+# the sustained rate still caps long-running analytics.
+_CAPACITY = 80.0           # max burst weight
+_LOW_PRIO_RESERVE = 24.0   # weight kept free for high-priority calls (polling/user)
 
 # Per-request weights by info "type". Unlisted types default to the heavy cost.
 _LIGHT_TYPES = frozenset(
