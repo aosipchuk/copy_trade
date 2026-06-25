@@ -52,7 +52,7 @@ def setup_scheduler() -> None:
     )
     scheduler.add_job(
         compute_quality_metrics_async,
-        IntervalTrigger(seconds=10800),
+        IntervalTrigger(seconds=3600),
         id="compute_quality_metrics",
         replace_existing=True,
         max_instances=1,
