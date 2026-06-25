@@ -74,7 +74,7 @@ services:
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
     command: >
-      uv run celery -A app.tasks.celery_app worker
+      .venv/bin/celery -A app.tasks.celery_app worker
         --loglevel=warning
         --concurrency=2
         -Q default,signals,execution
@@ -91,7 +91,7 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
     command: >
-      uv run celery -A app.tasks.celery_app beat
+      .venv/bin/celery -A app.tasks.celery_app beat
         --loglevel=warning
         --scheduler celery.beat.PersistentScheduler
     restart: unless-stopped
