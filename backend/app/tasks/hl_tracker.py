@@ -164,6 +164,26 @@ async def _refresh_leaderboard_async() -> int:
                         "ch_pnl_write_failed", trader=row.eth_address, error=str(ch_err)
                     )
 
+        # Deactivate traders that no longer pass the leaderboard filter.
+        # Skip traders that have active subscriptions so users aren't surprised.
+        active_addresses = [row.eth_address for row in rows]
+        subscribed_ids = select(Subscription.trader_id).where(
+            Subscription.is_active == True  # noqa: E712
+        )
+        deactivated = await db.execute(
+            update(Trader)
+            .where(
+                Trader.hl_address.not_in(active_addresses),
+                Trader.is_active == True,  # noqa: E712
+                Trader.id.not_in(subscribed_ids),
+            )
+            .values(is_active=False)
+            .returning(Trader.id)
+        )
+        deactivated_count = len(deactivated.fetchall())
+        if deactivated_count:
+            logger.info("leaderboard_deactivated", count=deactivated_count)
+
     return len(rows)
 
 
