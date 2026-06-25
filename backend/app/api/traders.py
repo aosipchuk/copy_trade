@@ -183,6 +183,7 @@ async def list_traders(
     min_profitable_days_pct: float = Query(default=0, ge=0, le=100),
     max_avg_trades_per_day: float | None = Query(default=None, ge=0),
     min_calmar: float = Query(default=0, ge=0),
+    min_roi: float = Query(default=0, ge=-100),
 ) -> TraderListResponse:
     sort_col = {
         "roi": TraderStat.roi_pct,
@@ -259,6 +260,9 @@ async def list_traders(
     if min_calmar > 0:
         col_cal = TraderStat.calmar_ratio
         query = query.where(or_(col_cal >= min_calmar, col_cal.is_(None)))
+    if min_roi != 0:
+        col_roi = TraderStat.roi_pct
+        query = query.where(or_(col_roi >= min_roi, col_roi.is_(None)))
 
     if cursor:
         try:

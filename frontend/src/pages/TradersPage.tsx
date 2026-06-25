@@ -31,6 +31,7 @@ function filtersActive(f: TraderFilters): number {
   return [
     f.quality,
     f.subscribed_only,
+    f.min_roi !== 0,
     f.min_win_rate > 0,
     f.max_drawdown < 100,
     f.min_days > 0,
@@ -341,6 +342,27 @@ export function TradersPage() {
                     }`}
                   />
                 </button>
+              </div>
+
+              {/* Min ROI */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-sm font-medium text-tg-text">Min ROI</span>
+                  <span className="text-sm text-tg-hint">
+                    {draftFilters.min_roi !== 0 ? `${draftFilters.min_roi}%` : 'Any'}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={50}
+                  step={1}
+                  value={draftFilters.min_roi}
+                  onChange={(e) =>
+                    setDraftFilters((f) => ({ ...f, min_roi: Number(e.target.value) }))
+                  }
+                  className="w-full accent-tg-button"
+                />
               </div>
 
               {/* Min Win Rate */}

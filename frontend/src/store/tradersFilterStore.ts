@@ -4,6 +4,7 @@ import type { Period, SortKey, TraderFilters } from '../types'
 export const DEFAULT_FILTERS: TraderFilters = {
   quality: false,
   subscribed_only: false,
+  min_roi: 0,
   min_win_rate: 0,
   max_drawdown: 100,
   min_days: 0,

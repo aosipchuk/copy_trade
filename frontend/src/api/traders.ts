@@ -30,6 +30,7 @@ export async function fetchTraders(params: {
       ...(params.address ? { address: params.address } : {}),
       ...(f.quality ? { quality: true } : {}),
       ...(f.subscribed_only ? { subscribed_only: true } : {}),
+      ...(f.min_roi && f.min_roi !== 0 ? { min_roi: f.min_roi } : {}),
       ...(f.min_win_rate && f.min_win_rate > 0 ? { min_win_rate: f.min_win_rate } : {}),
       ...(f.max_drawdown != null && f.max_drawdown < 100 ? { max_drawdown: f.max_drawdown } : {}),
       ...(f.min_days && f.min_days > 0 ? { min_days: f.min_days } : {}),

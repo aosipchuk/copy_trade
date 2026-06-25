@@ -28,6 +28,7 @@ export interface TraderStats {
 export interface TraderFilters {
   quality: boolean
   subscribed_only: boolean
+  min_roi: number
   min_win_rate: number
   max_drawdown: number
   min_days: number
