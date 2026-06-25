@@ -22,10 +22,15 @@ logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    from app.core.scheduler import scheduler, setup_scheduler
+
+    setup_scheduler()
+    scheduler.start()
     logger.info(
         "app_startup", environment=settings.environment, hl_network=settings.hl_network
     )
     yield
+    scheduler.shutdown(wait=False)
     logger.info("app_shutdown")
 
 

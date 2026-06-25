@@ -21,16 +21,14 @@ dependencies = [
     # Validation & Config
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
-    # Task Queue
-    "celery[redis]>=5.4",
+    # Scheduler
+    "apscheduler>=3.10",
     "redis[hiredis]>=5.2",
     # HTTP Client
     "httpx>=0.28",
     "tenacity>=9.0",
     # Logging
     "structlog>=24.4",
-    # ClickHouse
-    "clickhouse-driver>=0.2",
     # Crypto / Security
     "cryptography>=43.0",
     "python-jose[cryptography]>=3.3",

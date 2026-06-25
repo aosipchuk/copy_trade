@@ -1,5 +1,5 @@
 .PHONY: up down build logs shell test lint typecheck migrate makemigrations install clean \
-        prod-up prod-down prod-logs prod-build ssl deploy deploy-backend deploy-frontend
+        prod-up prod-down prod-logs prod-build ssl deploy deploy-backend deploy-frontend run
 
 ifneq (,$(wildcard ./.env.prod))
   include .env.prod
@@ -58,13 +58,13 @@ ssl:
 deploy:
 	$(PROD_COMPOSE) build backend frontend
 	$(PROD_COMPOSE) run --rm backend sh -c "uv run alembic upgrade head"
-	$(PROD_COMPOSE) up -d --no-deps backend celery-worker celery-beat frontend
+	$(PROD_COMPOSE) up -d --no-deps backend frontend
 
 # Backend-only deploy: ~30s (use when only Python code or migrations changed)
 deploy-backend:
 	$(PROD_COMPOSE) build backend
 	$(PROD_COMPOSE) run --rm backend sh -c "uv run alembic upgrade head"
-	$(PROD_COMPOSE) up -d --no-deps backend celery-worker celery-beat
+	$(PROD_COMPOSE) up -d --no-deps backend
 
 # Frontend-only deploy: ~25 min on VPS (use when only UI changed, no migrations)
 deploy-frontend:
@@ -78,12 +78,6 @@ install:
 
 run:
 	cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
-
-worker:
-	cd backend && uv run celery -A app.tasks.celery_app worker --loglevel=info -Q default,signals,execution
-
-beat:
-	cd backend && uv run celery -A app.tasks.celery_app beat --loglevel=info
 
 # ─── Database ────────────────────────────────────────────────────────────────
 

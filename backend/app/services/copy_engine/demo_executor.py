@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_task_db_session
+from app.core.database import get_db_session
 from app.core.logging import get_logger
 from app.core.redis_client import get_redis_client
 from app.models.signal import Signal
@@ -32,7 +32,7 @@ async def simulate_demo_trade(signal_id: int, user_id: int) -> None:
         return
     r.setex(key, DEMO_DEDUP_TTL, "1")
 
-    async with get_task_db_session() as db:
+    async with get_db_session() as db:
         signal, subscription = await _load_demo_context(db, signal_id, user_id)
         if signal is None or subscription is None:
             return

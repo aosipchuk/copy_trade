@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_task_db_session
+from app.core.database import get_db_session
 from app.core.logging import get_logger
 from app.core.redis_client import get_redis_client
 from app.models.signal import Signal
@@ -73,7 +73,7 @@ async def execute_copy_trade(signal_id: int, user_id: int) -> None:
         logger.info("copy_trade_dedup_skip", signal_id=signal_id, user_id=user_id)
         return
 
-    async with get_task_db_session() as db:
+    async with get_db_session() as db:
         signal, subscription, agent, user = await _load_context(db, signal_id, user_id)
         if signal is None or subscription is None or agent is None or user is None:
             return
@@ -384,7 +384,7 @@ async def _handle_close(
 
 async def close_all_positions_for_user(user_id: int) -> int:
     """Close ALL open HL positions for a user (emergency stop). Returns count closed."""
-    async with get_task_db_session() as db:
+    async with get_db_session() as db:
         agent_res = await db.execute(
             select(UserAgent).where(
                 UserAgent.user_id == user_id,
@@ -458,7 +458,7 @@ async def close_positions_for_subscription(user_id: int, subscription_id: int) -
     Attempt to close all HL positions associated with the given subscription.
     Called on subscription delete.
     """
-    async with get_task_db_session() as db:
+    async with get_db_session() as db:
         sub_res = await db.execute(
             select(Subscription).where(Subscription.id == subscription_id)
         )

@@ -5,13 +5,12 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_task_db_session
+from app.core.database import get_db_session
 from app.core.logging import get_logger
 from app.models.subscription import Subscription
 from app.models.trade import UserTrade
 from app.models.trader import Trader
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
-from app.tasks.celery_app import celery_app
 
 logger = get_logger(__name__)
 
@@ -195,14 +194,14 @@ async def _write_close_trades(
     return closed_count
 
 
-async def _reconcile_async() -> int:
+async def reconcile_async() -> int:
     """
     Find demo open trades with no subsequent close whose position no longer
     exists on Hyperliquid, then synthesize a close trade at the current mid price.
 
     Returns the number of positions closed.
     """
-    async with get_task_db_session() as db:
+    async with get_db_session() as db:
         truly_open, sub_to_address = await _load_stuck_positions(db)
 
     if not truly_open:
@@ -223,24 +222,8 @@ async def _reconcile_async() -> int:
         logger.warning("reconcile_mids_fetch_failed", error=str(exc))
         return 0
 
-    async with get_task_db_session() as db:
+    async with get_db_session() as db:
         count = await _write_close_trades(db, to_close, mids)
 
     logger.info("demo_reconcile_complete", closed=count)
     return count
-
-
-@celery_app.task(  # type: ignore[untyped-decorator]
-    name="app.tasks.demo_reconcile.reconcile_demo_positions",
-    bind=True,
-    max_retries=3,
-)
-def reconcile_demo_positions(self) -> None:  # type: ignore[no-untyped-def]
-    """Synthesize close trades for demo positions that vanished from Hyperliquid."""
-    try:
-        count = asyncio.run(_reconcile_async())
-        if count:
-            logger.info("demo_positions_reconciled", count=count)
-    except Exception as exc:
-        logger.error("demo_reconcile_task_failed", error=str(exc))
-        raise self.retry(exc=exc, countdown=60) from exc

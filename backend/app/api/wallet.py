@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -239,10 +240,10 @@ async def close_all_positions(
     for sub in subs:
         sub.is_active = False
 
-    # Enqueue close task
-    from app.tasks.execution_tasks import close_all_positions_for_user
+    # Schedule close in background (fire-and-forget)
+    from app.tasks.execution_tasks import close_all_positions_for_user_async
 
-    close_all_positions_for_user.delay(current_user.id)
+    asyncio.create_task(close_all_positions_for_user_async(current_user.id))
 
     return CloseAllResponse(closed=position_count, subscriptions_paused=sub_count)
 

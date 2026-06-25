@@ -29,24 +29,6 @@ services:
         limits:
           memory: 300M
 
-  clickhouse:
-    ports: !reset []
-    environment:
-      CLICKHOUSE_DB: copytrade
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set in production}
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-      # Prevent ClickHouse from consuming all available RAM (default: 80% of total)
-      CLICKHOUSE_MAX_SERVER_MEMORY_USAGE: "536870912"   # 512 MB
-    healthcheck:
-      test:
-        - "CMD-SHELL"
-        - "clickhouse-client --user default --password ${CLICKHOUSE_PASSWORD} --query 'SELECT 1' || exit 1"
-    deploy:
-      resources:
-        limits:
-          memory: 600M
-
   backend:
     build:
       context: ./backend
@@ -54,9 +36,6 @@ services:
     volumes: !reset []           # no live-reload mount in prod
     environment:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
@@ -65,40 +44,6 @@ services:
       resources:
         limits:
           memory: 400M
-
-  celery-worker:
-    volumes: !reset []
-    environment:
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
-    command: >
-      .venv/bin/celery -A app.tasks.celery_app worker
-        --loglevel=warning
-        --concurrency=2
-        -Q default,signals,execution
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 400M
-
-  celery-beat:
-    volumes: !reset []
-    environment:
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
-      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
-    command: >
-      .venv/bin/celery -A app.tasks.celery_app beat
-        --loglevel=warning
-        --scheduler celery.beat.PersistentScheduler
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 150M
 
   frontend:
     build:

@@ -38,34 +38,6 @@ services:
         max-size: "10m"
         max-file: "2"
 
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.3-alpine
-    environment:
-      CLICKHOUSE_DB: copytrade
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - ./backend/infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "8123:8123"   # HTTP
-      - "9000:9000"   # Native
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q 'Ok.' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "2"
-
   backend:
     build:
       context: ./backend
@@ -74,9 +46,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://copytrade:copytrade@postgres:5432/copytrade
       REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      CLICKHOUSE_HOST: clickhouse
     ports:
       - "8001:8000"
     depends_on:
@@ -84,8 +53,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      clickhouse:
-        condition: service_started
     volumes:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
@@ -101,53 +68,6 @@ services:
       driver: "json-file"
       options:
         max-size: "20m"
-        max-file: "2"
-
-  celery-worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://copytrade:copytrade@postgres:5432/copytrade
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      CLICKHOUSE_HOST: clickhouse
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./backend/app:/app/app
-    command: celery -A app.tasks.celery_app worker --loglevel=warning --concurrency=4 -Q default,signals,execution
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "2"
-
-  celery-beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://copytrade:copytrade@postgres:5432/copytrade
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-      CLICKHOUSE_HOST: clickhouse
-    depends_on:
-      - celery-worker
-    volumes:
-      - ./backend/app:/app/app
-    command: celery -A app.tasks.celery_app beat --loglevel=warning --scheduler celery.beat.PersistentScheduler
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
         max-file: "2"
 
   frontend:
@@ -182,4 +102,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  clickhouse_data:

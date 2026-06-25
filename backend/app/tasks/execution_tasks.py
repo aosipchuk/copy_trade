@@ -1,32 +1,31 @@
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_fixed
 
-from app.core.database import get_task_db_session
+from app.core.database import get_db_session
 from app.core.logging import get_logger
 from app.models.subscription import Subscription
 from app.models.trade import UserTrade
 from app.models.user import User
 from app.services.copy_engine.constants import PENDING_TRADE_TIMEOUT_SECONDS
 from app.services.copy_engine.exceptions import NonRetryableError
-from app.tasks.celery_app import celery_app
 
 logger = get_logger(__name__)
 
 
-@celery_app.task(  # type: ignore[untyped-decorator]
-    name="app.tasks.execution_tasks.execute_copy_trade",
-    bind=True,
-    max_retries=3,
-    default_retry_delay=5,
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(5),
+    retry=retry_if_not_exception_type(NonRetryableError),
+    reraise=True,
 )
-def execute_copy_trade(self, signal_id: int, user_id: int) -> None:  # type: ignore[no-untyped-def]
+async def execute_copy_trade_async(signal_id: int, user_id: int) -> None:
     """Execute a copy trade for a specific user based on a signal."""
-    try:
-        from app.services.copy_engine.executor import execute_copy_trade as _exec
+    from app.services.copy_engine.executor import execute_copy_trade as _exec
 
-        asyncio.run(_exec(signal_id, user_id))
+    try:
+        await _exec(signal_id, user_id)
     except NonRetryableError as exc:
         logger.warning(
             "copy_trade_non_retryable",
@@ -34,30 +33,17 @@ def execute_copy_trade(self, signal_id: int, user_id: int) -> None:  # type: ign
             user_id=user_id,
             reason=str(exc),
         )
-    except Exception as exc:
-        logger.error(
-            "execute_copy_trade_failed",
-            signal_id=signal_id,
-            user_id=user_id,
-            error=str(exc),
-        )
-        raise self.retry(exc=exc, countdown=5) from exc
+        raise
 
 
-@celery_app.task(  # type: ignore[untyped-decorator]
-    name="app.tasks.execution_tasks.simulate_demo_trade",
-    bind=True,
-    max_retries=3,
-    default_retry_delay=5,
-)
-def simulate_demo_trade(self, signal_id: int, user_id: int) -> None:  # type: ignore[no-untyped-def]
+async def simulate_demo_trade_async(signal_id: int, user_id: int) -> None:
     """Paper-trade simulation for a demo subscription."""
     try:
         from app.services.copy_engine.demo_executor import (
             simulate_demo_trade as _sim,
         )
 
-        asyncio.run(_sim(signal_id, user_id))
+        await _sim(signal_id, user_id)
     except Exception as exc:
         logger.error(
             "simulate_demo_trade_failed",
@@ -65,16 +51,10 @@ def simulate_demo_trade(self, signal_id: int, user_id: int) -> None:  # type: ig
             user_id=user_id,
             error=str(exc),
         )
-        raise self.retry(exc=exc, countdown=5) from exc
 
 
-@celery_app.task(name="app.tasks.execution_tasks.check_stop_losses")  # type: ignore[untyped-decorator]
-def check_stop_losses() -> None:
+async def check_stop_losses_async() -> None:
     """Check all active subscriptions and deactivate those that hit stop-loss."""
-    asyncio.run(_check_stop_losses_async())
-
-
-async def _check_stop_losses_async() -> None:
     from app.services.notifications.telegram import (
         format_portfolio_stop_loss_hit,
         format_stop_loss_hit,
@@ -85,7 +65,7 @@ async def _check_stop_losses_async() -> None:
         check_subscription_stop_loss,
     )
 
-    async with get_task_db_session() as db:
+    async with get_db_session() as db:
         result = await db.execute(
             select(Subscription.id, Subscription.user_id).where(
                 Subscription.is_active == True  # noqa: E712
@@ -95,7 +75,7 @@ async def _check_stop_losses_async() -> None:
 
     # --- Per-subscription stop-loss ---
     for sub_id, user_id in rows:
-        async with get_task_db_session() as db:
+        async with get_db_session() as db:
             try:
                 hit = await check_subscription_stop_loss(db, sub_id)
                 if not hit:
@@ -141,7 +121,7 @@ async def _check_stop_losses_async() -> None:
     # --- Portfolio-level stop-loss (per unique user) ---
     unique_user_ids = {uid for _, uid in rows}
     for user_id in unique_user_ids:
-        async with get_task_db_session() as db:
+        async with get_db_session() as db:
             try:
                 user_res = await db.execute(select(User).where(User.id == user_id))
                 user = user_res.scalar_one_or_none()
@@ -182,12 +162,12 @@ async def _check_stop_losses_async() -> None:
 
                 hl = HyperliquidInfoClient()
                 summary = await hl.get_account_summary(user.hl_address)
+                from decimal import Decimal as BaselineDecimal
+
                 from app.core.redis_client import get_redis_client
 
                 r = get_redis_client()
                 baseline_str = r.get(f"hl:equity_baseline:{user_id}")
-                from decimal import Decimal as BaselineDecimal
-
                 _bl = baseline_str
                 baseline = BaselineDecimal(_bl) if _bl else summary.account_value
                 loss_pct = (
@@ -203,7 +183,7 @@ async def _check_stop_losses_async() -> None:
                     ),
                 )
 
-                # Close all positions in background
+                # Close all positions
                 from app.services.copy_engine.executor import (
                     close_all_positions_for_user,
                 )
@@ -216,28 +196,18 @@ async def _check_stop_losses_async() -> None:
                 )
 
 
-@celery_app.task(name="app.tasks.execution_tasks.close_all_positions_for_user")  # type: ignore[untyped-decorator]
-def close_all_positions_for_user(user_id: int) -> None:
+async def close_all_positions_for_user_async(user_id: int) -> None:
     """Close all open HL positions for a user during emergency stop."""
-    asyncio.run(_close_all_for_user_async(user_id))
-
-
-async def _close_all_for_user_async(user_id: int) -> None:
     from app.services.copy_engine.executor import close_all_positions_for_user as _exec
 
     count = await _exec(user_id)
     logger.info("emergency_stop_complete", user_id=user_id, closed=count)
 
 
-@celery_app.task(name="app.tasks.execution_tasks.close_subscription_positions")  # type: ignore[untyped-decorator]
-def close_subscription_positions(user_id: int, subscription_id: int) -> None:
-    """Close all open HL positions for a single subscription on deletion."""
-    asyncio.run(_close_subscription_positions_async(user_id, subscription_id))
-
-
-async def _close_subscription_positions_async(
+async def close_subscription_positions_async(
     user_id: int, subscription_id: int
 ) -> None:
+    """Close all open HL positions for a single subscription on deletion."""
     from app.services.copy_engine.executor import (
         close_positions_for_subscription as _exec,
     )
@@ -250,13 +220,8 @@ async def _close_subscription_positions_async(
     )
 
 
-@celery_app.task(name="app.tasks.execution_tasks.monitor_pending_trades")  # type: ignore[untyped-decorator]
-def monitor_pending_trades() -> None:
+async def monitor_pending_trades_async() -> None:
     """Update status of pending trades by checking Hyperliquid order status."""
-    asyncio.run(_monitor_pending_trades_async())
-
-
-async def _monitor_pending_trades_async() -> None:
     from app.services.hyperliquid.exchange_client import HyperliquidExchangeClient
     from app.services.hyperliquid.info_client import HyperliquidInfoClient
 
@@ -264,7 +229,7 @@ async def _monitor_pending_trades_async() -> None:
         seconds=PENDING_TRADE_TIMEOUT_SECONDS
     )
 
-    async with get_task_db_session() as db:
+    async with get_db_session() as db:
         result = await db.execute(
             select(UserTrade)
             .join(Subscription, UserTrade.subscription_id == Subscription.id)
@@ -276,7 +241,7 @@ async def _monitor_pending_trades_async() -> None:
     hl_info = HyperliquidInfoClient()
 
     for trade in trades:
-        async with get_task_db_session() as db:
+        async with get_db_session() as db:
             try:
                 # Reload trade in this session
                 tr_res = await db.execute(

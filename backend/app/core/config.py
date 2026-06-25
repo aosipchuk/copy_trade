@@ -26,13 +26,6 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # ClickHouse
-    clickhouse_host: str = "localhost"
-    clickhouse_port: int = 9000
-    clickhouse_db: str = "copytrade"
-    clickhouse_user: str = "default"
-    clickhouse_password: str = ""
-
     # Telegram
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
@@ -56,10 +49,6 @@ class Settings(BaseSettings):
     builder_address: str = ""  # 0x... our wallet for receiving fees
     builder_fee_rate: int = 50  # tenth-bps: 50 = 0.05%, 100 = 0.1%
     builder_max_fee_rate: str = "0.075%"  # EIP-712 payload — slightly above real rate
-
-    # Celery
-    celery_broker_url: str = "redis://localhost:6379/1"
-    celery_result_backend: str = "redis://localhost:6379/2"
 
     # ── Validators ────────────────────────────────────────────────────────────
 

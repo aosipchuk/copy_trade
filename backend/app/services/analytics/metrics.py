@@ -6,12 +6,13 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import NamedTuple
 
+from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.clickhouse_client import get_ch_client
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.redis_client import get_redis_client
 from app.models.trader import Trader, TraderStat
 from app.schemas.trader import (
     ClosedTradeItem,
@@ -21,7 +22,9 @@ from app.schemas.trader import (
     TraderStatSchema,
 )
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
-from app.services.hyperliquid.models import Fill
+from app.services.hyperliquid.models import Fill, Position
+
+_position_adapter: TypeAdapter[list[Position]] = TypeAdapter(list[Position])
 
 logger = get_logger(__name__)
 
@@ -136,64 +139,44 @@ async def get_equity_curve(
     return _build_equity_curve_from_fills(fills, period)
 
 
-def _ch_avg_leverage(address: str) -> float | None:
-    ch = get_ch_client()
-    rows = ch.execute(
-        """
-        SELECT avg(leverage)
-        FROM copytrade.trader_positions
-        WHERE trader_address = %(addr)s
-          AND szi != 0
-          AND leverage > 0
-        """,
-        {"addr": address},
-    )
-    if not rows or rows[0][0] is None:
+def _redis_avg_leverage(address: str) -> float | None:
+    """Average leverage from current Redis position snapshot."""
+    r = get_redis_client()
+    raw: str | None = r.get(f"hl:snapshot:{address}")
+    if not raw:
         return None
-    value = float(rows[0][0])
-    return value if value > 0 else None
-
-
-def _ch_open_positions(
-    address: str,
-) -> list[tuple[str, str, float, float, float, float]]:  # noqa: E501
-    ch = get_ch_client()
-    rows = ch.execute(
-        """
-        SELECT
-            coin,
-            argMax(side, snapshot_at)        AS side,
-            argMax(szi, snapshot_at)         AS szi,
-            argMax(entry_px, snapshot_at)    AS entry_px,
-            argMax(unrealized_pnl, snapshot_at) AS unrealized_pnl,
-            argMax(leverage, snapshot_at)    AS leverage
-        FROM copytrade.trader_positions
-        WHERE trader_address = %(addr)s
-          AND snapshot_at >= now() - INTERVAL 5 MINUTE
-        GROUP BY coin
-        HAVING szi != 0
-        ORDER BY coin
-        """,
-        {"addr": address},
-    )
-    return [
-        (r[0], r[1], float(r[2]), float(r[3]), float(r[4]), float(r[5])) for r in rows
-    ]  # noqa: E501
+    positions = _position_adapter.validate_json(raw)
+    leverages = [
+        p.leverage.value
+        for p in positions
+        if p.szi != Decimal("0") and p.leverage.value > 0
+    ]
+    return sum(leverages) / len(leverages) if leverages else None
 
 
 async def get_open_positions(address: str) -> list[PositionItem]:
-    """Return latest open positions from ClickHouse snapshot."""
-    rows = await asyncio.to_thread(_ch_open_positions, address)
+    """Latest positions from Redis snapshot (updated every 5s by hl_tracker)."""
+    r = get_redis_client()
+    raw: str | None = await asyncio.to_thread(r.get, f"hl:snapshot:{address}")
+
+    if raw:
+        positions = _position_adapter.validate_json(raw)
+    else:
+        # Fallback: fetch directly from HL (trader not tracked or snapshot expired)
+        client = HyperliquidInfoClient()
+        positions = await client.get_positions(address)
+
     return [
         PositionItem(
-            coin=coin,
-            side=side,
-            size=abs(szi),
-            entry_px=entry_px if entry_px != 0.0 else None,
-            unrealized_pnl=upnl,
-            leverage=int(leverage),
+            coin=p.coin,
+            side=p.side,
+            size=float(p.abs_size),
+            entry_px=float(p.entry_px) if p.entry_px is not None else None,
+            unrealized_pnl=float(p.unrealized_pnl),
+            leverage=p.leverage.value,
         )
-        for coin, side, szi, entry_px, upnl, leverage in rows
+        for p in positions
+        if p.szi != Decimal("0")
     ]
 
 
@@ -678,7 +661,7 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
     client = HyperliquidInfoClient(base_url=settings.hl_mainnet_api_url)
     all_fills, avg_leverage = await asyncio.gather(
         client.get_fills(address, limit=None),
-        asyncio.to_thread(_ch_avg_leverage, address),
+        asyncio.to_thread(_redis_avg_leverage, address),
     )
 
     if not all_fills:

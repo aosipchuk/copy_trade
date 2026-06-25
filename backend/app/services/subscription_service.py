@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from decimal import Decimal
 
@@ -242,10 +243,12 @@ async def delete_subscription(
 
     if close_positions and not sub.is_demo:
         from app.tasks.execution_tasks import (
-            close_subscription_positions,  # noqa: PLC0415
+            close_subscription_positions_async,  # noqa: PLC0415
         )
 
-        close_subscription_positions.delay(user_id, subscription_id)
+        asyncio.create_task(
+            close_subscription_positions_async(user_id, subscription_id)
+        )
 
 
 async def _get_owned(

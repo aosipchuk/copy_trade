@@ -4,14 +4,13 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.orm import aliased
 
-from app.core.database import get_task_db_session
+from app.core.database import get_db_session
 from app.core.logging import get_logger
 from app.models.trader import Trader, TraderStat
 from app.services.analytics.metrics import (
     compute_composite_score,
     compute_trader_quality_metrics,
 )
-from app.tasks.celery_app import celery_app
 
 logger = get_logger(__name__)
 
@@ -42,7 +41,7 @@ async def _compute_and_save(
         now = datetime.now(UTC).replace(tzinfo=None)
         values = {**metrics.to_dict(), "updated_at": now}
 
-        async with get_task_db_session() as db:
+        async with get_db_session() as db:
             await db.execute(
                 update(TraderStat)
                 .where(TraderStat.trader_id == trader_id)
@@ -58,7 +57,7 @@ async def _compute_and_save(
 
 async def _compute_quality_metrics_async() -> int:
     trader_stat_month = aliased(TraderStat)
-    async with get_task_db_session() as db:
+    async with get_db_session() as db:
         result = await db.execute(
             select(Trader.id, Trader.hl_address, trader_stat_month.roi_pct)
             .outerjoin(
@@ -89,16 +88,10 @@ async def _compute_quality_metrics_async() -> int:
     return processed
 
 
-@celery_app.task(  # type: ignore[untyped-decorator]
-    name="app.tasks.analytics_tasks.compute_quality_metrics",
-    bind=True,
-    max_retries=2,
-)
-def compute_quality_metrics(self) -> None:  # type: ignore[no-untyped-def]
+async def compute_quality_metrics_async() -> None:
     """Compute quality metrics and composite score for all active traders."""
     try:
-        count = asyncio.run(_compute_quality_metrics_async())
+        count = await _compute_quality_metrics_async()
         logger.info("quality_metrics_computed", processed=count)
     except Exception as exc:
         logger.error("quality_metrics_task_failed", error=str(exc))
-        raise self.retry(exc=exc, countdown=300) from exc
