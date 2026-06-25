@@ -215,20 +215,16 @@ async def list_traders(
             TraderStat.trade_count >= 10,
         )
 
-    # Individual filters: NULL metric = not yet computed → include the trader.
-    # Only the quality preset strictly requires all metrics to be present.
+    # User-set filters: NULL means unknown → exclude. Unlike hard gates, explicit
+    # user filters should not pass traders whose metrics haven't been computed yet.
     if min_days > 0:
-        col_ad = TraderStat.active_trading_days
-        query = query.where(or_(col_ad >= min_days, col_ad.is_(None)))
+        query = query.where(TraderStat.active_trading_days >= min_days)
     if min_win_rate > 0:
-        col_wr = TraderStat.win_rate_pct
-        query = query.where(or_(col_wr >= min_win_rate, col_wr.is_(None)))
+        query = query.where(TraderStat.win_rate_pct >= min_win_rate)
     if max_drawdown < 100:
-        col_dd = TraderStat.max_drawdown_pct
-        query = query.where(or_(col_dd <= max_drawdown, col_dd.is_(None)))
+        query = query.where(TraderStat.max_drawdown_pct <= max_drawdown)
     if min_trades > 0:
-        col_tc = TraderStat.trade_count
-        query = query.where(or_(col_tc >= min_trades, col_tc.is_(None)))
+        query = query.where(TraderStat.trade_count >= min_trades)
     if min_volume > 0:
         query = query.where(TraderStat.volume_usd >= min_volume)
 
@@ -261,8 +257,7 @@ async def list_traders(
         col_cal = TraderStat.calmar_ratio
         query = query.where(or_(col_cal >= min_calmar, col_cal.is_(None)))
     if min_roi != 0:
-        col_roi = TraderStat.roi_pct
-        query = query.where(or_(col_roi >= min_roi, col_roi.is_(None)))
+        query = query.where(TraderStat.roi_pct >= min_roi)
 
     if cursor:
         try:
