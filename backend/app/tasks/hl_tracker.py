@@ -27,6 +27,10 @@ _MAX_TRADERS = 5_000            # safety cap against unexpected leaderboard grow
 _SNAPSHOT_TTL = 60              # seconds in Redis
 _position_adapter: TypeAdapter[list[Position]] = TypeAdapter(list[Position])
 
+# Limit concurrent HL HTTP requests to avoid memory spikes in a single uvicorn process.
+# With Celery, each poll ran in a separate worker; now all run in the same asyncio loop.
+_POLL_SEMAPHORE = asyncio.Semaphore(10)
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -209,10 +213,11 @@ async def _poll_trader_positions_async(trader_address: str) -> int:
 
 async def _poll_and_execute(trader_address: str) -> None:
     """Poll one trader and fan-out copy trades for all subscribers."""
-    try:
-        await _poll_trader_positions_async(trader_address)
-    except Exception as exc:
-        logger.error("poll_positions_failed", trader=trader_address, error=str(exc))
+    async with _POLL_SEMAPHORE:
+        try:
+            await _poll_trader_positions_async(trader_address)
+        except Exception as exc:
+            logger.error("poll_positions_failed", trader=trader_address, error=str(exc))
 
 
 async def track_active_traders_async() -> None:
