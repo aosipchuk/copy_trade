@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Select, and_, or_, select
 
 from app.api.deps import CurrentUser, DBSession, get_current_user
-from app.core.cache import cached_json
+from app.core.cache import cached_json_stale_on_error
 from app.core.logging import get_logger
 from app.models.subscription import Subscription
 from app.models.trader import Trader, TraderStat
@@ -45,6 +45,11 @@ router = APIRouter(
 
 _CACHE_TTL_STATS = 30
 _CACHE_TTL_POSITIONS = 5
+# Stale-on-error fallback windows: how long the last good value is served when a
+# live HL fetch fails (429 / timeout). Long for history, short for positions
+# (which go stale fast and would mislead).
+_CACHE_TTL_STALE = 3600
+_CACHE_TTL_STALE_POSITIONS = 300
 _DEFAULT_LIMIT = 50
 
 # Hard gate thresholds. NULL = not yet computed → trader passes through.
@@ -347,7 +352,9 @@ async def trader_equity_curve(
         return [p.model_dump(mode="json") for p in points]
 
     cache_key = f"analytics:equity:{trader_id}:{period}"
-    raw = await cached_json(cache_key, _CACHE_TTL_STATS, _fetch)
+    raw = await cached_json_stale_on_error(
+        cache_key, _CACHE_TTL_STATS, _CACHE_TTL_STALE, _fetch
+    )
     return [EquityPoint(**r) for r in raw]
 
 
@@ -375,7 +382,9 @@ async def trader_positions(trader_id: int, db: DBSession) -> list[PositionItem]:
         ]
 
     cache_key = f"analytics:positions:{trader_id}"
-    raw = await cached_json(cache_key, _CACHE_TTL_POSITIONS, _fetch)
+    raw = await cached_json_stale_on_error(
+        cache_key, _CACHE_TTL_POSITIONS, _CACHE_TTL_STALE_POSITIONS, _fetch
+    )
     return [PositionItem(**r) for r in raw]
 
 
@@ -396,7 +405,9 @@ async def trader_fills(
         return [f.model_dump() for f in fills]
 
     cache_key = f"analytics:fills:{trader_id}:{limit}"
-    raw = await cached_json(cache_key, _CACHE_TTL_STATS, _fetch)
+    raw = await cached_json_stale_on_error(
+        cache_key, _CACHE_TTL_STATS, _CACHE_TTL_STALE, _fetch
+    )
     return [FillItem(**r) for r in raw]
 
 
@@ -417,7 +428,9 @@ async def trader_closed_trades(
         return [t.model_dump() for t in trades]
 
     cache_key = f"analytics:closed_trades:{trader_id}:{limit}"
-    raw = await cached_json(cache_key, _CACHE_TTL_STATS, _fetch)
+    raw = await cached_json_stale_on_error(
+        cache_key, _CACHE_TTL_STATS, _CACHE_TTL_STALE, _fetch
+    )
     return [ClosedTradeItem(**r) for r in raw]
 
 
@@ -441,20 +454,36 @@ async def trader_summary(trader_id: int, db: DBSession) -> TraderSummaryResponse
             get_open_positions(trader.hl_address),
             return_exceptions=True,
         )
-        fills: list = fills_res if not isinstance(fills_res, BaseException) else []
-        stats_list_safe: list = stats_list if not isinstance(stats_list, BaseException) else []
-        positions: list = positions_res if not isinstance(positions_res, BaseException) else []
+        # Fills drive recent_trades + equity_curve. If that live HL call failed
+        # (e.g. 429), raise so the stale cache serves the last good summary
+        # instead of rendering empty trades — the "0 trades" symptom.
         if isinstance(fills_res, BaseException):
-            logger.warning("summary_fills_failed", trader=trader.hl_address, error=str(fills_res))
+            logger.warning(
+                "summary_fills_failed", trader=trader.hl_address, error=str(fills_res)
+            )
+            raise fills_res
+        fills: list[Any] = fills_res
+        stats_list_safe: list[Any] = (
+            stats_list if not isinstance(stats_list, BaseException) else []
+        )
+        positions: list[Any] = (
+            positions_res if not isinstance(positions_res, BaseException) else []
+        )
         if isinstance(positions_res, BaseException):
-            logger.warning("summary_positions_failed", trader=trader.hl_address, error=str(positions_res))
+            logger.warning(
+                "summary_positions_failed",
+                trader=trader.hl_address,
+                error=str(positions_res),
+            )
 
         equity_curve, trades = await asyncio.gather(
             get_equity_curve(trader.hl_address, "week", fills=fills),
             get_closed_trades(trader.hl_address, limit=10, fills=fills),
             return_exceptions=True,
         )
-        equity_curve = equity_curve if not isinstance(equity_curve, BaseException) else []
+        equity_curve = (
+            equity_curve if not isinstance(equity_curve, BaseException) else []
+        )
         trades = trades if not isinstance(trades, BaseException) else []
 
         # Replace leaderboard pnl_usd (includes unrealized) with realized-only
@@ -476,7 +505,9 @@ async def trader_summary(trader_id: int, db: DBSession) -> TraderSummaryResponse
         }
 
     cache_key = f"analytics:summary:{trader_id}"
-    raw = await cached_json(cache_key, _CACHE_TTL_SUMMARY, _fetch)
+    raw = await cached_json_stale_on_error(
+        cache_key, _CACHE_TTL_SUMMARY, _CACHE_TTL_STALE, _fetch
+    )
     return TraderSummaryResponse(
         id=raw["id"],
         hl_address=raw["hl_address"],

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import httpx
@@ -29,6 +30,31 @@ logger = get_logger(__name__)
 
 _STATS_LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 _TIMEOUT = httpx.Timeout(30.0)
+_MAX_RETRY_AFTER_SEC = 30.0  # cap how long we honor a server-advised back-off
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a ``Retry-After`` header (delta-seconds form) to a float."""
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+async def _backoff_on_429(resp: httpx.Response) -> None:
+    """Sleep for the server-advised window on HTTP 429 before the error is raised.
+
+    HL returns 429 when our weight budget is exceeded; pausing here (honoring
+    ``Retry-After`` when present) lets the bucket refill instead of immediately
+    re-firing and amplifying the storm. tenacity then retries the call.
+    """
+    if resp.status_code != 429:
+        return
+    retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+    if retry_after is not None:
+        await asyncio.sleep(min(retry_after, _MAX_RETRY_AFTER_SEC))
 
 
 class HyperliquidInfoClient:
@@ -48,6 +74,7 @@ class HyperliquidInfoClient:
         await hl_rate_limiter.acquire(20.0, hl_priority_low.get())
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(url)
+            await _backoff_on_429(resp)
             resp.raise_for_status()
             return resp.json()
 
@@ -63,6 +90,7 @@ class HyperliquidInfoClient:
         )
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(self._info_url, json=payload)
+            await _backoff_on_429(resp)
             resp.raise_for_status()
             return resp.json()
 

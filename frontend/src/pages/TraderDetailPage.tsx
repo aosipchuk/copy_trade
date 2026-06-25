@@ -25,6 +25,8 @@ export function TraderDetailPage() {
   const [activeTab, setActiveTab] = useState<'positions' | 'trades'>('positions')
   const [closedTrades, setClosedTrades] = useState<ClosedTradeItem[] | null>(null)
   const [tradesLoading, setTradesLoading] = useState(false)
+  const [tradesError, setTradesError] = useState(false)
+  const [tradesReload, setTradesReload] = useState(0)
   const [tradesLimit, setTradesLimit] = useState(50)
   const [existingDemoSub, setExistingDemoSub] = useState<Subscription | null>(null)
   const [showSubscribe, setShowSubscribe] = useState(false)
@@ -75,15 +77,22 @@ export function TraderDetailPage() {
 
   useEffect(reload, [reload])
 
-  // Load closed trades when tab opens or limit increases
+  // Load closed trades when tab opens, limit increases, or a retry is requested.
+  // On failure (e.g. Hyperliquid rate-limiting the live fills call) we flag an
+  // error instead of setting an empty list — otherwise the UI would render
+  // "No recent trades" and masquerade a transient failure as zero trades.
   useEffect(() => {
     if (activeTab !== 'trades') return
     setTradesLoading(true)
+    setTradesError(false)
     fetchClosedTrades(traderId, tradesLimit)
-      .then(setClosedTrades)
-      .catch(() => setClosedTrades([]))
+      .then((t) => {
+        setClosedTrades(t)
+        setTradesError(false)
+      })
+      .catch(() => setTradesError(true))
       .finally(() => setTradesLoading(false))
-  }, [activeTab, traderId, tradesLimit])
+  }, [activeTab, traderId, tradesLimit, tradesReload])
 
   // When period changes, restore from summary (week) or fetch separately.
   // Cancellation flag prevents a stale fetch from overwriting a newer period's data
@@ -427,6 +436,17 @@ export function TraderDetailPage() {
         <div className="mt-2 px-4 pb-4">
           {tradesLoading && closedTrades === null ? (
             <p className="text-sm text-tg-hint px-1 py-3">Loading trades…</p>
+          ) : tradesError && (closedTrades ?? summary.recent_trades).length === 0 ? (
+            <div className="flex flex-col items-center gap-2 px-1 py-6 text-center">
+              <p className="text-sm text-tg-hint">Couldn’t load trades. Please try again.</p>
+              <button
+                className="py-1.5 px-4 rounded-lg text-xs border border-tg-button text-tg-button disabled:opacity-50"
+                disabled={tradesLoading}
+                onClick={() => setTradesReload((n) => n + 1)}
+              >
+                {tradesLoading ? 'Retrying…' : 'Retry'}
+              </button>
+            </div>
           ) : (closedTrades ?? summary.recent_trades).length === 0 ? (
             <p className="text-sm text-tg-hint px-1 py-3">No recent trades</p>
           ) : (

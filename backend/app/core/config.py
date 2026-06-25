@@ -41,6 +41,18 @@ class Settings(BaseSettings):
     hl_mainnet_api_url: str = "https://api.hyperliquid.xyz"
     hl_stats_url: str = "https://stats-data.hyperliquid.xyz/Mainnet"
 
+    # Hyperliquid rate limiter (weight/sec budget; HL throttles ~1200 weight/min
+    # per IP). Tunable via env without redeploy. Defaults leave headroom under
+    # the limit; lower hl_rate_per_sec if 429s persist.
+    hl_rate_per_sec: float = 18.0
+    hl_rate_capacity: float = 80.0
+    hl_rate_low_prio_reserve: float = 40.0
+    # Cap how many active traders get quality metrics each cycle (heavy userFills
+    # call each, ~20 weight). Traders are processed highest-30d-ROI first, so the
+    # most-viewed get metrics; the rest keep NULL metrics until they rank higher.
+    # This bounds the dominant background HL load that drives 429 storms.
+    hl_quality_metrics_max_traders: int = 1000
+
     # Hydromancer (human-score filtering)
     hydromancer_api_key: str = ""
     hydromancer_api_url: str = "https://api.hydromancer.xyz"
@@ -84,9 +96,7 @@ class Settings(BaseSettings):
         try:
             bytes.fromhex(v)
         except ValueError as exc:
-            raise ValueError(
-                "AGENT_ENCRYPTION_KEY must be valid hexadecimal."
-            ) from exc
+            raise ValueError("AGENT_ENCRYPTION_KEY must be valid hexadecimal.") from exc
         return v
 
     @model_validator(mode="after")

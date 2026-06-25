@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.orm import aliased
 
+from app.core.config import settings
 from app.core.database import get_db_session
 from app.core.logging import get_logger
 from app.models.trader import Trader, TraderStat
@@ -15,9 +16,9 @@ from app.services.hyperliquid.rate_limiter import hl_priority_low
 
 logger = get_logger(__name__)
 
-_BATCH_SIZE = 10         # coroutines in flight per inner batch
-_CHUNK_SIZE = 300        # traders per priority chunk (ordered by 30d ROI)
-_CHUNK_PAUSE_SEC = 5.0   # breather between chunks; rate limiter governs real pace
+_BATCH_SIZE = 10  # coroutines in flight per inner batch
+_CHUNK_SIZE = 300  # traders per priority chunk (ordered by 30d ROI)
+_CHUNK_PAUSE_SEC = 5.0  # breather between chunks; rate limiter governs real pace
 
 
 async def _compute_and_save(
@@ -76,6 +77,14 @@ async def _compute_quality_metrics_async() -> int:
             .order_by(trader_stat_month.roi_pct.desc().nulls_last())
         )
         traders = result.all()
+
+    # Bound the dominant background HL load: only the top-N by 30d ROI get fresh
+    # metrics each cycle. Log the drop so the cap is never silent.
+    total_active = len(traders)
+    cap = settings.hl_quality_metrics_max_traders
+    if cap > 0 and total_active > cap:
+        traders = traders[:cap]
+        logger.info("quality_metrics_capped", cap=cap, dropped=total_active - cap)
 
     logger.info("quality_metrics_started", total=len(traders))
     processed = 0

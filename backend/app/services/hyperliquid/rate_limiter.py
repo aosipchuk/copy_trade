@@ -16,17 +16,11 @@ import asyncio
 import time
 from contextvars import ContextVar
 
-# When True, the current task's HL calls are treated as background (analytics)
-# and must leave ``_LOW_PRIO_RESERVE`` weight available for higher-priority work.
-hl_priority_low: ContextVar[bool] = ContextVar("hl_priority_low", default=False)
+from app.core.config import settings
 
-# Budget tuned to stay under HL's ~1200 weight/min with headroom.
-_RATE_PER_SEC = 18.0       # sustained weight/second (~1080/min)
-# Capacity must absorb one polling burst (all subscribed traders fetched at the
-# start of each 5s cycle, ~2 weight each) so essential polling never stalls, while
-# the sustained rate still caps long-running analytics.
-_CAPACITY = 80.0           # max burst weight
-_LOW_PRIO_RESERVE = 24.0   # weight kept free for high-priority calls (polling/user)
+# When True, the current task's HL calls are treated as background (analytics)
+# and must leave the low-priority reserve available for higher-priority work.
+hl_priority_low: ContextVar[bool] = ContextVar("hl_priority_low", default=False)
 
 # Per-request weights by info "type". Unlisted types default to the heavy cost.
 _LIGHT_TYPES = frozenset(
@@ -87,4 +81,10 @@ class HLRateLimiter:
 
 
 # Shared singleton — all HyperliquidInfoClient instances throttle together.
-hl_rate_limiter = HLRateLimiter(_RATE_PER_SEC, _CAPACITY, _LOW_PRIO_RESERVE)
+# Parameters are env-tunable via settings so prod can react to 429s without a
+# code change.
+hl_rate_limiter = HLRateLimiter(
+    settings.hl_rate_per_sec,
+    settings.hl_rate_capacity,
+    settings.hl_rate_low_prio_reserve,
+)
