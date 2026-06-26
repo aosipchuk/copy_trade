@@ -1,6 +1,6 @@
 import pytest
 import respx
-from httpx import Response
+from httpx import HTTPStatusError, Response
 
 from app.services.hydromancer.client import HydromancerClient
 
@@ -9,8 +9,22 @@ _INFO_URL = f"{_BASE_URL}/info"
 
 _PAGE_ONE = {
     "users": [
-        {"user": "0xAAA", "humanScore": 85, "totalPnl": 5000.0, "totalTrades": 120, "daysActive": 180, "volumeTraded": 1_000_000.0},
-        {"user": "0xBBB", "humanScore": 42, "totalPnl": -100.0, "totalTrades": 30, "daysActive": 20, "volumeTraded": 50_000.0},
+        {
+            "user": "0xAAA",
+            "humanScore": 85,
+            "totalPnl": 5000.0,
+            "totalTrades": 120,
+            "daysActive": 180,
+            "volumeTraded": 1_000_000.0,
+        },
+        {
+            "user": "0xBBB",
+            "humanScore": 42,
+            "totalPnl": -100.0,
+            "totalTrades": 30,
+            "daysActive": 20,
+            "volumeTraded": 50_000.0,
+        },
     ],
     "total": 3,
     "limit": 2,
@@ -19,7 +33,14 @@ _PAGE_ONE = {
 
 _PAGE_TWO = {
     "users": [
-        {"user": "0xCCC", "humanScore": 70, "totalPnl": 1000.0, "totalTrades": 60, "daysActive": 90, "volumeTraded": 200_000.0},
+        {
+            "user": "0xCCC",
+            "humanScore": 70,
+            "totalPnl": 1000.0,
+            "totalTrades": 60,
+            "daysActive": 90,
+            "volumeTraded": 200_000.0,
+        },
     ],
     "total": 3,
     "limit": 2,
@@ -37,7 +58,9 @@ def client() -> HydromancerClient:
 class TestHydromancerClientGetHumanScores:
     @pytest.mark.asyncio
     @respx.mock
-    async def test_paginates_until_total_reached(self, client: HydromancerClient) -> None:
+    async def test_paginates_until_total_reached(
+        self, client: HydromancerClient
+    ) -> None:
         respx.post(_INFO_URL).side_effect = [
             Response(200, json=_PAGE_ONE),
             Response(200, json=_PAGE_TWO),
@@ -52,7 +75,9 @@ class TestHydromancerClientGetHumanScores:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_returns_empty_list_when_no_users(self, client: HydromancerClient) -> None:
+    async def test_returns_empty_list_when_no_users(
+        self, client: HydromancerClient
+    ) -> None:
         respx.post(_INFO_URL).return_value = Response(200, json=_empty_page())
 
         users = await client.get_human_scores()
@@ -71,7 +96,9 @@ class TestHydromancerClientGetHumanScores:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_passes_window_and_min_score_in_payload(self, client: HydromancerClient) -> None:
+    async def test_passes_window_and_min_score_in_payload(
+        self, client: HydromancerClient
+    ) -> None:
         import json
 
         respx.post(_INFO_URL).return_value = Response(200, json=_empty_page())
@@ -85,9 +112,11 @@ class TestHydromancerClientGetHumanScores:
     @pytest.mark.asyncio
     @respx.mock
     async def test_raises_on_http_error(self, client: HydromancerClient) -> None:
-        respx.post(_INFO_URL).return_value = Response(500, json={"error": "server error"})
+        respx.post(_INFO_URL).return_value = Response(
+            500, json={"error": "server error"}
+        )
 
-        with pytest.raises(Exception):
+        with pytest.raises(HTTPStatusError):
             await client.get_human_scores()
 
 

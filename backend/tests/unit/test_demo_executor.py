@@ -55,7 +55,9 @@ def _make_subscription(
 
 def _make_meta(coin: str = "BTC", sz_decimals: int = 3, max_leverage: int = 40) -> Meta:
     return Meta(
-        universe=[AssetMeta(name=coin, szDecimals=sz_decimals, maxLeverage=max_leverage)]
+        universe=[
+            AssetMeta(name=coin, szDecimals=sz_decimals, maxLeverage=max_leverage)
+        ]
     )
 
 
@@ -174,7 +176,9 @@ class TestDemoExecutorOpen:
         """Trade references the correct subscription_id and signal_id."""
         db = _make_db()
         signal = _make_signal("OPEN", "BTC", "long", signal_id=42)
-        sub = _make_subscription(sub_id=7, max_allocation_usd=500.0, sizing_mode="fixed_usd")
+        sub = _make_subscription(
+            sub_id=7, max_allocation_usd=500.0, sizing_mode="fixed_usd"
+        )
         meta = _make_meta("BTC")
 
         await _handle_demo_open(db, signal, sub, Decimal("50000"), meta)
@@ -288,9 +292,7 @@ class TestFindOpenDemoTrade:
         """No open demo trade for coin → returns None."""
         db = AsyncMock()
         db.execute = AsyncMock(
-            return_value=MagicMock(
-                scalar_one_or_none=MagicMock(return_value=None)
-            )
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
         )
 
         result = await _find_open_demo_trade(db, subscription_id=1, coin="BTC")

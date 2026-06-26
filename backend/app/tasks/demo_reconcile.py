@@ -110,9 +110,7 @@ async def _fetch_live_positions(
     live: dict[str, set[tuple[str, str]] | None] = {}
     for address, result in zip(addresses, results, strict=True):
         if isinstance(result, BaseException):
-            logger.warning(
-                "reconcile_fetch_failed", trader=address, error=str(result)
-            )
+            logger.warning("reconcile_fetch_failed", trader=address, error=str(result))
             live[address] = None
         else:
             live[address] = {(p.coin, p.side) for p in result}

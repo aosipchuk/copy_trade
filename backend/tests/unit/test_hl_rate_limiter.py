@@ -1,8 +1,6 @@
 import asyncio
 import time
 
-import pytest
-
 from app.services.hyperliquid.rate_limiter import (
     HLRateLimiter,
     weight_for_payload,
@@ -22,18 +20,14 @@ class TestWeightForPayload:
 
 class TestHLRateLimiter:
     async def test_burst_within_capacity_is_immediate(self) -> None:
-        limiter = HLRateLimiter(
-            rate_per_sec=10.0, capacity=40.0, low_prio_reserve=20.0
-        )
+        limiter = HLRateLimiter(rate_per_sec=10.0, capacity=40.0, low_prio_reserve=20.0)
         start = time.monotonic()
         for _ in range(4):
             await limiter.acquire(10.0, low_priority=False)
         assert time.monotonic() - start < 0.1
 
     async def test_exceeding_capacity_blocks_until_refill(self) -> None:
-        limiter = HLRateLimiter(
-            rate_per_sec=100.0, capacity=20.0, low_prio_reserve=0.0
-        )
+        limiter = HLRateLimiter(rate_per_sec=100.0, capacity=20.0, low_prio_reserve=0.0)
         # Drain the bucket, then a further request must wait for refill.
         await limiter.acquire(20.0, low_priority=False)
         start = time.monotonic()
@@ -44,9 +38,7 @@ class TestHLRateLimiter:
 
     async def test_low_priority_yields_to_high_priority(self) -> None:
         # Slow refill so the bucket level is effectively static during the test.
-        limiter = HLRateLimiter(
-            rate_per_sec=1.0, capacity=30.0, low_prio_reserve=20.0
-        )
+        limiter = HLRateLimiter(rate_per_sec=1.0, capacity=30.0, low_prio_reserve=20.0)
         # Drain to ~20 tokens: each low-priority call needs weight+reserve = 25.
         await limiter.acquire(5.0, low_priority=True)  # 30 -> 25
         await limiter.acquire(5.0, low_priority=True)  # 25 -> 20

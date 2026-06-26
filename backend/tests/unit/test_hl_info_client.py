@@ -1,3 +1,5 @@
+import json
+
 import pytest
 import respx
 from httpx import Response
@@ -48,6 +50,20 @@ _SAMPLE_STATE = {
 }
 
 
+def _fill_payload(time: int, oid: int) -> dict[str, str | int]:
+    return {
+        "coin": "BTC",
+        "px": "100.0",
+        "sz": "0.1",
+        "side": "B",
+        "time": time,
+        "closedPnl": "0.0",
+        "dir": "Open Long",
+        "oid": oid,
+        "fee": "0.01",
+    }
+
+
 class TestHyperliquidInfoClient:
     @pytest.fixture
     def client(self) -> HyperliquidInfoClient:
@@ -92,3 +108,33 @@ class TestHyperliquidInfoClient:
         result = await client.get_all_mids()
 
         assert result["BTC"] == "67000.0"
+
+    @respx.mock
+    async def test_get_fills_by_time_paginates_from_last_fill(
+        self, client: HyperliquidInfoClient
+    ) -> None:
+        first_page = [_fill_payload(1_700_000_000_000 + i, i) for i in range(2_000)]
+        second_page = [_fill_payload(1_700_000_100_000, 2_001)]
+        route = respx.post(_INFO_URL).mock(
+            side_effect=[
+                Response(200, json=first_page),
+                Response(200, json=second_page),
+            ]
+        )
+
+        fills = await client.get_fills_by_time("0xabc", max_fills=2_001)
+
+        assert len(fills) == 2_001
+        assert len(route.calls) == 2
+        first_payload = json.loads(route.calls[0].request.content)
+        second_payload = json.loads(route.calls[1].request.content)
+        assert first_payload == {
+            "type": "userFillsByTime",
+            "user": "0xabc",
+            "startTime": 0,
+        }
+        assert second_payload == {
+            "type": "userFillsByTime",
+            "user": "0xabc",
+            "startTime": 1_700_000_001_999 + 1,
+        }

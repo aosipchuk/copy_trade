@@ -81,7 +81,8 @@ async def refresh_leaderboard_async() -> int:
     now = _utcnow()
     active_addresses: list[str] = []
 
-    # Upsert in batches to avoid holding a single large transaction + all objects in memory.
+    # Upsert in batches to avoid holding a single large transaction and all
+    # objects in memory.
     for batch_start in range(0, len(rows), _LEADERBOARD_BATCH_SIZE):
         batch = rows[batch_start : batch_start + _LEADERBOARD_BATCH_SIZE]
         async with get_db_session() as db:
@@ -277,7 +278,7 @@ async def refresh_human_scores_async() -> int:
                 .where(Trader.id.in_(ids))
                 .values(
                     human_score=case(
-                        {tid: score for tid, score in to_update},
+                        dict(to_update),
                         value=Trader.id,
                     )
                 )

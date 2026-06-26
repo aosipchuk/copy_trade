@@ -101,12 +101,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_weak_keys_in_production(self) -> "Settings":
-        if self.environment == "production":
-            if self.agent_encryption_key == _AGENT_KEY_DEFAULT:
-                raise ValueError(
-                    "AGENT_ENCRYPTION_KEY must not be the all-zeros placeholder in production. "
-                    "All stored agent private keys would be trivially decryptable."
-                )
+        if (
+            self.environment == "production"
+            and self.agent_encryption_key == _AGENT_KEY_DEFAULT
+        ):
+            raise ValueError(
+                "AGENT_ENCRYPTION_KEY must not be the all-zeros placeholder "
+                "in production. All stored agent private keys would be "
+                "trivially decryptable."
+            )
         return self
 
     # ── Properties ────────────────────────────────────────────────────────────

@@ -31,6 +31,8 @@ logger = get_logger(__name__)
 _STATS_LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 _TIMEOUT = httpx.Timeout(30.0)
 _MAX_RETRY_AFTER_SEC = 30.0  # cap how long we honor a server-advised back-off
+_USER_FILLS_BY_TIME_PAGE_LIMIT = 2_000
+USER_FILLS_BY_TIME_MAX_AVAILABLE = 10_000
 
 
 def _parse_retry_after(value: str | None) -> float | None:
@@ -149,10 +151,77 @@ class HyperliquidInfoClient:
         return data
 
     async def get_fills(self, address: str, limit: int | None = 50) -> list[Fill]:
-        """Fetch trade fills for an address. Pass limit=None to get all fills."""
+        """Fetch recent trade fills for an address.
+
+        Hyperliquid's ``userFills`` endpoint returns at most the latest 2,000
+        fills, even when ``limit`` is ``None`` locally.
+        """
         data: list[Any] = await self._post({"type": "userFills", "user": address})
         fills = [Fill.model_validate(f) for f in data]
         return fills if limit is None else fills[:limit]
+
+    async def get_fills_by_time(
+        self,
+        address: str,
+        *,
+        start_time: int = 0,
+        end_time: int | None = None,
+        max_fills: int = USER_FILLS_BY_TIME_MAX_AVAILABLE,
+    ) -> list[Fill]:
+        """Fetch the fill history available via ``userFillsByTime``.
+
+        Hyperliquid caps this endpoint at 2,000 fills per response and exposes
+        only the 10,000 most recent fills. Pagination advances by timestamp.
+        """
+        if max_fills <= 0:
+            return []
+
+        fills: list[Fill] = []
+        seen: set[tuple[int, str, int, str, str, str, str, str]] = set()
+        next_start_time = start_time
+
+        while len(fills) < max_fills:
+            payload: dict[str, Any] = {
+                "type": "userFillsByTime",
+                "user": address,
+                "startTime": next_start_time,
+            }
+            if end_time is not None:
+                payload["endTime"] = end_time
+
+            data: list[Any] = await self._post(payload)
+            page = [Fill.model_validate(f) for f in data]
+            if not page:
+                break
+
+            page.sort(key=lambda f: f.time)
+            for fill in page:
+                key = (
+                    fill.time,
+                    fill.coin,
+                    fill.oid,
+                    fill.side,
+                    fill.dir,
+                    str(fill.px),
+                    str(fill.sz),
+                    str(fill.closed_pnl),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                fills.append(fill)
+                if len(fills) >= max_fills:
+                    break
+
+            if len(page) < _USER_FILLS_BY_TIME_PAGE_LIMIT:
+                break
+
+            last_time = page[-1].time
+            next_start_time = last_time + 1
+            if end_time is not None and next_start_time > end_time:
+                break
+
+        return fills
 
     async def get_meta(self) -> Meta:
         """Fetch market metadata: asset names, size decimals, max leverage."""

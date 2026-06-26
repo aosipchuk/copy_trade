@@ -26,6 +26,7 @@ AsyncSessionFactory = async_sessionmaker(
     autoflush=False,
 )
 
+
 @asynccontextmanager
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionFactory() as session:

@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { deleteSubscription, listSubscriptions, updateSubscription } from '../api/subscriptions'
-import { fetchClosedTrades, fetchEquityCurve, fetchTraderSummary } from '../api/traders'
+import {
+  downloadTraderExport,
+  fetchClosedTrades,
+  fetchEquityCurve,
+  fetchTraderSummary,
+} from '../api/traders'
 import { EquityChart } from '../components/EquityChart'
 import { FullPageSpinner } from '../components/LoadingSpinner'
 import { SubscribeModal } from '../components/SubscribeModal'
 import { UnsubscribeModal } from '../components/UnsubscribeModal'
 import { useBackButton } from '../hooks/useTelegram'
 import { useTraderPositionsWS } from '../hooks/useWebSocket'
-import type { ClosedTradeItem, EquityPoint, Period, PositionItem, Subscription, TraderSummary } from '../types'
-import { exportPortfolioCsv } from '../utils/exportPortfolio'
+import type {
+  ClosedTradeItem,
+  EquityPoint,
+  Period,
+  PositionItem,
+  Subscription,
+  TraderSummary,
+} from '../types'
 import { fmt } from '../utils/format'
 
 export function TraderDetailPage() {
@@ -121,28 +132,11 @@ export function TraderDetailPage() {
     setEditingSub(false)
   }
 
-  // Export the trader's portfolio as CSV. Pull the full closed-trade history
-  // (not just the recent_trades preview) so the file is complete regardless of
-  // which tabs the user opened.
   const handleExport = async () => {
     if (!summary || exporting) return
     setExporting(true)
     try {
-      const targetCount = summary.stats['allTime']?.trade_count ?? 0
-      let trades = closedTrades
-      if (!trades || trades.length < targetCount) {
-        try {
-          trades = await fetchClosedTrades(traderId, 500)
-        } catch {
-          trades = closedTrades ?? summary.recent_trades
-        }
-      }
-      exportPortfolioCsv(
-        summary,
-        livePositions,
-        trades ?? summary.recent_trades,
-        summary.equity_curve_week,
-      )
+      await downloadTraderExport(traderId)
     } finally {
       setExporting(false)
     }

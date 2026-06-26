@@ -1,11 +1,19 @@
-from typing import Any
+from typing import Any, cast
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.services.hydromancer.models import HydromancerLeaderboardResponse, HydromancerUser
+from app.services.hydromancer.models import (
+    HydromancerLeaderboardResponse,
+    HydromancerUser,
+)
 
 logger = get_logger(__name__)
 
@@ -32,7 +40,10 @@ class HydromancerClient:
         ) as client:
             resp = await client.post("/info", json=payload)
             resp.raise_for_status()
-            return resp.json()
+            data: object = resp.json()
+            if not isinstance(data, dict):
+                raise ValueError("Hydromancer API response must be a JSON object")
+            return cast(dict[str, object], data)
 
     async def get_human_scores(
         self,

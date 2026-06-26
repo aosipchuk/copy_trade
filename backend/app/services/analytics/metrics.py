@@ -92,9 +92,15 @@ _PERIOD_MS: dict[str, int | None] = {
 
 
 async def fetch_trader_fills(address: str) -> list[Fill]:
-    """Fetch the most recent fills for a trader from the mainnet HL API."""
+    """Fetch recent fills for a trader from the mainnet HL API."""
     client = HyperliquidInfoClient(base_url=settings.hl_mainnet_api_url)
     return await client.get_fills(address, limit=None)
+
+
+async def fetch_trader_export_fills(address: str) -> list[Fill]:
+    """Fetch all trader fills currently available through Hyperliquid history."""
+    client = HyperliquidInfoClient(base_url=settings.hl_mainnet_api_url)
+    return await client.get_fills_by_time(address)
 
 
 def _realized_pnl_for_period(fills: list[Fill], period: str) -> float:

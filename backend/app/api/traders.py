@@ -1,8 +1,10 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import Select, and_, or_, select
 
 from app.api.deps import CurrentUser, DBSession, get_current_user
@@ -23,8 +25,14 @@ from app.schemas.trader import (
     decode_cursor,
     encode_cursor,
 )
+from app.services.analytics.export_workbook import (
+    build_trader_export_workbook,
+    trader_export_filename,
+    xlsx_media_type,
+)
 from app.services.analytics.metrics import (
     _realized_pnl_for_period,
+    fetch_trader_export_fills,
     fetch_trader_fills,
     get_closed_trades,
     get_equity_curve,
@@ -42,6 +50,7 @@ router = APIRouter(
     tags=["traders"],
     dependencies=[Depends(get_current_user)],
 )
+export_router = APIRouter(prefix="/traders", tags=["traders"])
 
 _CACHE_TTL_STATS = 30
 _CACHE_TTL_POSITIONS = 5
@@ -437,6 +446,76 @@ async def trader_closed_trades(
         cache_key, _CACHE_TTL_STATS, _CACHE_TTL_STALE, _fetch
     )
     return [ClosedTradeItem(**r) for r in raw]
+
+
+@export_router.get("/{trader_id}/export.xlsx")
+async def trader_export_xlsx(
+    trader_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+) -> Response:
+    trader = await get_trader_by_id(db, trader_id)
+    if trader is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Trader not found"
+        )
+
+    fills_res, stats_res, positions_res = await asyncio.gather(
+        fetch_trader_export_fills(trader.hl_address),
+        get_trader_stats(db, trader_id),
+        get_open_positions(trader.hl_address),
+        return_exceptions=True,
+    )
+
+    if isinstance(fills_res, BaseException):
+        logger.warning(
+            "export_fills_failed",
+            trader=trader.hl_address,
+            user_id=current_user.id,
+            error=str(fills_res),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not fetch trader fills for export",
+        ) from fills_res
+
+    stats = stats_res if not isinstance(stats_res, BaseException) else []
+    if isinstance(stats_res, BaseException):
+        logger.warning(
+            "export_stats_failed",
+            trader=trader.hl_address,
+            user_id=current_user.id,
+            error=str(stats_res),
+        )
+
+    positions = positions_res if not isinstance(positions_res, BaseException) else []
+    if isinstance(positions_res, BaseException):
+        logger.warning(
+            "export_positions_failed",
+            trader=trader.hl_address,
+            user_id=current_user.id,
+            error=str(positions_res),
+        )
+
+    workbook = build_trader_export_workbook(
+        display_name=trader.display_name,
+        address=trader.hl_address,
+        stats=stats,
+        open_positions=positions,
+        fills=fills_res,
+    )
+    filename = trader_export_filename(trader.display_name, trader.hl_address)
+    content_disposition = (
+        f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
+    )
+    return Response(
+        content=workbook,
+        media_type=xlsx_media_type(),
+        headers={
+            "Content-Disposition": content_disposition,
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 _CACHE_TTL_SUMMARY = 60

@@ -26,7 +26,8 @@ class WalletApproveRequest(BaseModel):
             return v
         if not _EVM_ADDRESS_RE.fullmatch(v):
             raise ValueError(
-                "user_address must be a valid EVM address: 0x followed by 40 hex characters."
+                "user_address must be a valid EVM address: "
+                "0x followed by 40 hex characters."
             )
         return v.lower()
 

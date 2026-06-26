@@ -12,6 +12,9 @@ import type {
 } from '../types'
 import { http } from './http'
 
+const XLSX_MEDIA_TYPE =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
 export async function fetchTraders(params: {
   period: Period
   sort: SortKey
@@ -76,4 +79,42 @@ export async function fetchClosedTrades(id: number, limit = 20): Promise<ClosedT
 export async function fetchTraderSummary(id: number): Promise<TraderSummary> {
   const res = await http.get<TraderSummary>(`/traders/${id}/summary`)
   return res.data
+}
+
+function filenameFromContentDisposition(header: string): string | null {
+  const encodedMatch = header.match(/filename\*=UTF-8''([^;]+)/i)
+  if (encodedMatch?.[1]) {
+    try {
+      return decodeURIComponent(encodedMatch[1])
+    } catch {
+      return encodedMatch[1]
+    }
+  }
+
+  const quotedMatch = header.match(/filename="([^"]+)"/i)
+  if (quotedMatch?.[1]) return quotedMatch[1]
+
+  const bareMatch = header.match(/filename=([^;]+)/i)
+  return bareMatch?.[1]?.trim() ?? null
+}
+
+export async function downloadTraderExport(id: number): Promise<void> {
+  const res = await http.get<Blob>(`/traders/${id}/export.xlsx`, {
+    responseType: 'blob',
+  })
+  const contentType = String(res.headers['content-type'] ?? XLSX_MEDIA_TYPE)
+  const disposition = String(res.headers['content-disposition'] ?? '')
+  const filename =
+    filenameFromContentDisposition(disposition) ?? `trader_${id}_export.xlsx`
+  const blob =
+    res.data instanceof Blob ? res.data : new Blob([res.data], { type: contentType })
+  const url = URL.createObjectURL(blob)
+
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }

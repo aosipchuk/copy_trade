@@ -14,11 +14,7 @@ from app.models.user import User
 bearer_scheme = HTTPBearer()
 
 
-async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> User:
-    token = credentials.credentials
+async def _user_from_access_token(token: str, db: AsyncSession) -> User:
     payload = decode_access_token(token)
     if payload is None:
         raise HTTPException(
@@ -46,6 +42,13 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
         )
     return user
+
+
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> User:
+    return await _user_from_access_token(credentials.credentials, db)
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

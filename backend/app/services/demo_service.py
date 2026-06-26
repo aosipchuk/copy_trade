@@ -18,9 +18,7 @@ from app.services.hyperliquid.info_client import HyperliquidInfoClient
 logger = get_logger(__name__)
 
 
-async def get_demo_portfolio(
-    db: AsyncSession, user_id: int
-) -> DemoPortfolioResponse:
+async def get_demo_portfolio(db: AsyncSession, user_id: int) -> DemoPortfolioResponse:
     subs_result = await db.execute(
         select(Subscription).where(
             Subscription.user_id == user_id,
