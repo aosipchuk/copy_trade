@@ -15,6 +15,9 @@ class Trader(Base):
     display_name: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     human_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # NULL = not yet evaluated; False = no perp fills (prediction-market/spot-only
+    # trader, nothing for the copy engine to mirror → excluded from the listing).
+    has_perp_activity: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 

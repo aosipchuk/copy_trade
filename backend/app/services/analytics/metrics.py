@@ -34,6 +34,17 @@ def _f(val: object) -> float | None:
     return float(val) if val is not None else None  # type: ignore[arg-type]
 
 
+def _is_perp_fill(f: Fill) -> bool:
+    """True iff the fill belongs to a perp trade.
+
+    Perp fills always reference a side in their direction (Open/Close Long/Short,
+    "Long > Short"); spot ("Buy"/"Sell") and prediction-market
+    ("Negate/Split/Merge Outcome") fills never do. All copy-trade analytics are
+    computed strictly on perp fills because the copy engine mirrors only perps.
+    """
+    return "Long" in f.dir or "Short" in f.dir
+
+
 async def get_trader_stats(db: AsyncSession, trader_id: int) -> list[TraderStatSchema]:
     result = await db.execute(
         select(TraderStat).where(TraderStat.trader_id == trader_id)
@@ -87,13 +98,31 @@ async def fetch_trader_fills(address: str) -> list[Fill]:
 
 
 def _realized_pnl_for_period(fills: list[Fill], period: str) -> float:
-    """Sum closed_pnl of fills that fall within the given period window."""
+    """Sum closed_pnl of perp fills that fall within the given period window."""
     now_ms = int(datetime.now(UTC).timestamp() * 1000)
     window_ms = _PERIOD_MS.get(period)
     cutoff_ms = now_ms - window_ms if window_ms is not None else None
     return sum(
-        float(f.closed_pnl) for f in fills if cutoff_ms is None or f.time >= cutoff_ms
+        float(f.closed_pnl)
+        for f in fills
+        if _is_perp_fill(f) and (cutoff_ms is None or f.time >= cutoff_ms)
     )
+
+
+def _perp_volume_for_period(fills: list[Fill], period: str) -> float:
+    """Sum traded notional (px*sz) of perp fills within the period window."""
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    window_ms = _PERIOD_MS.get(period)
+    cutoff_ms = now_ms - window_ms if window_ms is not None else None
+    return sum(
+        float(f.px * f.sz)
+        for f in fills
+        if _is_perp_fill(f) and (cutoff_ms is None or f.time >= cutoff_ms)
+    )
+
+
+# Periods written to trader_stats; keep in sync with refresh_leaderboard.
+_STAT_PERIODS: tuple[str, ...] = ("day", "week", "month", "allTime")
 
 
 def _build_equity_curve_from_fills(fills: list[Fill], period: str) -> list[EquityPoint]:
@@ -103,7 +132,11 @@ def _build_equity_curve_from_fills(fills: list[Fill], period: str) -> list[Equit
     cutoff_ms = now_ms - window_ms if window_ms is not None else None
 
     filtered = sorted(
-        (f for f in fills if cutoff_ms is None or f.time >= cutoff_ms),
+        (
+            f
+            for f in fills
+            if _is_perp_fill(f) and (cutoff_ms is None or f.time >= cutoff_ms)
+        ),
         key=lambda f: f.time,
     )
 
@@ -500,7 +533,9 @@ def _compute_per_trade_metrics(
     return _TradeMetrics(
         trade_count=trade_count,
         win_rate_pct=(winning / trade_count) * 100,
-        avg_trade_duration_hrs=sum(durations_hrs) / len(durations_hrs) if durations_hrs else None,
+        avg_trade_duration_hrs=(
+            sum(durations_hrs) / len(durations_hrs) if durations_hrs else None
+        ),
         profit_factor=sum(winners) / sum(losers) if losers else None,
         avg_pnl_per_trade=sum(trade_pnls) / len(trade_pnls),
         max_losing_streak=_max_losing_streak(trade_pnls),
@@ -569,7 +604,9 @@ def _compute_risk_metrics(equity_curve: list[EquityPoint]) -> _RiskMetrics:
         max_drawdown_pct=max_dd_pct,
         sharpe_ratio=sharpe_raw if sharpe_raw != 0.0 else None,
         sortino_ratio=sortino_raw if sortino_raw != 0.0 else None,
-        calmar_ratio=alltime_pnl / max_dd_usd if max_dd_usd and max_dd_usd > 0 else None,
+        calmar_ratio=(
+            alltime_pnl / max_dd_usd if max_dd_usd and max_dd_usd > 0 else None
+        ),
         max_drawdown_duration_days=dd_duration if dd_duration > 0 else None,
     )
 
@@ -601,6 +638,8 @@ class QualityMetrics:
         active_trading_days: int | None,
         avg_leverage: float | None,
         composite_score: float | None = None,
+        has_perp_activity: bool = True,
+        perp_period_stats: dict[str, tuple[float, float]] | None = None,
     ) -> None:
         self.win_rate_pct = win_rate_pct
         self.max_drawdown_usd = max_drawdown_usd
@@ -624,6 +663,11 @@ class QualityMetrics:
         self.active_trading_days = active_trading_days
         self.avg_leverage = avg_leverage
         self.composite_score = composite_score
+        # Not part of to_dict(): this lives on the Trader row, not trader_stats.
+        self.has_perp_activity = has_perp_activity
+        # Not part of to_dict(): per-period (pnl_usd, volume_usd) written
+        # separately because each period gets distinct values.
+        self.perp_period_stats = perp_period_stats
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -667,15 +711,34 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
     if not all_fills:
         return None
 
-    all_fills_sorted = sorted(all_fills, key=lambda f: f.time)
-    first_trade_at = datetime.fromtimestamp(
-        all_fills_sorted[0].time / 1000, tz=UTC
-    ).replace(tzinfo=None)
+    # All analytics are computed strictly on perp fills — the copy engine mirrors
+    # only perps, so spot ("Buy"/"Sell") and prediction-market
+    # ("Negate/Split/Merge Outcome") fills must not skew win rate, PnL, equity
+    # curve, drawdown, fees, etc. A trader with no perp fill is not copyable and is
+    # flagged for exclusion from the listing. See _is_perp_fill.
+    perp_fills = [f for f in all_fills if _is_perp_fill(f)]
+    has_perp_activity = bool(perp_fills)
+
+    # Per-period perp realized PnL + traded volume — these replace the leaderboard
+    # (all-markets) pnl_usd/volume_usd on the listing cards.
+    perp_period_stats = {
+        p: (
+            _realized_pnl_for_period(perp_fills, p),
+            _perp_volume_for_period(perp_fills, p),
+        )
+        for p in _STAT_PERIODS
+    }
+
+    first_trade_at: datetime | None = None
+    if perp_fills:
+        first_trade_at = datetime.fromtimestamp(
+            min(f.time for f in perp_fills) / 1000, tz=UTC
+        ).replace(tzinfo=None)
 
     # Group fills by direction
     closing_by_oid: dict[int, list[Fill]] = defaultdict(list)
     open_fills_by_coin: dict[str, list[Fill]] = defaultdict(list)
-    for f in all_fills:
+    for f in perp_fills:
         if f.dir.startswith("Close"):
             closing_by_oid[f.oid].append(f)
         elif f.dir.startswith("Open"):
@@ -684,10 +747,10 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
         coin_fills.sort(key=lambda f: f.time)
 
     trade = _compute_per_trade_metrics(closing_by_oid, open_fills_by_coin)
-    daily = _compute_daily_metrics(all_fills, closing_by_oid, trade.trade_count)
+    daily = _compute_daily_metrics(perp_fills, closing_by_oid, trade.trade_count)
 
     # Fill-level aggregates (use only opening fills to measure initiated position size)
-    open_fills_flat = [f for f in all_fills if f.dir.startswith("Open")]
+    open_fills_flat = [f for f in perp_fills if f.dir.startswith("Open")]
     open_long_count = sum(1 for f in open_fills_flat if "Long" in f.dir)
     long_ratio_pct: float | None = (
         open_long_count / len(open_fills_flat) * 100 if open_fills_flat else None
@@ -698,9 +761,9 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
         else None
     )
     # Store 0.0 when the API returns no fee data so the column is not misleadingly NULL.
-    fees_paid_usd: float | None = sum(float(f.fee) for f in all_fills)
+    fees_paid_usd: float | None = sum(float(f.fee) for f in perp_fills)
 
-    equity_curve = _build_equity_curve_from_fills(all_fills, "allTime")
+    equity_curve = _build_equity_curve_from_fills(perp_fills, "allTime")
     risk = _compute_risk_metrics(equity_curve)
 
     return QualityMetrics(
@@ -725,6 +788,8 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
         max_drawdown_duration_days=risk.max_drawdown_duration_days,
         active_trading_days=daily.active_trading_days,
         avg_leverage=avg_leverage,
+        has_perp_activity=has_perp_activity,
+        perp_period_stats=perp_period_stats,
     )
 
 

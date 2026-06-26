@@ -53,6 +53,25 @@ async def _compute_and_save(
                 .where(TraderStat.trader_id == trader_id)
                 .values(**values)
             )
+            # Persist perp-activity flag on the trader row so the listing can
+            # hide non-copyable (prediction-market / spot-only) traders.
+            await db.execute(
+                update(Trader)
+                .where(Trader.id == trader_id)
+                .values(has_perp_activity=metrics.has_perp_activity)
+            )
+            # Overwrite the leaderboard (all-markets) pnl_usd/volume_usd with
+            # perp-only realized values, per period. roi_pct stays from the
+            # leaderboard (no clean perp denominator).
+            for period, (pnl, vol) in (metrics.perp_period_stats or {}).items():
+                await db.execute(
+                    update(TraderStat)
+                    .where(
+                        TraderStat.trader_id == trader_id,
+                        TraderStat.period == period,
+                    )
+                    .values(pnl_usd=pnl, volume_usd=vol)
+                )
 
         logger.debug("quality_metrics_saved", trader=hl_address)
         return True

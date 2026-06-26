@@ -126,6 +126,11 @@ def _apply_hard_gates(query: Select) -> Select:  # type: ignore[type-arg]
             Trader.human_score >= _GATE_MIN_HUMAN_SCORE,
             Trader.human_score.is_(None),
         ),
+        # Only show traders with computed perp activity. This excludes both
+        # non-copyable traders (prediction-market / spot-only → False) and those
+        # not yet processed by compute_quality_metrics (NULL), whose perp
+        # pnl_usd/volume_usd cards would otherwise be empty or stale-leaderboard.
+        Trader.has_perp_activity == True,  # noqa: E712
     )
 
 

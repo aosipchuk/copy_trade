@@ -23,8 +23,8 @@ logger = get_logger(__name__)
 
 _MIN_30D_ROI = Decimal("0.03")  # Level 1: minimum 30-day ROI (3%)
 _MIN_ACCOUNT_VALUE_USD = 1_000  # skip empty / abandoned accounts
-_MAX_TRADERS = 5_000            # safety cap against unexpected leaderboard growth
-_SNAPSHOT_TTL = 60              # seconds in Redis
+_MAX_TRADERS = 5_000  # safety cap against unexpected leaderboard growth
+_SNAPSHOT_TTL = 60  # seconds in Redis
 _position_adapter: TypeAdapter[list[Position]] = TypeAdapter(list[Position])
 
 # Limit concurrent HL HTTP requests to avoid memory spikes in a single uvicorn process.
@@ -109,21 +109,21 @@ async def refresh_leaderboard_async() -> int:
                 active_addresses.append(row.eth_address)
 
                 for period, perf in row.window_performances:
+                    # Only roi_pct comes from the leaderboard. pnl_usd/volume_usd
+                    # are computed perp-only by compute_quality_metrics, so we
+                    # must NOT overwrite them here (would clobber perp values
+                    # with all-markets leaderboard numbers every 10 min).
                     stat_stmt = (
                         pg_insert(TraderStat)
                         .values(
                             trader_id=trader_id,
                             period=period,
-                            pnl_usd=float(perf.pnl),
                             roi_pct=float(perf.roi),
-                            volume_usd=float(perf.vlm),
                         )
                         .on_conflict_do_update(
                             constraint="trader_stats_pkey",
                             set_={
-                                "pnl_usd": float(perf.pnl),
                                 "roi_pct": float(perf.roi),
-                                "volume_usd": float(perf.vlm),
                                 "updated_at": func.now(),
                             },
                         )
