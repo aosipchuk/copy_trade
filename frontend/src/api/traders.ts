@@ -12,8 +12,17 @@ import type {
 } from '../types'
 import { http } from './http'
 
-const XLSX_MEDIA_TYPE =
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+function apiUrl(path: string): URL {
+  const base = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL
+  return new URL(`${base}${path}`, window.location.origin)
+}
+
+interface TraderExportLink {
+  path: string
+  expires_in: number
+}
 
 export async function fetchTraders(params: {
   period: Period
@@ -81,40 +90,23 @@ export async function fetchTraderSummary(id: number): Promise<TraderSummary> {
   return res.data
 }
 
-function filenameFromContentDisposition(header: string): string | null {
-  const encodedMatch = header.match(/filename\*=UTF-8''([^;]+)/i)
-  if (encodedMatch?.[1]) {
-    try {
-      return decodeURIComponent(encodedMatch[1])
-    } catch {
-      return encodedMatch[1]
+export async function downloadTraderExport(id: number): Promise<void> {
+  const res = await http.post<TraderExportLink>(`/traders/${id}/export-link`)
+  const url = apiUrl(res.data.path).toString()
+  const telegram = (
+    window as Window & {
+      Telegram?: {
+        WebApp?: {
+          openLink?: (url: string, options?: { try_instant_view?: boolean }) => void
+        }
+      }
     }
+  ).Telegram?.WebApp
+
+  if (telegram?.openLink) {
+    telegram.openLink(url, { try_instant_view: false })
+    return
   }
 
-  const quotedMatch = header.match(/filename="([^"]+)"/i)
-  if (quotedMatch?.[1]) return quotedMatch[1]
-
-  const bareMatch = header.match(/filename=([^;]+)/i)
-  return bareMatch?.[1]?.trim() ?? null
-}
-
-export async function downloadTraderExport(id: number): Promise<void> {
-  const res = await http.get<Blob>(`/traders/${id}/export.xlsx`, {
-    responseType: 'blob',
-  })
-  const contentType = String(res.headers['content-type'] ?? XLSX_MEDIA_TYPE)
-  const disposition = String(res.headers['content-disposition'] ?? '')
-  const filename =
-    filenameFromContentDisposition(disposition) ?? `trader_${id}_export.xlsx`
-  const blob =
-    res.data instanceof Blob ? res.data : new Blob([res.data], { type: contentType })
-  const url = URL.createObjectURL(blob)
-
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  window.location.assign(url)
 }

@@ -1,17 +1,28 @@
 import asyncio
+import json
+import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy import Select, and_, or_, select
 
-from app.api.deps import CurrentUser, DBSession, get_current_user
+from app.api.deps import (
+    TRADER_EXPORT_TICKET_PREFIX,
+    TRADER_EXPORT_TICKET_TTL_SECONDS,
+    CurrentUser,
+    DBSession,
+    get_current_user,
+    get_current_user_from_bearer_or_export_ticket,
+)
 from app.core.cache import cached_json_stale_on_error
 from app.core.logging import get_logger
+from app.core.redis_client import get_redis_client
 from app.models.subscription import Subscription
 from app.models.trader import Trader, TraderStat
+from app.models.user import User
 from app.schemas.trader import (
     ClosedTradeItem,
     EquityPoint,
@@ -51,6 +62,7 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)],
 )
 export_router = APIRouter(prefix="/traders", tags=["traders"])
+ExportUser = Annotated[User, Depends(get_current_user_from_bearer_or_export_ticket)]
 
 _CACHE_TTL_STATS = 30
 _CACHE_TTL_POSITIONS = 5
@@ -448,11 +460,38 @@ async def trader_closed_trades(
     return [ClosedTradeItem(**r) for r in raw]
 
 
+@export_router.post("/{trader_id}/export-link")
+async def trader_export_link(
+    trader_id: int,
+    db: DBSession,
+    current_user: CurrentUser,
+) -> dict[str, int | str]:
+    trader = await get_trader_by_id(db, trader_id)
+    if trader is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Trader not found"
+        )
+
+    ticket = secrets.token_urlsafe(32)
+    payload = json.dumps({"user_id": current_user.id, "trader_id": trader_id})
+    r = get_redis_client()
+    await asyncio.to_thread(
+        r.setex,
+        f"{TRADER_EXPORT_TICKET_PREFIX}{ticket}",
+        TRADER_EXPORT_TICKET_TTL_SECONDS,
+        payload,
+    )
+    return {
+        "path": f"/traders/{trader_id}/export.xlsx?ticket={ticket}",
+        "expires_in": TRADER_EXPORT_TICKET_TTL_SECONDS,
+    }
+
+
 @export_router.get("/{trader_id}/export.xlsx")
 async def trader_export_xlsx(
     trader_id: int,
     db: DBSession,
-    current_user: CurrentUser,
+    current_user: ExportUser,
 ) -> Response:
     trader = await get_trader_by_id(db, trader_id)
     if trader is None:
