@@ -171,7 +171,7 @@ export function TraderDetailPage() {
   return (
     <div className="pb-48 h-full overflow-y-auto">
       {/* Header */}
-      <div className="px-4 pt-4 pb-3 border-b border-gray-100 dark:border-gray-800 flex items-start justify-between gap-3">
+      <div className="px-4 pt-4 pb-3 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-base font-semibold text-tg-text truncate">
             {summary.display_name ?? `${summary.hl_address.slice(0, 8)}…`}
@@ -179,11 +179,15 @@ export function TraderDetailPage() {
           <p className="text-xs text-tg-hint mt-0.5 font-mono truncate">{summary.hl_address}</p>
         </div>
         <button
-          className="shrink-0 py-1.5 px-3 rounded-lg text-xs border border-tg-button text-tg-button disabled:opacity-50"
+          type="button"
+          className="shrink-0 h-9 w-9 rounded-lg flex items-center justify-center text-tg-hint transition-colors active:bg-tg-secondary disabled:opacity-60 disabled:cursor-wait"
+          style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
           onClick={handleExport}
           disabled={exporting}
+          aria-label={exporting ? 'Preparing trader export' : 'Export trader workbook'}
+          title={exporting ? 'Preparing export' : 'Export workbook'}
         >
-          {exporting ? 'Exporting…' : 'Export'}
+          {exporting ? <SpinnerIcon /> : <DownloadIcon />}
         </button>
       </div>
 
@@ -594,6 +598,24 @@ function TabBtn({ active, onClick, label }: { active: boolean; onClick: () => vo
     >
       {label}
     </button>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v10m0 0 4-4m-4 4-4-4" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 17v1a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-1" />
+    </svg>
+  )
+}
+
+function SpinnerIcon() {
+  return (
+    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={3} />
+      <path className="opacity-75" fill="currentColor" d="M21 12a9 9 0 0 0-9-9v3a6 6 0 0 1 6 6h3Z" />
+    </svg>
   )
 }
 
