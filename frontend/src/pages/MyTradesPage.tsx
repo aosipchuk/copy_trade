@@ -11,17 +11,36 @@ import { fmt } from '../utils/format'
 
 type Tab = 'live' | 'demo'
 
+function getInitialTab(state: unknown): Tab {
+  const tab = (state as { tab?: unknown } | null)?.tab
+  return tab === 'demo' || tab === 'live' ? tab : 'live'
+}
+
 export function MyTradesPage() {
   const location = useLocation()
-  const initialTab: Tab = (location.state as { tab?: Tab } | null)?.tab ?? 'live'
+  const navigate = useNavigate()
+  const initialTab = getInitialTab(location.state)
   const [activeTab, setActiveTab] = useState<Tab>(initialTab)
+
+  const selectTab = (tab: Tab) => {
+    setActiveTab(tab)
+    const currentState =
+      location.state && typeof location.state === 'object'
+        ? (location.state as Record<string, unknown>)
+        : {}
+
+    navigate(
+      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { replace: true, state: { ...currentState, tab } },
+    )
+  }
 
   return (
     <div className="pb-20 h-full overflow-y-auto">
       {/* Tab bar */}
       <div className="flex gap-px bg-gray-100 dark:bg-gray-800 mx-4 mt-4 rounded-xl overflow-hidden">
-        <TabBtn active={activeTab === 'live'} onClick={() => setActiveTab('live')} label="Live" />
-        <TabBtn active={activeTab === 'demo'} onClick={() => setActiveTab('demo')} label="Demo" />
+        <TabBtn active={activeTab === 'live'} onClick={() => selectTab('live')} label="Live" />
+        <TabBtn active={activeTab === 'demo'} onClick={() => selectTab('demo')} label="Demo" />
       </div>
 
       {activeTab === 'live' ? <LiveTab /> : <DemoTab />}
