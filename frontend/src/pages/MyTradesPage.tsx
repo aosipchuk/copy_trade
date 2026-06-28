@@ -11,26 +11,41 @@ import { fmt } from '../utils/format'
 
 type Tab = 'live' | 'demo'
 
-function getInitialTab(state: unknown): Tab {
+function getTabFromState(state: unknown): Tab | null {
   const tab = (state as { tab?: unknown } | null)?.tab
-  return tab === 'demo' || tab === 'live' ? tab : 'live'
+  return tab === 'demo' || tab === 'live' ? tab : null
+}
+
+function getTabFromSearch(search: string): Tab | null {
+  const tab = new URLSearchParams(search).get('tab')
+  return tab === 'demo' || tab === 'live' ? tab : null
+}
+
+function getActiveTab(search: string, state: unknown): Tab {
+  return getTabFromSearch(search) ?? getTabFromState(state) ?? 'live'
 }
 
 export function MyTradesPage() {
   const location = useLocation()
   const navigate = useNavigate()
-  const initialTab = getInitialTab(location.state)
-  const [activeTab, setActiveTab] = useState<Tab>(initialTab)
+  const locationTab = getActiveTab(location.search, location.state)
+  const [activeTab, setActiveTab] = useState<Tab>(locationTab)
+
+  useEffect(() => {
+    setActiveTab(locationTab)
+  }, [locationTab])
 
   const selectTab = (tab: Tab) => {
     setActiveTab(tab)
+    const params = new URLSearchParams(location.search)
+    params.set('tab', tab)
     const currentState =
       location.state && typeof location.state === 'object'
         ? (location.state as Record<string, unknown>)
         : {}
 
     navigate(
-      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { pathname: location.pathname, search: `?${params.toString()}`, hash: location.hash },
       { replace: true, state: { ...currentState, tab } },
     )
   }
@@ -207,7 +222,7 @@ function DemoTab() {
             key={sub.id}
             sub={sub}
             openPositions={openPositions}
-            onDetail={() => navigate(`/demo-subscriptions/${sub.id}`)}
+            onDetail={() => navigate(`/demo-subscriptions/${sub.id}`, { state: { fromMyTradesTab: 'demo' } })}
             onUnsubscribe={() => setUnsubscribeId(sub.id)}
           />
         )
@@ -479,7 +494,7 @@ function SubscriptionCard({
       <div className="px-3 py-3" style={{ background: 'var(--tg-theme-secondary-bg-color)' }}>
         <button
           className="w-full text-left active:opacity-70 transition-opacity"
-          onClick={() => navigate(`/traders/${sub.trader_id}`)}
+          onClick={() => navigate(`/traders/${sub.trader_id}`, { state: { fromMyTradesTab: 'live' } })}
         >
           <div className="flex items-center justify-between mb-1">
             <span className="text-sm font-medium text-tg-text font-mono">{shortAddr}</span>

@@ -20,7 +20,11 @@ export function DemoSubscriptionDetailPage() {
   const [activeTab, setActiveTab] = useState<'positions' | 'trades'>('positions')
   const [stopping, setStopping] = useState(false)
 
-  useBackButton(useCallback(() => navigate(-1), [navigate]))
+  const navigateBack = useCallback(() => {
+    navigate('/my-trades?tab=demo', { replace: true, state: { tab: 'demo' } })
+  }, [navigate])
+
+  useBackButton(navigateBack)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -46,7 +50,7 @@ export function DemoSubscriptionDetailPage() {
     setStopping(true)
     try {
       await deleteSubscription(subscriptionId, false)
-      navigate(-1)
+      navigateBack()
     } finally {
       setStopping(false)
     }
@@ -69,7 +73,7 @@ export function DemoSubscriptionDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-tg-hint">
         <p className="text-sm">Demo subscription not found</p>
-        <button className="text-sm text-tg-button underline" onClick={() => navigate(-1)}>
+        <button className="text-sm text-tg-button underline" onClick={navigateBack}>
           Go back
         </button>
       </div>

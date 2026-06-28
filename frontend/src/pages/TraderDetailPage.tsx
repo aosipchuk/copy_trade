@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { deleteSubscription, listSubscriptions, updateSubscription } from '../api/subscriptions'
 import {
   downloadTraderExport,
@@ -23,10 +23,19 @@ import type {
 } from '../types'
 import { fmt } from '../utils/format'
 
+type MyTradesTab = 'live' | 'demo'
+
+function getMyTradesReturnTab(state: unknown): MyTradesTab | null {
+  const tab = (state as { fromMyTradesTab?: unknown } | null)?.fromMyTradesTab
+  return tab === 'demo' || tab === 'live' ? tab : null
+}
+
 export function TraderDetailPage() {
   const { id } = useParams<{ id: string }>()
   const traderId = Number(id)
   const navigate = useNavigate()
+  const location = useLocation()
+  const myTradesReturnTab = getMyTradesReturnTab(location.state)
 
   const [summary, setSummary] = useState<TraderSummary | null>(null)
   const [existingSub, setExistingSub] = useState<Subscription | null>(null)
@@ -52,7 +61,18 @@ export function TraderDetailPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
 
-  useBackButton(useCallback(() => navigate(-1), [navigate]))
+  const navigateBack = useCallback(() => {
+    if (myTradesReturnTab) {
+      navigate(`/my-trades?tab=${myTradesReturnTab}`, {
+        replace: true,
+        state: { tab: myTradesReturnTab },
+      })
+      return
+    }
+    navigate(-1)
+  }, [myTradesReturnTab, navigate])
+
+  useBackButton(navigateBack)
 
   const wsPositions = useTraderPositionsWS<PositionItem[]>(traderId)
   const livePositions = wsPositions ?? summary?.open_positions ?? []
@@ -161,7 +181,7 @@ export function TraderDetailPage() {
       <p className="text-sm">
         {loadError === 'not_found' ? 'Trader not found' : 'Failed to load trader'}
       </p>
-      <button className="text-sm text-tg-button underline" onClick={() => navigate(-1)}>Go back</button>
+      <button className="text-sm text-tg-button underline" onClick={navigateBack}>Go back</button>
     </div>
   )
 
@@ -322,7 +342,7 @@ export function TraderDetailPage() {
             </div>
             <button
               className="w-full py-1.5 rounded-lg text-xs border border-tg-button text-tg-button"
-              onClick={() => navigate('/my-trades', { state: { tab: 'demo' } })}
+              onClick={() => navigate('/my-trades?tab=demo', { state: { tab: 'demo' } })}
             >
               View Demo Portfolio
             </button>
