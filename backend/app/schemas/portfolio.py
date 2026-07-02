@@ -160,3 +160,55 @@ class PortfolioBacktestResponse(BaseModel):
     assumptions_json: JsonDict
     equity_curve_json: JsonDict
     created_at: datetime
+
+
+class PortfolioCurrentVersionSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    version_no: int
+    status: PortfolioVersionStatus
+    valid_from: datetime | None
+    approved_at: datetime | None
+    trader_count: int
+    target_weight_sum_pct: float
+    summary_json: JsonDict | None
+
+
+class PortfolioBacktestSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    portfolio_version_id: int
+    period_days: int
+    initial_equity_usd: float
+    total_return_pct: float | None
+    max_drawdown_pct: float | None
+    sharpe_ratio: float | None
+    sortino_ratio: float | None
+    win_rate_pct: float | None
+    assumptions_json: JsonDict
+    created_at: datetime
+
+
+class ModelPortfolioListItemResponse(ModelPortfolioResponse):
+    current_version: PortfolioCurrentVersionSummary | None
+    latest_backtest: PortfolioBacktestSummary | None
+
+
+class ModelPortfolioAllocationDetailResponse(ModelPortfolioAllocationResponse):
+    trader_address: str
+    trader_display_name: str | None
+    portfolio_score: float | None
+    source_metrics: JsonDict | None
+
+
+class ModelPortfolioPublishedVersionDetailResponse(ModelPortfolioVersionResponse):
+    allocations: list[ModelPortfolioAllocationDetailResponse] = Field(
+        default_factory=list
+    )
+
+
+class ModelPortfolioDetailResponse(ModelPortfolioResponse):
+    current_version: ModelPortfolioPublishedVersionDetailResponse
+    backtests: list[PortfolioBacktestResponse] = Field(default_factory=list)

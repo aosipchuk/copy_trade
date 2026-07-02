@@ -183,3 +183,80 @@ async def build_draft_model_portfolio(
         candidate_selection=preview.candidate_selection,
         optimization=preview.optimization,
     )
+
+
+async def publish_model_portfolio_version(
+    db: AsyncSession,
+    portfolio_slug: str,
+    version_no: int,
+    approved_by: int | None = None,
+    approval_note: str | None = None,
+    allow_internal_alpha_relaxed: bool = False,
+) -> ModelPortfolioVersion:
+    portfolio = await _get_portfolio(db, portfolio_slug)
+    result = await db.execute(
+        select(ModelPortfolioVersion).where(
+            ModelPortfolioVersion.portfolio_id == portfolio.id,
+            ModelPortfolioVersion.version_no == version_no,
+        )
+    )
+    version = result.scalar_one_or_none()
+    if version is None:
+        raise LookupError(
+            "Portfolio version not found: "
+            f"slug={portfolio_slug} version_no={version_no}"
+        )
+    if version.status != "draft":
+        raise ValueError(
+            f"Only draft versions can be published, got status={version.status}."
+        )
+
+    summary_json = version.summary_json or {}
+    if (
+        summary_json.get("builder_mode") == "internal_alpha_relaxed"
+        and not allow_internal_alpha_relaxed
+    ):
+        raise ValueError(
+            "Refusing to publish internal_alpha_relaxed draft without explicit "
+            "allow_internal_alpha_relaxed=True."
+        )
+
+    config = get_risk_profile_config(portfolio.risk_profile)
+    allocation_stats_result = await db.execute(
+        select(
+            func.count(ModelPortfolioAllocation.id),
+            func.coalesce(
+                func.sum(ModelPortfolioAllocation.target_weight_pct),
+                Decimal("0"),
+            ),
+        ).where(ModelPortfolioAllocation.version_id == version.id)
+    )
+    allocation_count, weight_sum = allocation_stats_result.one()
+    if not (config.min_traders <= int(allocation_count) <= config.max_traders):
+        raise ValueError(
+            "Cannot publish version with invalid allocation count: "
+            f"{allocation_count}."
+        )
+    if Decimal(str(weight_sum)).quantize(Decimal("0.001")) != Decimal("100.000"):
+        raise ValueError(f"Cannot publish version with weight sum {weight_sum}.")
+
+    now = _naive_utc_now()
+    current_result = await db.execute(
+        select(ModelPortfolioVersion).where(
+            ModelPortfolioVersion.portfolio_id == portfolio.id,
+            ModelPortfolioVersion.status == "published",
+            ModelPortfolioVersion.valid_to.is_(None),
+        )
+    )
+    for current in current_result.scalars().all():
+        current.valid_to = now
+        current.status = "retired"
+
+    version.status = "published"
+    version.valid_from = now
+    version.valid_to = None
+    version.approved_by = approved_by
+    version.approved_at = now
+    version.approval_note = approval_note
+    await db.flush()
+    return version

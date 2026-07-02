@@ -1,0 +1,224 @@
+"""Integration tests for read-only model portfolio API endpoints."""
+
+import hashlib
+import hmac
+import itertools
+import json
+import time
+from datetime import datetime
+from decimal import Decimal
+from urllib.parse import urlencode
+
+import pytest
+
+from app.models.portfolio import (
+    ModelPortfolio,
+    ModelPortfolioAllocation,
+    ModelPortfolioVersion,
+    PortfolioBacktest,
+)
+from app.models.trader import Trader
+
+pytestmark = pytest.mark.asyncio(loop_scope="session")
+
+_counter: itertools.count = itertools.count(1)
+
+
+def _make_init_data(user_id: int, username: str = "portfoliotest") -> str:
+    bot_token = "123456:test"
+    user_data = json.dumps(
+        {"id": user_id, "username": username, "first_name": "Portfolio"}
+    )
+    fields = {"user": user_data, "auth_date": str(int(time.time())), "query_id": "test"}
+    data_check_string = "\n".join(
+        f"{key}={value}" for key, value in sorted(fields.items())
+    )
+    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    fields["hash"] = hmac.new(
+        secret_key, data_check_string.encode(), hashlib.sha256
+    ).hexdigest()
+    return urlencode(fields)
+
+
+async def _auth_header(client, user_id: int) -> dict[str, str]:
+    response = await client.post(
+        "/api/auth/telegram", json={"init_data": _make_init_data(user_id)}
+    )
+    assert response.status_code == 200, f"Auth failed: {response.text}"
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+async def _seed_published_portfolio(db_session) -> str:
+    index = next(_counter)
+    now = datetime(2026, 7, 2, 12, 0, 0)
+    slug = f"balanced-api-{index}"
+    portfolio = ModelPortfolio(
+        slug=slug,
+        name=f"Balanced API {index}",
+        risk_profile="balanced",
+        status="active",
+        description="Balanced model portfolio.",
+        methodology_version="balanced-mvp-v1",
+        rebalance_cadence="weekly",
+        min_equity_usd=Decimal("1000.00"),
+        monthly_price_usd=Decimal("19.00"),
+        trial_days=7,
+    )
+    db_session.add(portfolio)
+    await db_session.flush()
+
+    version = ModelPortfolioVersion(
+        portfolio_id=portfolio.id,
+        version_no=1,
+        status="published",
+        valid_from=now,
+        approved_at=now,
+        approval_note="Approved for read-only API test.",
+        summary_json={
+            "trader_count": 2,
+            "target_weight_sum_pct": 100.0,
+            "max_weight_pct": 60.0,
+        },
+    )
+    db_session.add(version)
+    await db_session.flush()
+
+    traders: list[Trader] = []
+    for offset in range(2):
+        trader = Trader(
+            hl_address=f"0xpf{index:04x}{offset:034x}",
+            display_name=f"Portfolio Trader {index}-{offset}",
+            is_active=True,
+            has_perp_activity=True,
+        )
+        db_session.add(trader)
+        traders.append(trader)
+    await db_session.flush()
+
+    db_session.add_all(
+        [
+            ModelPortfolioAllocation(
+                version_id=version.id,
+                trader_id=traders[0].id,
+                target_weight_pct=Decimal("60.000"),
+                copy_ratio_pct=Decimal("100.00"),
+                max_leverage=Decimal("8.00"),
+                stop_loss_pct=Decimal("20.00"),
+                sizing_mode="fixed_ratio",
+                reason_code="balanced_mvp_score",
+                reason_text="Selected by deterministic Balanced MVP methodology.",
+                score_snapshot={
+                    "portfolio_score": 81.25,
+                    "source_metrics": {
+                        "roi_pct": 12.0,
+                        "max_drawdown_pct": 8.5,
+                        "active_trading_days": 90,
+                    },
+                },
+                constraint_snapshot={"selection_rank": 1},
+            ),
+            ModelPortfolioAllocation(
+                version_id=version.id,
+                trader_id=traders[1].id,
+                target_weight_pct=Decimal("40.000"),
+                copy_ratio_pct=Decimal("100.00"),
+                max_leverage=Decimal("8.00"),
+                stop_loss_pct=Decimal("20.00"),
+                sizing_mode="fixed_ratio",
+                reason_code="balanced_mvp_score",
+                reason_text="Selected by deterministic Balanced MVP methodology.",
+                score_snapshot={
+                    "portfolio_score": 78.5,
+                    "source_metrics": {
+                        "roi_pct": 6.0,
+                        "max_drawdown_pct": 5.0,
+                        "active_trading_days": 90,
+                    },
+                },
+                constraint_snapshot={"selection_rank": 2},
+            ),
+            PortfolioBacktest(
+                portfolio_version_id=version.id,
+                period_days=180,
+                initial_equity_usd=Decimal("10000.00"),
+                total_return_pct=Decimal("8.1000"),
+                max_drawdown_pct=Decimal("7.1000"),
+                sharpe_ratio=Decimal("1.2000"),
+                sortino_ratio=Decimal("1.5000"),
+                win_rate_pct=Decimal("55.00"),
+                turnover_pct=Decimal("350.0000"),
+                fees_usd=Decimal("14.0000"),
+                slippage_usd=Decimal("17.5000"),
+                missed_trade_count=0,
+                assumptions_json={
+                    "data_source": "aggregate_metric_proxy",
+                    "fees_bps": 4.0,
+                    "slippage_bps": 5.0,
+                    "uses_trade_level_fills": False,
+                },
+                equity_curve_json={"source": "aggregate_metric_proxy", "points": []},
+            ),
+        ]
+    )
+    await db_session.commit()
+    return slug
+
+
+class TestPortfoliosReadOnly:
+    @pytest.mark.asyncio
+    async def test_requires_auth(self, client) -> None:
+        response = await client.get("/api/portfolios")
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_list_returns_active_portfolio_with_version_and_backtest(
+        self, client, db_session
+    ) -> None:
+        slug = await _seed_published_portfolio(db_session)
+        headers = await _auth_header(client, user_id=90001)
+
+        response = await client.get("/api/portfolios", headers=headers)
+
+        assert response.status_code == 200
+        items = response.json()
+        portfolio = next(item for item in items if item["slug"] == slug)
+        assert portfolio["current_version"]["version_no"] == 1
+        assert portfolio["current_version"]["target_weight_sum_pct"] == 100.0
+        assert portfolio["latest_backtest"]["assumptions_json"]["fees_bps"] == 4.0
+
+    @pytest.mark.asyncio
+    async def test_detail_returns_allocations_and_assumptions(
+        self, client, db_session
+    ) -> None:
+        slug = await _seed_published_portfolio(db_session)
+        headers = await _auth_header(client, user_id=90002)
+
+        response = await client.get(f"/api/portfolios/{slug}", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["slug"] == slug
+        allocations = body["current_version"]["allocations"]
+        assert len(allocations) == 2
+        assert round(sum(item["target_weight_pct"] for item in allocations), 3) == 100.0
+        assert allocations[0]["trader_address"].startswith("0xpf")
+        assert allocations[0]["portfolio_score"] is not None
+        assert (
+            body["backtests"][0]["assumptions_json"]["uses_trade_level_fills"] is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_backtests_endpoint_returns_current_published_backtests(
+        self, client, db_session
+    ) -> None:
+        slug = await _seed_published_portfolio(db_session)
+        headers = await _auth_header(client, user_id=90003)
+
+        response = await client.get(
+            f"/api/portfolios/{slug}/backtests", headers=headers
+        )
+
+        assert response.status_code == 200
+        backtests = response.json()
+        assert backtests[0]["period_days"] == 180
+        assert backtests[0]["initial_equity_usd"] == 10000.0

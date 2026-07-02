@@ -10,6 +10,8 @@ import { TraderDetailPage } from './pages/TraderDetailPage'
 import { DemoSubscriptionDetailPage } from './pages/DemoSubscriptionDetailPage'
 import { MyTradesPage } from './pages/MyTradesPage'
 import { WalletPage } from './pages/WalletPage'
+import { PortfoliosPage } from './pages/PortfoliosPage'
+import { PortfolioDetailPage } from './pages/PortfolioDetailPage'
 
 const ONBOARDING_KEY = 'onboarding_done'
 
@@ -85,6 +87,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<TradersPage />} />
           <Route path="/traders/:id" element={<TraderDetailPage />} />
+          <Route path="/portfolios" element={<PortfoliosPage />} />
+          <Route path="/portfolios/:slug" element={<PortfolioDetailPage />} />
           <Route path="/my-trades" element={<MyTradesPage />} />
           <Route path="/demo-subscriptions/:id" element={<DemoSubscriptionDetailPage />} />
           <Route path="/wallet" element={<WalletPage />} />

@@ -1062,6 +1062,14 @@ Exit criteria:
 
 Цель: показать портфель пользователю без live активации.
 
+Анализ перед реализацией от 2026-07-02:
+
+- Phase 2 создает только `draft`-версию, поэтому для read-only пользовательского UI нужен отдельный ручной publish-шаг без автоматической публикации builder-результата.
+- Публичные `GET /portfolios*` endpoints должны быть read-only: они показывают только активные portfolio templates и текущую `published` версию, не создают версии, подписки или backtest records.
+- Backtest сохраняется в уже созданную Phase 1 таблицу `portfolio_backtests`; новая Alembic migration для Phase 3 не нужна.
+- Если для версии нет исторического daily PnL snapshot, backtest обязан явно пометить источник как proxy/limited-data в `assumptions_json`, а UI должен показывать assumptions вместо обещаний доходности.
+- Acceptance focus этой фазы: пользователь видит Balanced, состав, веса, risk metrics и backtest assumptions; demo/live activation остаются будущими фазами.
+
 Backend:
 
 1. Реализовать `portfolio/backtest.py`.
@@ -1499,6 +1507,59 @@ uv run python -m scripts.build_model_portfolio_draft --portfolio-slug balanced -
 6. Не публиковать draft автоматически. Публикация остается отдельным manual approval шагом будущей Phase 3/админ-флоу.
 
 Миграции, которые нужно выполнить на сервере после Phase 2:
+
+- новых миграций нет;
+- обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.
+
+### Phase 3 deployment checklist
+
+Phase 3 не добавляет новых миграций. Перед включением read-only UI на сервере должна быть применена Phase 1 migration, должен существовать seed-шаблон `Balanced`, и должна быть хотя бы одна draft-версия из Phase 2.
+
+1. Задеплоить backend + frontend код Phase 3 через обычный release path:
+
+```bash
+git pull --ff-only
+make deploy
+```
+
+`make deploy` все равно выполняет `uv run alembic upgrade head`; для Phase 3 это должно быть no-op, если Phase 1 migration уже применена.
+
+2. Проверить миграционное состояние и seed:
+
+```bash
+cd backend
+uv run alembic current
+uv run python -m scripts.seed_model_portfolios --check
+```
+
+3. Если published-версии Balanced еще нет, вручную опубликовать проверенную draft-версию:
+
+```bash
+cd backend
+uv run python -m scripts.publish_model_portfolio_version --portfolio-slug balanced --version-no <reviewed_draft_version_no> --approval-note "Approved for internal alpha read-only UI"
+```
+
+Нельзя публиковать `internal_alpha_relaxed` draft без ручного review состава и метрик.
+
+4. Запустить backtest для опубликованной версии:
+
+```bash
+cd backend
+uv run python -m scripts.run_model_portfolio_backtest --portfolio-slug balanced --period-days 180 --initial-equity-usd 1000 --initial-equity-usd 5000 --initial-equity-usd 10000
+```
+
+5. Проверить read-only API:
+
+```bash
+curl -fsS "$PUBLIC_URL/api/health"
+curl -fsS -H "Authorization: Bearer <user_jwt>" "$PUBLIC_URL/api/portfolios"
+curl -fsS -H "Authorization: Bearer <user_jwt>" "$PUBLIC_URL/api/portfolios/balanced"
+curl -fsS -H "Authorization: Bearer <user_jwt>" "$PUBLIC_URL/api/portfolios/balanced/backtests"
+```
+
+6. Проверить UI в Telegram Mini App или браузере: появилась вкладка `Portfolios`; Balanced открывается; видны allocations, веса, risk metrics и assumptions.
+
+Миграции, которые нужно выполнить на сервере после Phase 3:
 
 - новых миграций нет;
 - обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.

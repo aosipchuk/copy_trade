@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator
 os.environ["TELEGRAM_BOT_TOKEN"] = "123456:test"
 os.environ["SECRET_KEY"] = "test-secret-key-min-32-chars-random-string"
 os.environ["AGENT_ENCRYPTION_KEY"] = "0" * 64
+os.environ["ENVIRONMENT"] = "test"
 os.environ["DATABASE_URL"] = (
     "postgresql+asyncpg://copytrade:copytrade@localhost:5433/copytrade_test"
 )
