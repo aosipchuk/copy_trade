@@ -72,6 +72,29 @@ function numberMetric(
   return typeof value === 'number' ? value : null
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function recordList(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter(isRecord) : []
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+function numericValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function titleize(value: string): string {
+  return value
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
 export function PortfolioDetailPage() {
   const { slug } = useParams<{ slug: string }>()
   const navigate = useNavigate()
@@ -376,6 +399,7 @@ export function PortfolioDetailPage() {
 
       <div className="space-y-4 px-4 pt-4">
         <VersionStats portfolio={portfolio} backtest={primaryBacktest} />
+        <AdvancedOptimizationPanel portfolio={portfolio} />
         <WeeklyReportPanel
           report={weeklyReport}
           busy={reportBusy}
@@ -463,6 +487,134 @@ function StatCell({ label, value }: { label: string; value: string }) {
     >
       <div className="truncate text-[10px] text-tg-hint">{label}</div>
       <div className="truncate text-sm font-semibold text-tg-text">{value}</div>
+    </div>
+  )
+}
+
+function AdvancedOptimizationPanel({
+  portfolio,
+}: {
+  portfolio: ModelPortfolioDetail
+}) {
+  const summary = portfolio.current_version.summary_json ?? {}
+  const advanced = isRecord(summary.advanced_optimization)
+    ? summary.advanced_optimization
+    : {}
+  const heatmap = isRecord(summary.exposure_heatmap)
+    ? summary.exposure_heatmap
+    : {}
+  const strategyRows = recordList(heatmap.by_strategy_bucket)
+  const leverageRows = recordList(heatmap.by_leverage_band)
+  const accountProfiles = recordList(summary.account_size_profiles)
+  const optimizerEngine = stringValue(advanced.optimizer_engine)
+  const anomalyMode = stringValue(advanced.anomaly_detection)
+
+  if (
+    !optimizerEngine &&
+    strategyRows.length === 0 &&
+    leverageRows.length === 0 &&
+    accountProfiles.length === 0
+  ) {
+    return null
+  }
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-tg-text">Optimization</h2>
+        <span className="text-xs text-tg-hint">
+          {optimizerEngine ? titleize(optimizerEngine) : 'Advanced'}
+        </span>
+      </div>
+
+      <div
+        className="rounded-lg px-3 py-3"
+        style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+      >
+        <div className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
+          <StatCell
+            label="Engine"
+            value={optimizerEngine ? titleize(optimizerEngine) : 'n/a'}
+          />
+          <StatCell
+            label="Anomaly mode"
+            value={anomalyMode ? titleize(anomalyMode) : 'n/a'}
+          />
+        </div>
+
+        <HeatmapRows title="Strategy exposure" rows={strategyRows} />
+        <HeatmapRows title="Leverage exposure" rows={leverageRows} />
+
+        {accountProfiles.length > 0 && (
+          <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-700">
+            <div className="mb-2 text-[10px] font-semibold uppercase text-tg-hint">
+              Account tiers
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              {accountProfiles.slice(0, 3).map((profile) => {
+                const tier = stringValue(profile.tier) ?? 'tier'
+                const total = numericValue(profile.total_allocation_usd)
+                const lowCount = numericValue(profile.low_allocation_trader_count)
+                const minAllocation = numericValue(
+                  profile.min_trader_allocation_usd,
+                )
+                return (
+                  <MiniMetric
+                    key={tier}
+                    label={titleize(tier)}
+                    value={`${money(total)} · min ${money(minAllocation)}${
+                      lowCount && lowCount > 0 ? ` · ${lowCount} low` : ''
+                    }`}
+                  />
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function HeatmapRows({
+  title,
+  rows,
+}: {
+  title: string
+  rows: Record<string, unknown>[]
+}) {
+  if (rows.length === 0) return null
+
+  return (
+    <div className="mt-3 border-t border-gray-200 pt-3 first:mt-0 first:border-t-0 first:pt-0 dark:border-gray-700">
+      <div className="mb-2 text-[10px] font-semibold uppercase text-tg-hint">
+        {title}
+      </div>
+      <div className="space-y-2">
+        {rows.slice(0, 5).map((row) => {
+          const bucket = stringValue(row.bucket) ?? 'unknown'
+          const weight = numericValue(row.weight_pct) ?? 0
+          const traderCount = numericValue(row.trader_count) ?? 0
+          return (
+            <div key={bucket}>
+              <div className="mb-1 flex items-center justify-between gap-3 text-xs">
+                <span className="min-w-0 truncate text-tg-text">
+                  {titleize(bucket)}
+                </span>
+                <span className="shrink-0 text-tg-hint">
+                  {weight.toFixed(3)}% · {traderCount} traders
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                <div
+                  className="h-full rounded-full bg-tg-button"
+                  style={{ width: `${Math.max(2, Math.min(100, weight))}%` }}
+                />
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

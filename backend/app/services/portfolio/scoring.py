@@ -1,5 +1,9 @@
 from collections.abc import Iterable
 
+from app.services.portfolio.advanced import (
+    classify_strategy_profile,
+    detect_candidate_anomalies,
+)
 from app.services.portfolio.types import (
     CandidateMetrics,
     PortfolioCandidate,
@@ -136,7 +140,7 @@ def score_candidate(candidate: PortfolioCandidate) -> ScoredCandidate:
         "diversification_score": round(_diversification_score(metrics), 4),
         "behavior_stability_score": round(_behavior_stability_score(metrics), 4),
     }
-    portfolio_score = round(
+    base_portfolio_score = round(
         0.30 * components["risk_adjusted_score"]
         + 0.25 * components["consistency_score"]
         + 0.15 * components["return_score"]
@@ -145,10 +149,17 @@ def score_candidate(candidate: PortfolioCandidate) -> ScoredCandidate:
         + 0.05 * components["behavior_stability_score"],
         4,
     )
+    anomaly_detection = detect_candidate_anomalies(metrics)
+    anomaly_penalty = float(anomaly_detection["penalty"])
+    portfolio_score = round(_clamp(base_portfolio_score - anomaly_penalty), 4)
+    strategy_profile = classify_strategy_profile(metrics)
     snapshot = {
-        "methodology_version": "balanced-mvp-v1",
+        "methodology_version": "balanced-advanced-v2",
         "portfolio_score": portfolio_score,
+        "base_portfolio_score": base_portfolio_score,
         "component_scores": components,
+        "anomaly_detection": anomaly_detection,
+        "strategy_profile": strategy_profile,
         "source_metrics": {
             "pnl_usd": metrics.pnl_usd,
             "roi_pct": metrics.roi_pct,

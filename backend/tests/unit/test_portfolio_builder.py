@@ -14,18 +14,21 @@ from app.services.portfolio.types import (
 def _metrics(
     *,
     composite_score: float = 82.0,
+    roi_pct: float = 24.0,
     max_drawdown_pct: float = 18.0,
+    active_trading_days: int = 75,
+    trade_count: int = 80,
     avg_leverage: float = 3.0,
     avg_trades_per_day: float = 4.0,
     daily_pnl_by_day: dict[str, float] | None = None,
 ) -> CandidateMetrics:
     return CandidateMetrics(
         pnl_usd=25_000.0,
-        roi_pct=24.0,
+        roi_pct=roi_pct,
         volume_usd=1_250_000.0,
         win_rate_pct=61.0,
         max_drawdown_pct=max_drawdown_pct,
-        trade_count=80,
+        trade_count=trade_count,
         avg_trade_duration_hrs=8.0,
         sharpe_ratio=1.8,
         sortino_ratio=2.4,
@@ -41,7 +44,7 @@ def _metrics(
         calmar_ratio=1.7,
         composite_score=composite_score,
         max_drawdown_duration_days=14.0,
-        active_trading_days=75,
+        active_trading_days=active_trading_days,
         avg_leverage=avg_leverage,
         daily_pnl_by_day=daily_pnl_by_day,
     )
@@ -99,6 +102,17 @@ def _scored_candidate(
         score_snapshot={
             "portfolio_score": portfolio_score,
             "source_metrics": {"composite_score": portfolio_score},
+            "strategy_profile": {
+                "strategy_bucket": "mixed",
+                "directional_bias": "balanced",
+                "leverage_band": "moderate",
+                "risk_band": "medium",
+            },
+            "anomaly_detection": {
+                "severity": "none",
+                "penalty": 0.0,
+                "flags": [],
+            },
         },
     )
 
@@ -169,6 +183,34 @@ def test_portfolio_score_is_stable_and_preserves_source_facts() -> None:
     assert first.score_snapshot == second.score_snapshot
     assert first.score_snapshot["source_metrics"]["composite_score"] == 82.0
     assert first.score_snapshot["component_scores"]["copyability_score"] > 0
+    assert first.score_snapshot["methodology_version"] == "balanced-advanced-v2"
+    assert first.score_snapshot["strategy_profile"]["strategy_bucket"]
+    assert first.score_snapshot["anomaly_detection"]["severity"] in {
+        "none",
+        "low",
+        "medium",
+        "high",
+    }
+
+
+def test_portfolio_score_applies_anomaly_penalty() -> None:
+    daily_pnl = {f"2026-01-{day:02d}": float(day) for day in range(1, 15)}
+    candidate = _candidate(
+        1,
+        metrics=_metrics(
+            roi_pct=150.0,
+            active_trading_days=25,
+            daily_pnl_by_day=daily_pnl,
+        ),
+    )
+
+    scored = score_candidate(candidate)
+
+    anomaly = scored.score_snapshot["anomaly_detection"]
+    assert anomaly["severity"] == "medium"
+    assert anomaly["penalty"] > 0
+    assert any(flag["code"] == "short_history_high_roi" for flag in anomaly["flags"])
+    assert scored.portfolio_score < scored.score_snapshot["base_portfolio_score"]
 
 
 def test_optimizer_weights_sum_to_100_and_respect_max_weight() -> None:
@@ -183,6 +225,27 @@ def test_optimizer_weights_sum_to_100_and_respect_max_weight() -> None:
     assert round(sum(item.target_weight_pct for item in result.allocations), 3) == 100.0
     assert max(item.target_weight_pct for item in result.allocations) <= 18.0
     assert result.summary["target_weight_sum_pct"] == 100.0
+    assert result.summary["advanced_optimization"]["optimizer_engine"] in {
+        "heuristic_cap_normalize",
+        "scipy_slsqp",
+    }
+    assert result.summary["advanced_optimization"]["strategy_clustering"] == (
+        "deterministic_metric_buckets"
+    )
+    assert result.summary["exposure_heatmap"]["by_strategy_bucket"][0]["bucket"] == (
+        "mixed"
+    )
+    assert [profile["tier"] for profile in result.summary["account_size_profiles"]] == [
+        "starter",
+        "standard",
+        "larger",
+    ]
+    assert (
+        result.allocations[0].constraint_snapshot["weight_optimization"][
+            "optimizer_engine"
+        ]
+        == result.summary["advanced_optimization"]["optimizer_engine"]
+    )
 
 
 def test_optimizer_rejects_high_correlation_candidate() -> None:

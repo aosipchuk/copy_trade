@@ -1394,6 +1394,21 @@ Frontend:
 - better exposure heatmap;
 - performance fee.
 
+Реализовано в Phase 9:
+
+- `backend/app/services/portfolio/optimizer.py` использует optional `scipy.optimize.minimize(method='SLSQP')` для оптимизации весов, если SciPy доступна в окружении; если SciPy не установлена или результат не проходит weight validation, автоматически остается текущий deterministic `heuristic_cap_normalize` fallback;
+- `backend/app/services/portfolio/advanced.py` добавляет deterministic strategy clustering, anomaly detection, exposure heatmap и account-size allocation profiles без нового execution pipeline;
+- `score_snapshot` новых allocations сохраняет `base_portfolio_score`, `anomaly_detection` и `strategy_profile`; итоговый `portfolio_score` учитывает anomaly penalty;
+- `summary_json` новых draft/published versions сохраняет `advanced_optimization`, `exposure_heatmap` и `account_size_profiles`;
+- `frontend/src/pages/PortfolioDetailPage.tsx` показывает read-only блок Optimization для версий, у которых в `summary_json` уже есть Phase 9 snapshots;
+- `backend/scripts/build_model_portfolio_draft.py --dry-run` позволяет проверить selection/optimization на production metrics без создания draft-версии;
+- `performance fee` не реализован в коде Phase 9: это изменение billing/legal contract, его нужно проектировать отдельной фазой после legal review.
+
+Миграции после Phase 9:
+
+- новых Alembic migrations нет: Phase 9 использует существующие JSONB-поля `model_portfolio_versions.summary_json`, `model_portfolio_allocations.score_snapshot` и `model_portfolio_allocations.constraint_snapshot`;
+- существующие published versions immutable и не получают Phase 9 snapshots задним числом; для отображения Optimization panel нужно собрать новую draft-версию, вручную проверить ее и опубликовать обычным Phase 3 approval flow.
+
 ---
 
 ## 9. QA checklist
@@ -2089,6 +2104,71 @@ docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod
 - новых миграций нет;
 - `make deploy` все равно должен выполнить `alembic upgrade head` как no-op;
 - обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.
+
+### Phase 9 deployment checklist
+
+Phase 9 не добавляет новых миграций и не меняет execution pipeline. Перед проверкой advanced optimization на сервере должна быть применена Phase 8 migration, должен существовать seed-шаблон `Balanced`, и у него должна быть текущая `published` версия для сохранения read-only поведения UI.
+
+1. Задеплоить backend + frontend код Phase 9 обычным release path:
+
+```bash
+git pull --ff-only
+make deploy
+```
+
+`make deploy` выполняет `uv run alembic upgrade head`; для Phase 9 это должно быть no-op, если Phase 8 migration уже применена.
+
+2. Проверить миграционное состояние и seed:
+
+```bash
+cd backend
+uv run alembic current
+uv run python -m scripts.seed_model_portfolios --check
+```
+
+Ожидаемый head после Phase 9 остается `p2q3r4s5t6u7`.
+
+3. Проверить optimizer на production metrics без записи draft:
+
+```bash
+cd backend
+uv run python -m scripts.build_model_portfolio_draft --portfolio-slug balanced --period allTime --dry-run
+```
+
+Ожидаемый результат: команда печатает `dry run: no draft version was created`, `trader_count` в пределах профиля Balanced и `weight_sum=100.0`. `optimizer summary.engine` может быть `scipy_slsqp`, если SciPy установлена в окружении, или `heuristic_cap_normalize`, если используется fallback.
+
+Если production metrics слишком sparse для strict Balanced, для внутренней диагностики без записи можно выполнить:
+
+```bash
+cd backend
+uv run python -m scripts.build_model_portfolio_draft --portfolio-slug balanced --period allTime --internal-alpha-relaxed --dry-run
+```
+
+4. Создавать новую draft-версию только после dry-run проверки:
+
+```bash
+cd backend
+uv run python -m scripts.build_model_portfolio_draft --portfolio-slug balanced --period allTime
+```
+
+Новую draft-версию нельзя публиковать автоматически. Перед публикацией вручную проверить allocations, anomaly flags, exposure heatmap и account-size profiles в `summary_json`.
+
+5. Проверить read-only API/UI:
+
+```bash
+curl -fsS "$PUBLIC_URL/api/health"
+curl -fsS -H "Authorization: Bearer <user_jwt>" "$PUBLIC_URL/api/portfolios/balanced"
+```
+
+Для текущей старой published-версии Optimization panel может не отображаться, если версия была опубликована до Phase 9. Панель появится после публикации новой проверенной версии с Phase 9 `summary_json`.
+
+6. Rollback strategy: так как миграций нет, откат выполняется обычным `git revert`/deploy предыдущего коммита. Уже созданные draft-версии с Phase 9 JSON snapshots можно оставить как audit history или вручную `rejected` через отдельную админ-операцию; published versions не редактировать.
+
+Миграции, которые нужно выполнить на сервере после Phase 9:
+
+- новых миграций нет;
+- `make deploy` должен выполнить `alembic upgrade head` как no-op;
+- обязательное предварительное условие: Phase 8 migration `p2q3r4s5t6u7_add_portfolio_reports.py` уже применена.
 
 ---
 

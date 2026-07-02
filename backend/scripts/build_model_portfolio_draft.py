@@ -1,17 +1,47 @@
 import argparse
 import asyncio
 
-from app.core.database import get_db_session
-from app.services.portfolio.publisher import build_draft_model_portfolio
-
 
 async def main_async(
     portfolio_slug: str,
     period: str,
     created_by: int | None,
     internal_alpha_relaxed: bool,
+    dry_run: bool,
 ) -> int:
+    from app.core.database import get_db_session
+    from app.services.portfolio.publisher import (
+        build_draft_model_portfolio,
+        preview_model_portfolio_draft,
+    )
+
     async with get_db_session() as db:
+        if dry_run:
+            preview = await preview_model_portfolio_draft(
+                db,
+                portfolio_slug=portfolio_slug,
+                period=period,
+                internal_alpha_relaxed=internal_alpha_relaxed,
+            )
+            summary = preview.optimization.summary
+            advanced = summary.get("advanced_optimization", {})
+            if not isinstance(advanced, dict):
+                advanced = {}
+            print(
+                "draft portfolio preview: "
+                f"portfolio_id={preview.portfolio.id} slug={preview.portfolio.slug} "
+                f"trader_count={summary['trader_count']} "
+                f"weight_sum={summary['target_weight_sum_pct']}"
+            )
+            print(
+                "optimizer summary: "
+                f"engine={advanced.get('optimizer_engine')} "
+                f"filtered_rejected={len(preview.candidate_selection.rejected)} "
+                f"optimizer_rejected={len(preview.optimization.rejected)}"
+            )
+            print("dry run: no draft version was created")
+            return 0
+
         result = await build_draft_model_portfolio(
             db,
             portfolio_slug=portfolio_slug,
@@ -66,6 +96,11 @@ def main() -> None:
             "Default Balanced methodology remains strict."
         ),
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview selection and optimization without creating a draft version.",
+    )
     args = parser.parse_args()
     raise SystemExit(
         asyncio.run(
@@ -74,6 +109,7 @@ def main() -> None:
                 args.period,
                 args.created_by,
                 args.internal_alpha_relaxed,
+                args.dry_run,
             )
         )
     )
