@@ -7,6 +7,7 @@ from app.services.portfolio.types import (
     PortfolioCandidate,
     RawTraderCandidate,
     ScoredCandidate,
+    get_internal_alpha_relaxed_config,
 )
 
 
@@ -122,6 +123,40 @@ def test_candidate_filters_reject_non_mvp_traders() -> None:
         "leverage_too_high",
         "trade_frequency_too_high",
     ]
+
+
+def test_candidate_filters_require_leverage_in_strict_mode() -> None:
+    config = RISK_PROFILE_CONFIGS["balanced"]
+    result = apply_candidate_filters(
+        [_raw_candidate(1, metrics=_metrics(avg_leverage=None))],
+        config,
+    )
+
+    assert result.eligible == ()
+    assert result.rejected[0].reason_code == "missing_metrics"
+    assert "avg_leverage" in result.rejected[0].reason_text
+
+
+def test_candidate_filters_allow_unknown_leverage_in_internal_alpha_mode() -> None:
+    config = get_internal_alpha_relaxed_config(RISK_PROFILE_CONFIGS["balanced"])
+    result = apply_candidate_filters(
+        [_raw_candidate(1, metrics=_metrics(avg_leverage=None))],
+        config,
+    )
+
+    assert [candidate.trader_id for candidate in result.eligible] == [1]
+    assert result.eligible[0].constraint_snapshot["require_avg_leverage"] is False
+
+
+def test_candidate_filters_reject_known_high_leverage_in_internal_alpha_mode() -> None:
+    config = get_internal_alpha_relaxed_config(RISK_PROFILE_CONFIGS["balanced"])
+    result = apply_candidate_filters(
+        [_raw_candidate(1, metrics=_metrics(avg_leverage=28.33))],
+        config,
+    )
+
+    assert result.eligible == ()
+    assert result.rejected[0].reason_code == "leverage_too_high"
 
 
 def test_portfolio_score_is_stable_and_preserves_source_facts() -> None:

@@ -5,13 +5,19 @@ from app.core.database import get_db_session
 from app.services.portfolio.publisher import build_draft_model_portfolio
 
 
-async def main_async(portfolio_slug: str, period: str, created_by: int | None) -> int:
+async def main_async(
+    portfolio_slug: str,
+    period: str,
+    created_by: int | None,
+    internal_alpha_relaxed: bool,
+) -> int:
     async with get_db_session() as db:
         result = await build_draft_model_portfolio(
             db,
             portfolio_slug=portfolio_slug,
             period=period,
             created_by=created_by,
+            internal_alpha_relaxed=internal_alpha_relaxed,
         )
         version = result.version
         print(
@@ -26,6 +32,11 @@ async def main_async(portfolio_slug: str, period: str, created_by: int | None) -
             f"filtered_rejected={len(result.candidate_selection.rejected)} "
             f"optimizer_rejected={len(result.optimization.rejected)}"
         )
+        if internal_alpha_relaxed:
+            print(
+                "builder mode: internal_alpha_relaxed "
+                "(draft only; requires manual review before publish)"
+            )
         return 0
 
 
@@ -47,9 +58,24 @@ def main() -> None:
         default=None,
         help="Optional admin user id recorded as version.created_by.",
     )
+    parser.add_argument(
+        "--internal-alpha-relaxed",
+        action="store_true",
+        help=(
+            "Relax sparse-data gates for an internal draft only. "
+            "Default Balanced methodology remains strict."
+        ),
+    )
     args = parser.parse_args()
     raise SystemExit(
-        asyncio.run(main_async(args.portfolio_slug, args.period, args.created_by))
+        asyncio.run(
+            main_async(
+                args.portfolio_slug,
+                args.period,
+                args.created_by,
+                args.internal_alpha_relaxed,
+            )
+        )
     )
 
 

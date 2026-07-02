@@ -1050,6 +1050,7 @@ Exit criteria:
 - `publisher.py` создает только `draft` версии и не публикует их автоматически, manual approval boundary сохраняется;
 - `score_snapshot` и `constraint_snapshot` сохраняются на allocation-level;
 - добавлена CLI-команда `backend/scripts/build_model_portfolio_draft.py`;
+- strict Balanced остается режимом по умолчанию; для внутренней проверки draft-записи на sparse production metrics добавлен явный CLI-флаг `--internal-alpha-relaxed`, который ослабляет только data-availability gates, помечает `summary_json.builder_mode='internal_alpha_relaxed'` и не публикует версию;
 - добавлены unit-тесты `backend/tests/unit/test_portfolio_builder.py`;
 - новая Alembic migration для Phase 2 не нужна: используются таблицы и поля из Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py`.
 
@@ -1484,6 +1485,15 @@ uv run python -m scripts.seed_model_portfolios --check
 cd backend
 uv run python -m scripts.build_model_portfolio_draft --portfolio-slug balanced --period allTime
 ```
+
+Если production metrics еще слишком sparse для strict Balanced, для внутренней alpha-проверки draft-записи можно использовать:
+
+```bash
+cd backend
+uv run python -m scripts.build_model_portfolio_draft --portfolio-slug balanced --period allTime --internal-alpha-relaxed
+```
+
+Такой draft нельзя публиковать без ручного review. Он должен оставаться `status='draft'` и иметь `summary_json.builder_mode='internal_alpha_relaxed'`.
 
 5. Проверить результат в БД: в `model_portfolio_versions` появилась новая запись `status='draft'`, в `model_portfolio_allocations` есть 6-10 allocation rows, сумма `target_weight_pct` равна `100.000`.
 6. Не публиковать draft автоматически. Публикация остается отдельным manual approval шагом будущей Phase 3/админ-флоу.

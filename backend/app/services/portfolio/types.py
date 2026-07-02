@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 RiskProfile = Literal["conservative", "balanced", "aggressive"]
@@ -20,6 +20,7 @@ class RiskProfileConfig:
     max_correlation: float
     max_avg_trades_per_day: float
     default_stop_loss_pct: float
+    require_avg_leverage: bool = True
 
 
 RISK_PROFILE_CONFIGS: dict[RiskProfile, RiskProfileConfig] = {
@@ -73,6 +74,23 @@ def get_risk_profile_config(risk_profile: str) -> RiskProfileConfig:
         return RISK_PROFILE_CONFIGS[risk_profile]  # type: ignore[index]
     except KeyError as exc:
         raise ValueError(f"Unsupported risk profile: {risk_profile}") from exc
+
+
+def get_internal_alpha_relaxed_config(
+    config: RiskProfileConfig,
+) -> RiskProfileConfig:
+    """Relax only data-availability gates for internal draft testing.
+
+    This does not change the default Balanced methodology. It is used explicitly
+    by the CLI when production metrics are too sparse to validate draft writes.
+    Drafts built with this mode still require manual review before publication.
+    """
+    return replace(
+        config,
+        min_composite_score=min(config.min_composite_score, 65.0),
+        min_active_trading_days=min(config.min_active_trading_days, 10),
+        require_avg_leverage=False,
+    )
 
 
 @dataclass(frozen=True)

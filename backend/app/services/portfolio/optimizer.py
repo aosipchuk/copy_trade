@@ -140,6 +140,11 @@ def optimize_portfolio(
     for index, candidate in enumerate(selected, start=1):
         trader_id = candidate.candidate.trader_id
         metrics = candidate.candidate.metrics
+        avg_leverage_text = (
+            f"{metrics.avg_leverage:.2f}x"
+            if metrics.avg_leverage is not None
+            else "unknown"
+        )
         allocations.append(
             OptimizedAllocation(
                 scored_candidate=candidate,
@@ -155,7 +160,7 @@ def optimize_portfolio(
                     "Selected by deterministic Balanced MVP methodology: "
                     f"portfolio_score={candidate.portfolio_score:.2f}, "
                     f"drawdown={metrics.max_drawdown_pct:.2f}%, "
-                    f"avg_leverage={metrics.avg_leverage:.2f}x."
+                    f"avg_leverage={avg_leverage_text}."
                 ),
                 constraint_snapshot={
                     **candidate.candidate.constraint_snapshot,

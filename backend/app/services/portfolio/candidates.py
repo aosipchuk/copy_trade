@@ -19,7 +19,6 @@ ESSENTIAL_METRICS = (
     "trade_count",
     "active_trading_days",
     "max_drawdown_pct",
-    "avg_leverage",
     "avg_trades_per_day",
 )
 
@@ -75,6 +74,7 @@ def _config_snapshot(config: RiskProfileConfig) -> dict[str, Any]:
         "min_active_trading_days": config.min_active_trading_days,
         "max_drawdown_pct": config.max_drawdown_pct,
         "max_leverage": config.max_leverage,
+        "require_avg_leverage": config.require_avg_leverage,
         "max_avg_trades_per_day": config.max_avg_trades_per_day,
     }
 
@@ -112,10 +112,13 @@ def _reject(
     )
 
 
-def _missing_metrics(metrics: CandidateMetrics) -> list[str]:
+def _missing_metrics(metrics: CandidateMetrics, config: RiskProfileConfig) -> list[str]:
+    required_metrics = list(ESSENTIAL_METRICS)
+    if config.require_avg_leverage:
+        required_metrics.append("avg_leverage")
     return [
         field_name
-        for field_name in ESSENTIAL_METRICS
+        for field_name in required_metrics
         if getattr(metrics, field_name) is None
     ]
 
@@ -143,7 +146,7 @@ def apply_candidate_filters(
             )
             continue
 
-        missing = _missing_metrics(metrics)
+        missing = _missing_metrics(metrics, config)
         if missing:
             rejected.append(
                 _reject(
@@ -159,7 +162,7 @@ def apply_candidate_filters(
         trade_count = metrics.trade_count or 0
         active_days = metrics.active_trading_days or 0
         max_drawdown = metrics.max_drawdown_pct or 0.0
-        avg_leverage = metrics.avg_leverage or 0.0
+        avg_leverage = metrics.avg_leverage
         avg_trades_per_day = metrics.avg_trades_per_day or 0.0
 
         if composite_score < config.min_composite_score:
@@ -202,7 +205,7 @@ def apply_candidate_filters(
                 )
             )
             continue
-        if avg_leverage > config.max_leverage:
+        if avg_leverage is not None and avg_leverage > config.max_leverage:
             rejected.append(
                 _reject(
                     raw,

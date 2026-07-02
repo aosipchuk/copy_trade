@@ -18,6 +18,7 @@ from app.services.portfolio.scoring import score_candidates
 from app.services.portfolio.types import (
     CandidateSelectionResult,
     OptimizationResult,
+    get_internal_alpha_relaxed_config,
     get_risk_profile_config,
 )
 
@@ -60,9 +61,12 @@ async def preview_model_portfolio_draft(
     db: AsyncSession,
     portfolio_slug: str = "balanced",
     period: str = "allTime",
+    internal_alpha_relaxed: bool = False,
 ) -> PortfolioDraftBuildPreview:
     portfolio = await _get_portfolio(db, portfolio_slug)
     config = get_risk_profile_config(portfolio.risk_profile)
+    if internal_alpha_relaxed:
+        config = get_internal_alpha_relaxed_config(config)
     candidate_selection = await load_portfolio_candidates(db, config, period=period)
     scored_candidates = score_candidates(candidate_selection.eligible)
     optimization = optimize_portfolio(scored_candidates, config)
@@ -113,9 +117,15 @@ async def build_draft_model_portfolio(
     portfolio_slug: str = "balanced",
     period: str = "allTime",
     created_by: int | None = None,
+    internal_alpha_relaxed: bool = False,
 ) -> PortfolioDraftBuildResult:
     selection_started_at = _naive_utc_now()
-    preview = await preview_model_portfolio_draft(db, portfolio_slug, period=period)
+    preview = await preview_model_portfolio_draft(
+        db,
+        portfolio_slug,
+        period=period,
+        internal_alpha_relaxed=internal_alpha_relaxed,
+    )
     selection_finished_at = _naive_utc_now()
     version_no = await _next_version_no(db, preview.portfolio.id)
 
@@ -126,6 +136,9 @@ async def build_draft_model_portfolio(
         "filtered_rejected_count": len(preview.candidate_selection.rejected),
         "optimizer_rejected_count": len(preview.optimization.rejected),
         "methodology_version": preview.portfolio.methodology_version,
+        "builder_mode": (
+            "internal_alpha_relaxed" if internal_alpha_relaxed else "strict"
+        ),
     }
     version = ModelPortfolioVersion(
         portfolio_id=preview.portfolio.id,
