@@ -199,6 +199,15 @@ class UserPortfolioSubscription(Base):
             "status IN ('trialing', 'active', 'past_due', 'paused', 'canceled')",
             name="ck_user_portfolio_subscriptions_status",
         ),
+        Index(
+            "uq_user_portfolio_subscriptions_active_version_mode",
+            "user_id",
+            "portfolio_id",
+            "active_version_id",
+            "is_demo",
+            unique=True,
+            postgresql_where=text("status <> 'canceled'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)

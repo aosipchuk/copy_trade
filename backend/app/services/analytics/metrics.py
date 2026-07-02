@@ -497,6 +497,7 @@ class _DailyMetrics(NamedTuple):
     avg_trades_per_day: float | None
     daily_pnl_std_dev: float | None
     active_trading_days: int | None
+    daily_pnl_by_day: dict[str, float]
 
 
 class _RiskMetrics(NamedTuple):
@@ -585,6 +586,7 @@ def _compute_daily_metrics(
         avg_trades_per_day=avg_trades_per_day,
         daily_pnl_std_dev=daily_pnl_std_dev,
         active_trading_days=active_days if active_days > 0 else None,
+        daily_pnl_by_day=dict(sorted(daily_pnl_map.items())),
     )
 
 
@@ -643,6 +645,8 @@ class QualityMetrics:
         max_drawdown_duration_days: float | None,
         active_trading_days: int | None,
         avg_leverage: float | None,
+        daily_pnl_by_day: dict[str, float] | None = None,
+        daily_returns_pct_by_day: dict[str, float] | None = None,
         composite_score: float | None = None,
         has_perp_activity: bool = True,
         perp_period_stats: dict[str, tuple[float, float]] | None = None,
@@ -668,6 +672,8 @@ class QualityMetrics:
         self.max_drawdown_duration_days = max_drawdown_duration_days
         self.active_trading_days = active_trading_days
         self.avg_leverage = avg_leverage
+        self.daily_pnl_by_day = daily_pnl_by_day
+        self.daily_returns_pct_by_day = daily_returns_pct_by_day
         self.composite_score = composite_score
         # Not part of to_dict(): this lives on the Trader row, not trader_stats.
         self.has_perp_activity = has_perp_activity
@@ -698,6 +704,8 @@ class QualityMetrics:
             "max_drawdown_duration_days": self.max_drawdown_duration_days,
             "active_trading_days": self.active_trading_days,
             "avg_leverage": self.avg_leverage,
+            "daily_pnl_by_day": self.daily_pnl_by_day,
+            "daily_returns_pct_by_day": self.daily_returns_pct_by_day,
             "composite_score": self.composite_score,
         }
 
@@ -794,6 +802,8 @@ async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
         max_drawdown_duration_days=risk.max_drawdown_duration_days,
         active_trading_days=daily.active_trading_days,
         avg_leverage=avg_leverage,
+        daily_pnl_by_day=daily.daily_pnl_by_day,
+        daily_returns_pct_by_day=None,
         has_perp_activity=has_perp_activity,
         perp_period_stats=perp_period_stats,
     )

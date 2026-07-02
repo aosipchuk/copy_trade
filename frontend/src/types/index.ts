@@ -118,7 +118,7 @@ export type SizingMode = 'fixed_ratio' | 'fixed_usd' | 'equity_pct'
 
 export interface Subscription {
   id: number
-  trader_id: number
+  trader_id: number | null
   trader_address: string | null
   trader_name: string | null
   max_allocation_usd: number
@@ -266,8 +266,8 @@ export interface ModelPortfolioListItem {
 export interface ModelPortfolioAllocation {
   id: number
   version_id: number
-  trader_id: number
-  trader_address: string
+  trader_id: number | null
+  trader_address: string | null
   trader_display_name: string | null
   target_weight_pct: number
   copy_ratio_pct: number
@@ -318,6 +318,7 @@ export interface PortfolioBacktest extends PortfolioBacktestSummary {
 
 export interface ModelPortfolioDetail extends Omit<ModelPortfolioListItem, 'current_version' | 'latest_backtest'> {
   current_version: ModelPortfolioPublishedVersion
+  trader_details_visible: boolean
   backtests: PortfolioBacktest[]
 }
 
@@ -356,7 +357,7 @@ export interface UserPortfolioItem {
   subscription_id: number
   portfolio_version_id: number
   allocation_id: number
-  trader_id: number
+  trader_id: number | null
   target_allocation_usd: number
   target_weight_pct: number
   status: PortfolioItemStatus
@@ -374,6 +375,7 @@ export interface UserPortfolioSubscriptionDetail extends UserPortfolioSubscripti
   portfolio_slug: string
   portfolio_name: string
   active_version_no: number
+  trader_details_visible: boolean
   items: UserPortfolioItemDetail[]
 }
 
@@ -490,8 +492,8 @@ export type PortfolioReportGeneratedBy =
 
 export interface PortfolioAllocationExplanation {
   allocation_id: number
-  trader_id: number
-  trader_address: string
+  trader_id: number | null
+  trader_address: string | null
   trader_display_name: string | null
   generated_by: PortfolioReportGeneratedBy
   prompt_version: string
@@ -509,6 +511,7 @@ export interface PortfolioExplanation {
   generated_at: string
   generated_by: PortfolioReportGeneratedBy
   prompt_version: string
+  trader_details_visible: boolean
   summary: string
   source_facts: Record<string, unknown>
   allocations: PortfolioAllocationExplanation[]
@@ -521,8 +524,8 @@ export interface PortfolioReportSection {
 
 export interface PortfolioReportAllocationNote {
   allocation_id: number
-  trader_id: number
-  trader_address: string
+  trader_id: number | null
+  trader_address: string | null
   trader_display_name: string | null
   note: string
 }
@@ -539,6 +542,7 @@ export interface PortfolioWeeklyReport {
   period_end: string
   generated_by: PortfolioReportGeneratedBy
   prompt_version: string
+  trader_details_visible: boolean
   source_facts: Record<string, unknown>
   report_json: Record<string, unknown>
   summary: string

@@ -22,11 +22,15 @@ from app.models.portfolio import (
     UserPortfolioItem,
     UserPortfolioSubscription,
 )
+from app.models.signal import Signal
 from app.models.subscription import Subscription
 from app.models.trader import Trader
 from app.models.user import User, UserAgent
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import MarginSummary
+from app.services.portfolio.subscription_lifecycle import (
+    executable_subscription_targets_for_signal,
+)
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -92,6 +96,42 @@ async def _auth_user(client, user_id: int) -> tuple[dict[str, str], int]:
     assert response.status_code == 200, f"Auth failed: {response.text}"
     body = response.json()
     return {"Authorization": f"Bearer {body['access_token']}"}, int(body["user_id"])
+
+
+def _contains_identity(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if (
+                key
+                in {
+                    "trader_id",
+                    "peer_trader_id",
+                    "trader_address",
+                    "trader_display_name",
+                    "trader_name",
+                    "hl_address",
+                }
+                and item is not None
+            ):
+                return True
+            if (
+                key == "trader"
+                and isinstance(item, dict)
+                and any(
+                    item.get(identity_key) is not None
+                    for identity_key in ("id", "address", "display_name")
+                )
+            ):
+                return True
+            if _contains_identity(item):
+                return True
+    if isinstance(value, list):
+        return any(_contains_identity(item) for item in value)
+    return False
+
+
+def _serialized_identity_text(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 async def _seed_published_portfolio(db_session) -> SeededPortfolio:
@@ -330,6 +370,7 @@ class TestDemoPortfolioActivation:
         assert body["is_demo"] is True
         assert body["status"] == "active"
         assert body["portfolio_slug"] == seed.slug
+        assert body["trader_details_visible"] is False
         assert len(body["items"]) == 3
         assert sum(item["target_allocation_usd"] for item in body["items"]) == 1000.0
         assert [item["target_allocation_usd"] for item in body["items"]] == [
@@ -340,6 +381,12 @@ class TestDemoPortfolioActivation:
 
         for item in body["items"]:
             subscription = item["subscription"]
+            assert item["trader_id"] is None
+            assert item["trader_address"] is None
+            assert item["trader_display_name"] is None
+            assert subscription["trader_id"] is None
+            assert subscription["trader_address"] is None
+            assert subscription["trader_name"] is None
             assert subscription["is_demo"] is True
             assert subscription["is_active"] is True
             assert subscription["source_type"] == "model_portfolio"
@@ -470,6 +517,77 @@ class TestDemoPortfolioActivation:
         assert len(items) == 3
         assert all(item.status == "removed" for item in items)
 
+    async def test_execution_targets_keep_manual_and_portfolio_demo_separate(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91005)
+        manual = Subscription(
+            user_id=user_id,
+            trader_id=seed.trader_ids[0],
+            max_allocation_usd=Decimal("100.00"),
+            copy_ratio_pct=Decimal("100.00"),
+            stop_loss_pct=Decimal("20.00"),
+            max_leverage=Decimal("8.00"),
+            is_active=True,
+            is_demo=True,
+            source_type="manual",
+            managed_by_portfolio=False,
+        )
+        db_session.add(manual)
+        await db_session.commit()
+
+        activation = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_activation_body(seed),
+            headers=headers,
+        )
+        assert activation.status_code == 201
+        portfolio_subscription_id = activation.json()["id"]
+        generated_result = await db_session.execute(
+            select(Subscription.id).where(
+                Subscription.source_id == portfolio_subscription_id,
+                Subscription.source_type == "model_portfolio",
+                Subscription.trader_id == seed.trader_ids[0],
+                Subscription.is_demo.is_(True),
+            )
+        )
+        generated_subscription_id = generated_result.scalar_one()
+        signal = Signal(
+            trader_id=seed.trader_ids[0],
+            signal_type="OPEN",
+            coin="BTC",
+            side="long",
+            size=Decimal("0.01"),
+            entry_price=Decimal("50000.00"),
+            leverage=Decimal("3.00"),
+        )
+        db_session.add(signal)
+        await db_session.commit()
+
+        active_targets = await executable_subscription_targets_for_signal(
+            db_session, signal.id
+        )
+
+        assert {
+            target.subscription_id for target in active_targets if target.is_demo
+        } == {manual.id, generated_subscription_id}
+
+        portfolio_subscription = await db_session.get(
+            UserPortfolioSubscription, portfolio_subscription_id
+        )
+        assert portfolio_subscription is not None
+        portfolio_subscription.status = "paused"
+        await db_session.commit()
+
+        paused_targets = await executable_subscription_targets_for_signal(
+            db_session, signal.id
+        )
+
+        assert {
+            target.subscription_id for target in paused_targets if target.is_demo
+        } == {manual.id}
+
 
 class TestPortfolioRebalance:
     async def test_preview_rebalance_shows_diff_for_pending_manual_apply(
@@ -506,6 +624,10 @@ class TestPortfolioRebalance:
             "change_weight",
             "change_risk_settings",
         } <= actions
+        assert not _contains_identity(body["diff"])
+        diff_text = _serialized_identity_text(body["diff"])
+        assert "0xpf" not in diff_text
+        assert "Portfolio Trader" not in diff_text
 
     async def test_apply_rebalance_is_idempotent_and_manual_subscription_untouched(
         self, client, db_session
@@ -555,6 +677,12 @@ class TestPortfolioRebalance:
         assert second_body["event"]["id"] == first_body["event"]["id"]
         assert second_body["event"]["status"] == "completed"
         assert first_body["portfolio_subscription"]["active_version_no"] == 2
+        assert first_body["portfolio_subscription"]["trader_details_visible"] is False
+        assert not _contains_identity(first_body["diff"])
+        assert not _contains_identity(first_body["event"]["diff_json"])
+        event_text = _serialized_identity_text(first_body["event"]["diff_json"])
+        assert "0xpf" not in event_text
+        assert "Portfolio Trader" not in event_text
 
         subscriptions_result = await db_session.execute(
             select(Subscription).where(
@@ -591,6 +719,16 @@ class TestPortfolioRebalance:
             )
         )
         assert len(list(event_result.scalars().all())) == 1
+
+        history = await client.get(
+            f"/api/portfolio-subscriptions/{portfolio_subscription_id}"
+            "/rebalance-history",
+            headers=headers,
+        )
+        assert history.status_code == 200
+        history_body = history.json()
+        assert len(history_body) == 1
+        assert not _contains_identity(history_body[0]["diff_json"])
 
     async def test_live_past_due_rebalance_is_skipped(self, client, db_session) -> None:
         seed = await _seed_published_portfolio(db_session)
@@ -820,3 +958,49 @@ class TestLivePortfolioActivation:
 
         assert response.status_code == 400
         assert "manual subscription conflicts" in response.json()["detail"]
+
+    async def test_cancel_live_portfolio_disables_only_generated_subscriptions(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91108)
+        paid_holder = await _seed_paid_holder(db_session, seed, user_id)
+        await _make_user_live_ready(db_session, user_id)
+        manual = Subscription(
+            user_id=user_id,
+            trader_id=seed.trader_ids[0],
+            max_allocation_usd=Decimal("100.00"),
+            copy_ratio_pct=Decimal("100.00"),
+            stop_loss_pct=Decimal("20.00"),
+            max_leverage=Decimal("8.00"),
+            is_active=True,
+            is_demo=True,
+            source_type="manual",
+            managed_by_portfolio=False,
+        )
+        db_session.add(manual)
+        await db_session.commit()
+
+        activation = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+        assert activation.status_code == 201
+
+        response = await client.delete(
+            f"/api/portfolio-subscriptions/{paid_holder.id}",
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "canceled"
+        assert body["canceled_at"] is not None
+        assert all(item["status"] == "removed" for item in body["items"])
+        assert all(item["subscription"]["is_active"] is False for item in body["items"])
+
+        manual_after_cancel = await db_session.get(Subscription, manual.id)
+        assert manual_after_cancel is not None
+        assert manual_after_cancel.is_active is True
+        assert manual_after_cancel.source_type == "manual"

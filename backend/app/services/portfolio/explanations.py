@@ -24,6 +24,7 @@ from app.schemas.portfolio import (
     PortfolioReportSection,
     PortfolioWeeklyReportResponse,
 )
+from app.services.portfolio.access import redact_trader_identity_payload
 
 JsonDict = dict[str, Any]
 
@@ -306,6 +307,20 @@ def _allocation_explanation_response(
     )
 
 
+def _redact_allocation_explanation(
+    response: PortfolioAllocationExplanationResponse,
+) -> PortfolioAllocationExplanationResponse:
+    source_facts = redact_trader_identity_payload(response.source_facts)
+    return response.model_copy(
+        update={
+            "trader_id": None,
+            "trader_address": None,
+            "trader_display_name": None,
+            "source_facts": source_facts if isinstance(source_facts, dict) else {},
+        }
+    )
+
+
 def _target_weight_sum(allocations: Sequence[ModelPortfolioAllocation]) -> float:
     return round(
         sum(_float(allocation.target_weight_pct) or 0.0 for allocation in allocations),
@@ -379,7 +394,10 @@ def _sorted_backtests(
 
 
 async def build_portfolio_explanations(
-    db: AsyncSession, slug: str
+    db: AsyncSession,
+    slug: str,
+    *,
+    include_trader_identities: bool = True,
 ) -> PortfolioExplanationResponse:
     portfolio, version = await _load_current_published(db, slug)
     allocations = _sorted_allocations(version.allocations)
@@ -387,6 +405,11 @@ async def build_portfolio_explanations(
         _allocation_explanation_response(allocation, portfolio, version)
         for allocation in allocations
     ]
+    if not include_trader_identities:
+        allocation_explanations = [
+            _redact_allocation_explanation(response)
+            for response in allocation_explanations
+        ]
     source_facts: JsonDict = {
         "portfolio": {
             "id": portfolio.id,
@@ -424,6 +447,7 @@ async def build_portfolio_explanations(
         generated_at=_now(),
         generated_by="template",
         prompt_version=PROMPT_VERSION,
+        trader_details_visible=include_trader_identities,
         summary=summary,
         source_facts=source_facts,
         allocations=allocation_explanations,
@@ -649,6 +673,8 @@ def _report_response(
     report: PortfolioReport,
     portfolio: ModelPortfolio,
     version: ModelPortfolioVersion,
+    *,
+    include_trader_identities: bool = True,
 ) -> PortfolioWeeklyReportResponse:
     report_json = report.report_json
     raw_sections = report_json.get("sections")
@@ -668,6 +694,27 @@ def _report_response(
             for note in raw_notes
             if isinstance(note, Mapping)
         ]
+    source_facts: JsonDict = report.source_facts
+    response_report_json: JsonDict = report.report_json
+    if not include_trader_identities:
+        notes = [
+            note.model_copy(
+                update={
+                    "trader_id": None,
+                    "trader_address": None,
+                    "trader_display_name": None,
+                }
+            )
+            for note in notes
+        ]
+        redacted_source_facts = redact_trader_identity_payload(source_facts)
+        redacted_report_json = redact_trader_identity_payload(response_report_json)
+        source_facts = (
+            redacted_source_facts if isinstance(redacted_source_facts, dict) else {}
+        )
+        response_report_json = (
+            redacted_report_json if isinstance(redacted_report_json, dict) else {}
+        )
     return PortfolioWeeklyReportResponse(
         id=report.id,
         portfolio_id=portfolio.id,
@@ -680,8 +727,9 @@ def _report_response(
         period_end=report.period_end,
         generated_by=report.generated_by,
         prompt_version=report.prompt_version,
-        source_facts=report.source_facts,
-        report_json=report.report_json,
+        trader_details_visible=include_trader_identities,
+        source_facts=source_facts,
+        report_json=response_report_json,
         summary=str(report_json.get("summary") or ""),
         sections=sections,
         allocation_notes=notes,
@@ -690,7 +738,10 @@ def _report_response(
 
 
 async def get_latest_weekly_report(
-    db: AsyncSession, slug: str
+    db: AsyncSession,
+    slug: str,
+    *,
+    include_trader_identities: bool = True,
 ) -> PortfolioWeeklyReportResponse | None:
     portfolio, version = await _load_current_published(db, slug)
     result = await db.execute(
@@ -710,7 +761,12 @@ async def get_latest_weekly_report(
     report = result.scalar_one_or_none()
     if report is None:
         return None
-    return _report_response(report, portfolio, version)
+    return _report_response(
+        report,
+        portfolio,
+        version,
+        include_trader_identities=include_trader_identities,
+    )
 
 
 async def generate_weekly_report(

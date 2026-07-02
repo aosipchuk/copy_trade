@@ -25,6 +25,10 @@ from app.schemas.portfolio import (
     PortfolioBillingWebhookResponse,
     UserPortfolioSubscriptionDetailResponse,
 )
+from app.services.portfolio.subscription_lifecycle import (
+    deactivate_portfolio_owned_subscriptions,
+    lock_user_portfolio_subscription_slot,
+)
 
 logger = get_logger(__name__)
 
@@ -337,6 +341,13 @@ async def create_portfolio_billing_checkout(
     data: PortfolioBillingCheckoutCreate,
 ) -> PortfolioBillingCheckoutResponse:
     await _load_published_portfolio(db, data.portfolio_id, data.active_version_id)
+    await lock_user_portfolio_subscription_slot(
+        db,
+        user_id=user.id,
+        portfolio_id=data.portfolio_id,
+        active_version_id=data.active_version_id,
+        is_demo=False,
+    )
     subscription = await _latest_live_billing_subscription(
         db,
         user.id,
@@ -485,6 +496,12 @@ async def _apply_subscription_event(
     )
     if next_status == "canceled" and local_subscription.canceled_at is None:
         local_subscription.canceled_at = _now()
+    if next_status == "canceled" and not local_subscription.is_demo:
+        await deactivate_portfolio_owned_subscriptions(
+            db,
+            local_subscription,
+            close_positions=False,
+        )
     await db.flush()
     return local_subscription.id
 

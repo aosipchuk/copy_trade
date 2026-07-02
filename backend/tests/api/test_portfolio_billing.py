@@ -21,6 +21,7 @@ from app.models.portfolio import (
     UserPortfolioItem,
     UserPortfolioSubscription,
 )
+from app.models.subscription import Subscription
 from app.models.trader import Trader
 from app.services.portfolio.billing import (
     BillingPaymentRequiredError,
@@ -342,3 +343,116 @@ class TestPortfolioBillingGate:
         saved = result.scalar_one()
         assert saved.billing_subscription_id == "sub_canceled"
         assert saved.status == "canceled"
+
+    async def test_deleted_webhook_deactivates_generated_live_subscriptions(
+        self, client, db_session, monkeypatch
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        _, user_id = await _auth_user(client, user_id=92006)
+        monkeypatch.setattr(settings, "stripe_webhook_secret", "whsec_test")
+        portfolio_subscription = UserPortfolioSubscription(
+            user_id=user_id,
+            portfolio_id=seed.portfolio_id,
+            active_version_id=seed.version_id,
+            status="active",
+            is_demo=False,
+            auto_rebalance=True,
+            total_allocation_usd=Decimal("1000.00"),
+            close_removed_positions=False,
+            billing_provider="stripe",
+            billing_customer_id="cus_cancel",
+            billing_subscription_id="sub_cancel",
+        )
+        db_session.add(portfolio_subscription)
+        await db_session.flush()
+        portfolio_subscription_id = portfolio_subscription.id
+
+        allocation_result = await db_session.execute(
+            select(ModelPortfolioAllocation).where(
+                ModelPortfolioAllocation.version_id == seed.version_id
+            )
+        )
+        allocations = list(allocation_result.scalars().all())
+        for allocation in allocations:
+            subscription = Subscription(
+                user_id=user_id,
+                trader_id=allocation.trader_id,
+                max_allocation_usd=Decimal("100.00"),
+                copy_ratio_pct=Decimal("100.00"),
+                stop_loss_pct=Decimal("20.00"),
+                max_leverage=Decimal("8.00"),
+                source_type="model_portfolio",
+                source_id=portfolio_subscription_id,
+                source_version_id=seed.version_id,
+                managed_by_portfolio=True,
+                is_active=True,
+                is_demo=False,
+            )
+            db_session.add(subscription)
+            await db_session.flush()
+            db_session.add(
+                UserPortfolioItem(
+                    user_portfolio_subscription_id=portfolio_subscription_id,
+                    subscription_id=subscription.id,
+                    portfolio_version_id=seed.version_id,
+                    allocation_id=allocation.id,
+                    trader_id=allocation.trader_id,
+                    target_allocation_usd=Decimal("100.00"),
+                    target_weight_pct=allocation.target_weight_pct,
+                    status="active",
+                )
+            )
+        await db_session.commit()
+
+        payload = json.dumps(
+            {
+                "id": "evt_subscription_deleted",
+                "type": "customer.subscription.deleted",
+                "data": {
+                    "object": {
+                        "id": "sub_cancel",
+                        "customer": "cus_cancel",
+                        "metadata": {
+                            "user_portfolio_subscription_id": str(
+                                portfolio_subscription_id
+                            )
+                        },
+                    }
+                },
+            },
+            separators=(",", ":"),
+        ).encode()
+
+        response = await client.post(
+            "/api/portfolio-subscriptions/billing/webhook",
+            content=payload,
+            headers={"Stripe-Signature": _stripe_signature(payload, "whsec_test")},
+        )
+
+        assert response.status_code == 200
+        db_session.expire_all()
+        saved = await db_session.get(
+            UserPortfolioSubscription, portfolio_subscription_id
+        )
+        assert saved is not None
+        assert saved.status == "canceled"
+        assert saved.canceled_at is not None
+
+        generated_result = await db_session.execute(
+            select(Subscription).where(
+                Subscription.source_id == portfolio_subscription_id,
+                Subscription.source_type == "model_portfolio",
+            )
+        )
+        assert all(
+            subscription.is_active is False
+            for subscription in generated_result.scalars().all()
+        )
+
+        items_result = await db_session.execute(
+            select(UserPortfolioItem).where(
+                UserPortfolioItem.user_portfolio_subscription_id
+                == portfolio_subscription_id
+            )
+        )
+        assert all(item.status == "removed" for item in items_result.scalars().all())

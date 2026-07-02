@@ -74,8 +74,12 @@ export function TradersPage() {
   useEffect(() => {
     Promise.all([listSubscriptions(false), listSubscriptions(true)])
       .then(([real, demo]) => {
-        setRealSubIds(new Set(real.map((s) => s.trader_id)))
-        setDemoSubIds(new Set(demo.map((s) => s.trader_id)))
+        setRealSubIds(
+          new Set(real.map((s) => s.trader_id).filter((id) => id != null)),
+        )
+        setDemoSubIds(
+          new Set(demo.map((s) => s.trader_id).filter((id) => id != null)),
+        )
       })
       .catch(() => {})
   }, [])

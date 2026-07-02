@@ -1,4 +1,4 @@
-from app.services.portfolio.candidates import apply_candidate_filters
+from app.services.portfolio.candidates import apply_candidate_filters, metrics_from_stat
 from app.services.portfolio.optimizer import optimize_portfolio
 from app.services.portfolio.scoring import score_candidate
 from app.services.portfolio.types import (
@@ -274,3 +274,43 @@ def test_optimizer_rejects_high_correlation_candidate() -> None:
         rejected.trader_id == 2 and rejected.reason_code == "high_correlation"
         for rejected in result.rejected
     )
+
+
+def test_candidate_metrics_load_daily_pnl_snapshot_for_correlation() -> None:
+    class Stat:
+        pnl_usd = None
+        roi_pct = None
+        volume_usd = None
+        win_rate_pct = None
+        max_drawdown_pct = 12.0
+        trade_count = 30
+        avg_trade_duration_hrs = None
+        sharpe_ratio = None
+        sortino_ratio = None
+        profit_factor = None
+        avg_pnl_per_trade = None
+        max_losing_streak = None
+        profitable_days_pct = None
+        avg_trades_per_day = 3.0
+        daily_pnl_std_dev = None
+        long_ratio_pct = None
+        avg_position_size_usd = None
+        fees_paid_usd = None
+        calmar_ratio = None
+        composite_score = 80.0
+        max_drawdown_duration_days = None
+        active_trading_days = 45
+        avg_leverage = 3.0
+        daily_pnl_by_day = {
+            "2026-01-01": "10.5",
+            "2026-01-02": -3,
+            123: 99,
+            "bad": None,
+        }
+
+    metrics = metrics_from_stat(Stat())  # type: ignore[arg-type]
+
+    assert metrics.daily_pnl_by_day == {
+        "2026-01-01": 10.5,
+        "2026-01-02": -3.0,
+    }

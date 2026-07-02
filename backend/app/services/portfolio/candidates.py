@@ -27,6 +27,19 @@ def _float(value: object) -> float | None:
     return float(value) if value is not None else None  # type: ignore[arg-type]
 
 
+def _float_mapping(value: object) -> dict[str, float] | None:
+    if not isinstance(value, dict):
+        return None
+    points: dict[str, float] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            continue
+        numeric = _float(item)
+        if numeric is not None:
+            points[key] = numeric
+    return points or None
+
+
 def metrics_from_stat(stat: TraderStat) -> CandidateMetrics:
     return CandidateMetrics(
         pnl_usd=_float(stat.pnl_usd),
@@ -52,6 +65,7 @@ def metrics_from_stat(stat: TraderStat) -> CandidateMetrics:
         max_drawdown_duration_days=_float(stat.max_drawdown_duration_days),
         active_trading_days=stat.active_trading_days,
         avg_leverage=_float(stat.avg_leverage),
+        daily_pnl_by_day=_float_mapping(stat.daily_pnl_by_day),
     )
 
 

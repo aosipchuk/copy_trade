@@ -10,14 +10,18 @@ from decimal import Decimal
 from urllib.parse import urlencode
 
 import pytest
+from sqlalchemy import select
 
+from app.core.config import settings
 from app.models.portfolio import (
     ModelPortfolio,
     ModelPortfolioAllocation,
     ModelPortfolioVersion,
     PortfolioBacktest,
+    UserPortfolioSubscription,
 )
 from app.models.trader import Trader
+from app.models.user import User
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -94,6 +98,20 @@ async def _seed_published_portfolio(db_session) -> str:
         db_session.add(trader)
         traders.append(trader)
     await db_session.flush()
+    version.summary_json = {
+        **(version.summary_json or {}),
+        "account_size_profiles": [
+            {
+                "tier": "sample",
+                "allocations": [
+                    {
+                        "trader_id": traders[0].id,
+                        "hl_address": traders[0].hl_address,
+                    }
+                ],
+            }
+        ],
+    }
 
     db_session.add_all(
         [
@@ -164,6 +182,62 @@ async def _seed_published_portfolio(db_session) -> str:
     return slug
 
 
+async def _portfolio_version_ids(db_session, slug: str) -> tuple[int, int]:
+    result = await db_session.execute(
+        select(ModelPortfolio.id, ModelPortfolioVersion.id)
+        .join(
+            ModelPortfolioVersion,
+            ModelPortfolioVersion.portfolio_id == ModelPortfolio.id,
+        )
+        .where(
+            ModelPortfolio.slug == slug,
+            ModelPortfolioVersion.status == "published",
+            ModelPortfolioVersion.valid_to.is_(None),
+        )
+    )
+    row = result.one()
+    return int(row[0]), int(row[1])
+
+
+async def _user_id_for_telegram(db_session, telegram_id: int) -> int:
+    result = await db_session.execute(
+        select(User.id).where(User.telegram_id == telegram_id)
+    )
+    return int(result.scalar_one())
+
+
+def _contains_identity(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if (
+                key
+                in {
+                    "trader_id",
+                    "peer_trader_id",
+                    "trader_address",
+                    "trader_display_name",
+                    "trader_name",
+                    "hl_address",
+                }
+                and item is not None
+            ):
+                return True
+            if (
+                key == "trader"
+                and isinstance(item, dict)
+                and any(
+                    item.get(identity_key) is not None
+                    for identity_key in ("id", "address", "display_name")
+                )
+            ):
+                return True
+            if _contains_identity(item):
+                return True
+    if isinstance(value, list):
+        return any(_contains_identity(item) for item in value)
+    return False
+
+
 class TestPortfoliosReadOnly:
     @pytest.mark.asyncio
     async def test_requires_auth(self, client) -> None:
@@ -187,7 +261,7 @@ class TestPortfoliosReadOnly:
         assert portfolio["latest_backtest"]["assumptions_json"]["fees_bps"] == 4.0
 
     @pytest.mark.asyncio
-    async def test_detail_returns_allocations_and_assumptions(
+    async def test_detail_redacts_trader_identities_before_payment(
         self, client, db_session
     ) -> None:
         slug = await _seed_published_portfolio(db_session)
@@ -198,14 +272,53 @@ class TestPortfoliosReadOnly:
         assert response.status_code == 200
         body = response.json()
         assert body["slug"] == slug
+        assert body["trader_details_visible"] is False
         allocations = body["current_version"]["allocations"]
         assert len(allocations) == 2
         assert round(sum(item["target_weight_pct"] for item in allocations), 3) == 100.0
-        assert allocations[0]["trader_address"].startswith("0xpf")
+        assert allocations[0]["trader_id"] is None
+        assert allocations[0]["trader_address"] is None
+        assert allocations[0]["trader_display_name"] is None
         assert allocations[0]["portfolio_score"] is not None
+        assert not _contains_identity(body["current_version"]["summary_json"])
         assert (
             body["backtests"][0]["assumptions_json"]["uses_trade_level_fills"] is False
         )
+
+    @pytest.mark.asyncio
+    async def test_detail_returns_trader_identities_after_payment(
+        self, client, db_session
+    ) -> None:
+        slug = await _seed_published_portfolio(db_session)
+        telegram_id = 90012
+        headers = await _auth_header(client, user_id=telegram_id)
+        user_id = await _user_id_for_telegram(db_session, telegram_id)
+        portfolio_id, version_id = await _portfolio_version_ids(db_session, slug)
+        db_session.add(
+            UserPortfolioSubscription(
+                user_id=user_id,
+                portfolio_id=portfolio_id,
+                active_version_id=version_id,
+                status="active",
+                is_demo=False,
+                auto_rebalance=False,
+                total_allocation_usd=Decimal("1000.00"),
+                close_removed_positions=False,
+                billing_provider="stripe",
+                billing_subscription_id="sub_paid_portfolio_detail",
+            )
+        )
+        await db_session.commit()
+
+        response = await client.get(f"/api/portfolios/{slug}", headers=headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["trader_details_visible"] is True
+        allocation = body["current_version"]["allocations"][0]
+        assert allocation["trader_id"] is not None
+        assert allocation["trader_address"].startswith("0xpf")
+        assert allocation["trader_display_name"].startswith("Portfolio Trader")
 
     @pytest.mark.asyncio
     async def test_backtests_endpoint_returns_current_published_backtests(
@@ -241,6 +354,11 @@ class TestPortfoliosReadOnly:
         assert body["generated_by"] == "template"
         assert len(body["allocations"]) == 2
         first = body["allocations"][0]
+        assert body["trader_details_visible"] is False
+        assert first["trader_id"] is None
+        assert first["trader_address"] is None
+        assert first["trader_display_name"] is None
+        assert not _contains_identity(first["source_facts"])
         assert "source_facts" in first
         assert first["explanation"]
         available = set(first["source_facts"]["available_fact_keys"])
@@ -248,11 +366,36 @@ class TestPortfoliosReadOnly:
         assert not any(word in first["explanation"].lower() for word in forbidden)
 
     @pytest.mark.asyncio
-    async def test_weekly_report_generation_persists_source_facts(
+    async def test_weekly_report_generation_rejects_non_override_user(
         self, client, db_session
     ) -> None:
         slug = await _seed_published_portfolio(db_session)
         headers = await _auth_header(client, user_id=90005)
+
+        before = await client.get(
+            f"/api/portfolios/{slug}/weekly-report", headers=headers
+        )
+        assert before.status_code == 200
+        assert before.json() is None
+
+        created = await client.post(
+            f"/api/portfolios/{slug}/weekly-report", headers=headers
+        )
+
+        assert created.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_weekly_report_generation_persists_source_facts_for_override_user(
+        self, client, db_session, monkeypatch
+    ) -> None:
+        user_id = 90006
+        monkeypatch.setattr(
+            settings,
+            "model_portfolio_beta_override_telegram_ids",
+            [user_id],
+        )
+        slug = await _seed_published_portfolio(db_session)
+        headers = await _auth_header(client, user_id=user_id)
 
         before = await client.get(
             f"/api/portfolios/{slug}/weekly-report", headers=headers

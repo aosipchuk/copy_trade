@@ -32,7 +32,7 @@ class SubscriptionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    trader_id: int
+    trader_id: int | None
     trader_address: str | None
     trader_name: str | None
     max_allocation_usd: float

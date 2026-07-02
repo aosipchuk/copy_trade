@@ -58,6 +58,14 @@ function dateText(value: string | null | undefined): string {
   })
 }
 
+function traderIdentityLabel(
+  displayName: string | null | undefined,
+  address: string | null | undefined,
+  fallback: string,
+): string {
+  return displayName ?? (address ? address.slice(0, 10) : fallback)
+}
+
 function sourceText(value: unknown): string {
   if (value === 'daily_snapshot') return 'Daily snapshot'
   if (value === 'aggregate_metric_proxy') return 'Limited data proxy'
@@ -225,6 +233,7 @@ export function PortfolioDetailPage() {
     () => portfolio?.backtests[0] ?? null,
     [portfolio],
   )
+  const canGenerateWeeklyReport = billingStatus?.beta_override ?? false
 
   const explanationByAllocationId = useMemo(() => {
     const map = new Map<number, PortfolioAllocationExplanation>()
@@ -317,6 +326,25 @@ export function PortfolioDetailPage() {
     [portfolio],
   )
 
+  const handleCancelLive = useCallback(async () => {
+    if (!livePortfolioSubscription) return
+    setLiveActivationBusy(true)
+    setLiveActivationError(null)
+    setLiveActivationNotice(null)
+
+    try {
+      await cancelPortfolioSubscription(livePortfolioSubscription.id)
+      setLivePortfolioSubscription(null)
+      setLiveActivationNotice('Live portfolio canceled')
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response
+        ?.data?.detail
+      setLiveActivationError(detail ?? 'Failed to cancel live portfolio')
+    } finally {
+      setLiveActivationBusy(false)
+    }
+  }, [livePortfolioSubscription])
+
   const handleCreateCheckout = useCallback(async () => {
     if (!portfolio) return
     setBillingBusy(true)
@@ -344,7 +372,7 @@ export function PortfolioDetailPage() {
   }, [portfolio])
 
   const handleGenerateWeeklyReport = useCallback(async () => {
-    if (!slug) return
+    if (!slug || !canGenerateWeeklyReport) return
     setReportBusy(true)
     setReportError(null)
     try {
@@ -357,7 +385,7 @@ export function PortfolioDetailPage() {
     } finally {
       setReportBusy(false)
     }
-  }, [slug])
+  }, [canGenerateWeeklyReport, slug])
 
   if (loading) return <FullPageSpinner />
 
@@ -404,6 +432,7 @@ export function PortfolioDetailPage() {
           report={weeklyReport}
           busy={reportBusy}
           error={reportError}
+          canGenerate={canGenerateWeeklyReport}
           onGenerate={handleGenerateWeeklyReport}
         />
         <PortfolioExplanationPanel explanations={explanations} />
@@ -424,6 +453,7 @@ export function PortfolioDetailPage() {
           error={liveActivationError}
           notice={liveActivationNotice}
           onActivate={handleActivateLive}
+          onCancel={handleCancelLive}
           onWalletSetup={() => navigate('/wallet')}
         />
         {livePortfolioSubscription && livePortfolioSubscription.status !== 'canceled' && (
@@ -453,6 +483,7 @@ export function PortfolioDetailPage() {
         <AllocationsList
           allocations={portfolio.current_version.allocations}
           explanations={explanationByAllocationId}
+          traderDetailsVisible={portfolio.trader_details_visible}
         />
         <BacktestPanel backtest={primaryBacktest} />
       </div>
@@ -623,26 +654,30 @@ function WeeklyReportPanel({
   report,
   busy,
   error,
+  canGenerate,
   onGenerate,
 }: {
   report: PortfolioWeeklyReport | null
   busy: boolean
   error: string | null
+  canGenerate: boolean
   onGenerate: () => Promise<void>
 }) {
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-tg-text">Weekly report</h2>
-        <button
-          className="rounded-md border border-tg-button px-2 py-1 text-xs font-semibold text-tg-button disabled:opacity-50"
-          disabled={busy}
-          onClick={() => {
-            void onGenerate()
-          }}
-        >
-          {busy ? 'Generating' : report ? 'Refresh' : 'Generate'}
-        </button>
+        {canGenerate && (
+          <button
+            className="rounded-md border border-tg-button px-2 py-1 text-xs font-semibold text-tg-button disabled:opacity-50"
+            disabled={busy}
+            onClick={() => {
+              void onGenerate()
+            }}
+          >
+            {busy ? 'Generating' : report ? 'Refresh' : 'Generate'}
+          </button>
+        )}
       </div>
 
       <div
@@ -824,6 +859,7 @@ function LiveActivationPanel({
   error,
   notice,
   onActivate,
+  onCancel,
   onWalletSetup,
 }: {
   portfolio: ModelPortfolioDetail
@@ -837,6 +873,7 @@ function LiveActivationPanel({
     totalAllocationUsd: number,
     riskDisclosureAccepted: boolean,
   ) => Promise<void>
+  onCancel: () => Promise<void>
   onWalletSetup: () => void
 }) {
   const defaultAllocation = Math.max(100, Math.round(portfolio.min_equity_usd))
@@ -857,9 +894,13 @@ function LiveActivationPanel({
 
   const previewRows = useMemo(
     () =>
-      portfolio.current_version.allocations.map((allocation) => ({
+      portfolio.current_version.allocations.map((allocation, index) => ({
         id: allocation.id,
-        name: allocation.trader_display_name ?? allocation.trader_address.slice(0, 10),
+        name: traderIdentityLabel(
+          allocation.trader_display_name,
+          allocation.trader_address,
+          `Portfolio trader ${index + 1}`,
+        ),
         address: allocation.trader_address,
         weight: allocation.target_weight_pct,
         allocationUsd: allocationInvalid
@@ -899,16 +940,32 @@ function LiveActivationPanel({
                 {money(portfolioSubscription.total_allocation_usd)} live allocation
               </div>
             </div>
-            <span className="shrink-0 rounded bg-green-500/10 px-2 py-1 text-[10px] font-semibold uppercase text-green-500">
-              live
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="rounded bg-green-500/10 px-2 py-1 text-[10px] font-semibold uppercase text-green-500">
+                live
+              </span>
+              <button
+                className="rounded-md border border-red-400 px-3 py-1.5 text-xs font-semibold text-red-500 disabled:opacity-50"
+                disabled={busy}
+                type="button"
+                onClick={() => {
+                  void onCancel()
+                }}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
 
           <div className="divide-y divide-gray-100 dark:divide-gray-800">
-            {portfolioSubscription.items.map((item) => (
+            {portfolioSubscription.items.map((item, index) => (
               <GeneratedSubscriptionLine
                 key={item.id}
-                name={item.trader_display_name ?? item.trader_address ?? 'Trader'}
+                name={traderIdentityLabel(
+                  item.trader_display_name,
+                  item.trader_address,
+                  `Portfolio trader ${index + 1}`,
+                )}
                 address={item.trader_address}
                 allocationUsd={item.target_allocation_usd}
                 weight={item.target_weight_pct}
@@ -1048,9 +1105,13 @@ function DemoActivationPanel({
 
   const previewRows = useMemo(
     () =>
-      portfolio.current_version.allocations.map((allocation) => ({
+      portfolio.current_version.allocations.map((allocation, index) => ({
         id: allocation.id,
-        name: allocation.trader_display_name ?? allocation.trader_address.slice(0, 10),
+        name: traderIdentityLabel(
+          allocation.trader_display_name,
+          allocation.trader_address,
+          `Portfolio trader ${index + 1}`,
+        ),
         address: allocation.trader_address,
         weight: allocation.target_weight_pct,
         allocationUsd: allocationInvalid
@@ -1102,10 +1163,14 @@ function DemoActivationPanel({
           </div>
 
           <div className="divide-y divide-gray-100 dark:divide-gray-800">
-            {portfolioSubscription.items.map((item) => (
+            {portfolioSubscription.items.map((item, index) => (
               <GeneratedSubscriptionLine
                 key={item.id}
-                name={item.trader_display_name ?? item.trader_address ?? 'Trader'}
+                name={traderIdentityLabel(
+                  item.trader_display_name,
+                  item.trader_address,
+                  `Portfolio trader ${index + 1}`,
+                )}
                 address={item.trader_address}
                 allocationUsd={item.target_allocation_usd}
                 weight={item.target_weight_pct}
@@ -1513,9 +1578,11 @@ function GeneratedSubscriptionLine({
 function AllocationsList({
   allocations,
   explanations,
+  traderDetailsVisible,
 }: {
   allocations: ModelPortfolioAllocation[]
   explanations: Map<number, PortfolioAllocationExplanation>
+  traderDetailsVisible: boolean
 }) {
   return (
     <section>
@@ -1523,11 +1590,20 @@ function AllocationsList({
         <h2 className="text-sm font-semibold text-tg-text">Allocation</h2>
         <span className="text-xs text-tg-hint">{allocations.length} traders</span>
       </div>
+      {!traderDetailsVisible && (
+        <div
+          className="mb-2 rounded-lg px-3 py-2 text-xs leading-snug text-tg-hint"
+          style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+        >
+          Trader identities are hidden until live billing is active.
+        </div>
+      )}
       <div className="space-y-2">
-        {allocations.map((allocation) => (
+        {allocations.map((allocation, index) => (
           <AllocationRow
             key={allocation.id}
             allocation={allocation}
+            fallbackName={`Portfolio trader ${index + 1}`}
             explanation={explanations.get(allocation.id)}
           />
         ))}
@@ -1538,9 +1614,11 @@ function AllocationsList({
 
 function AllocationRow({
   allocation,
+  fallbackName,
   explanation,
 }: {
   allocation: ModelPortfolioAllocation
+  fallbackName: string
   explanation?: PortfolioAllocationExplanation
 }) {
   const metrics = allocation.source_metrics
@@ -1556,11 +1634,21 @@ function AllocationRow({
       <div className="mb-2 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-tg-text">
-            {allocation.trader_display_name ?? allocation.trader_address.slice(0, 10)}
+            {traderIdentityLabel(
+              allocation.trader_display_name,
+              allocation.trader_address,
+              fallbackName,
+            )}
           </div>
-          <div className="truncate font-mono text-[10px] text-tg-hint">
-            {allocation.trader_address}
-          </div>
+          {allocation.trader_address ? (
+            <div className="truncate font-mono text-[10px] text-tg-hint">
+              {allocation.trader_address}
+            </div>
+          ) : (
+            <div className="truncate text-[10px] text-tg-hint">
+              Identity locked
+            </div>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <div className="text-sm font-semibold text-tg-text">

@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -32,6 +32,10 @@ from app.schemas.portfolio import (
 from app.schemas.subscription import SubscriptionCreate
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import MarginSummary
+from app.services.portfolio.access import (
+    redact_trader_identity_payload,
+    user_can_view_portfolio_trader_identities,
+)
 from app.services.portfolio.activation import (
     detect_manual_live_conflicts,
     get_user_portfolio_subscription,
@@ -400,6 +404,102 @@ def _merge_source_facts(*items: JsonDict) -> JsonDict:
     return merged
 
 
+def _pct_text(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        return f"{_float(value):.3f}%"
+    except (TypeError, ValueError):
+        return None
+
+
+def _redacted_rebalance_message(data: Mapping[str, Any]) -> str:
+    action = data.get("action")
+    if action == "add_trader":
+        to_weight = _pct_text(data.get("to_weight_pct"))
+        if to_weight is None:
+            return "Add a portfolio trader to the managed portfolio."
+        return f"Add a portfolio trader at {to_weight} target weight."
+    if action == "remove_trader":
+        return "Remove a portfolio trader from the managed portfolio."
+    if action == "change_weight":
+        from_weight = _pct_text(data.get("from_weight_pct"))
+        to_weight = _pct_text(data.get("to_weight_pct"))
+        if from_weight is None or to_weight is None:
+            return "Change a portfolio trader target weight."
+        return (
+            "Change a portfolio trader target weight from "
+            f"{from_weight} to {to_weight}."
+        )
+    if action == "change_risk_settings":
+        changed_fields = data.get("changed_fields")
+        changed = (
+            ", ".join(str(item) for item in changed_fields)
+            if isinstance(changed_fields, list)
+            else ""
+        )
+        return "Update a portfolio trader risk settings" + (
+            f": {changed}." if changed else "."
+        )
+    if action == "blocked_by_user_conflict":
+        return "Manual live subscription conflict blocks adding a portfolio trader."
+    return str(data.get("message") or "This rebalance item affects the portfolio.")
+
+
+def _redact_rebalance_diff_payload(data: Mapping[str, Any]) -> JsonDict:
+    redacted = redact_trader_identity_payload(data)
+    payload: JsonDict = dict(redacted if isinstance(redacted, Mapping) else data)
+    payload["trader_id"] = None
+    payload["trader_address"] = None
+    payload["trader_display_name"] = None
+    payload["message"] = _redacted_rebalance_message(payload)
+    source_facts = payload.get("source_facts")
+    payload["source_facts"] = source_facts if isinstance(source_facts, dict) else None
+    return payload
+
+
+def _redact_rebalance_diff_item(
+    item: PortfolioRebalanceDiffItem,
+) -> PortfolioRebalanceDiffItem:
+    return PortfolioRebalanceDiffItem(
+        **_redact_rebalance_diff_payload(item.model_dump())
+    )
+
+
+def _redact_rebalance_response(
+    response: PortfolioRebalancePreviewResponse,
+) -> PortfolioRebalancePreviewResponse:
+    payload = response.model_dump()
+    payload["diff"] = [_redact_rebalance_diff_item(item) for item in response.diff]
+    return PortfolioRebalancePreviewResponse(**payload)
+
+
+def _redact_rebalance_event_diff(value: object) -> JsonDict | None:
+    if not isinstance(value, Mapping):
+        return None
+    payload: JsonDict = dict(value)
+    raw_diff = payload.get("diff")
+    if isinstance(raw_diff, list):
+        payload["diff"] = [
+            _redact_rebalance_diff_payload(item) if isinstance(item, Mapping) else item
+            for item in raw_diff
+        ]
+    redacted = redact_trader_identity_payload(payload)
+    return dict(redacted) if isinstance(redacted, Mapping) else None
+
+
+async def _can_view_rebalance_trader_identity(
+    db: AsyncSession,
+    ctx: RebalanceContext,
+) -> bool:
+    return await user_can_view_portfolio_trader_identities(
+        db,
+        ctx.user.id,
+        ctx.portfolio.id,
+        ctx.portfolio_subscription.active_version_id,
+    )
+
+
 def _risk_setting_changes(
     item: ManagedPortfolioItem,
     allocation: ModelPortfolioAllocation,
@@ -693,7 +793,7 @@ async def preview_user_portfolio_rebalance(
         if blocker_message is not None
         else "pending" if has_action else "up_to_date"
     )
-    return PortfolioRebalancePreviewResponse(
+    response = PortfolioRebalancePreviewResponse(
         user_portfolio_subscription_id=ctx.portfolio_subscription.id,
         portfolio_id=ctx.portfolio.id,
         portfolio_slug=ctx.portfolio.slug,
@@ -711,6 +811,9 @@ async def preview_user_portfolio_rebalance(
         diff=diff,
         blocker=blocker_message,
     )
+    if await _can_view_rebalance_trader_identity(db, ctx):
+        return response
+    return _redact_rebalance_response(response)
 
 
 async def update_user_portfolio_subscription_settings(
@@ -786,8 +889,17 @@ async def _load_latest_completed_event_for_target(
     return result.scalar_one_or_none()
 
 
-def _event_response(event: PortfolioRebalanceEvent) -> PortfolioRebalanceEventResponse:
-    return PortfolioRebalanceEventResponse.model_validate(event)
+def _event_response(
+    event: PortfolioRebalanceEvent,
+    *,
+    include_trader_identity: bool = True,
+) -> PortfolioRebalanceEventResponse:
+    response = PortfolioRebalanceEventResponse.model_validate(event)
+    if include_trader_identity:
+        return response
+    payload = response.model_dump()
+    payload["diff_json"] = _redact_rebalance_event_diff(response.diff_json)
+    return PortfolioRebalanceEventResponse(**payload)
 
 
 async def _validate_live_target_risk(
@@ -1005,7 +1117,10 @@ async def apply_user_portfolio_rebalance(
         )
         return PortfolioRebalanceApplyResponse(
             **preview.model_dump(),
-            event=_event_response(event),
+            event=_event_response(
+                event,
+                include_trader_identity=detail.trader_details_visible,
+            ),
             portfolio_subscription=detail,
         )
     if event is not None and event.status == "skipped" and not preview.can_apply:
@@ -1014,7 +1129,10 @@ async def apply_user_portfolio_rebalance(
         )
         return PortfolioRebalanceApplyResponse(
             **preview.model_dump(),
-            event=_event_response(event),
+            event=_event_response(
+                event,
+                include_trader_identity=detail.trader_details_visible,
+            ),
             portfolio_subscription=detail,
         )
 
@@ -1048,7 +1166,10 @@ async def apply_user_portfolio_rebalance(
         )
         return PortfolioRebalanceApplyResponse(
             **preview.model_dump(),
-            event=_event_response(event),
+            event=_event_response(
+                event,
+                include_trader_identity=detail.trader_details_visible,
+            ),
             portfolio_subscription=detail,
         )
 
@@ -1083,7 +1204,10 @@ async def apply_user_portfolio_rebalance(
     )
     return PortfolioRebalanceApplyResponse(
         **preview.model_dump(),
-        event=_event_response(event),
+        event=_event_response(
+            event,
+            include_trader_identity=detail.trader_details_visible,
+        ),
         portfolio_subscription=detail,
     )
 
@@ -1096,13 +1220,20 @@ async def list_user_portfolio_rebalance_events(
     limit: int = 20,
 ) -> list[PortfolioRebalanceEventResponse]:
     result = await db.execute(
-        select(UserPortfolioSubscription.id).where(
+        select(UserPortfolioSubscription).where(
             UserPortfolioSubscription.id == user_portfolio_subscription_id,
             UserPortfolioSubscription.user_id == user_id,
         )
     )
-    if result.scalar_one_or_none() is None:
+    portfolio_subscription = result.scalar_one_or_none()
+    if portfolio_subscription is None:
         raise LookupError("Portfolio subscription not found.")
+    include_trader_identity = await user_can_view_portfolio_trader_identities(
+        db,
+        user_id,
+        portfolio_subscription.portfolio_id,
+        portfolio_subscription.active_version_id,
+    )
 
     event_result = await db.execute(
         select(PortfolioRebalanceEvent)
@@ -1116,4 +1247,7 @@ async def list_user_portfolio_rebalance_events(
         )
         .limit(limit)
     )
-    return [_event_response(event) for event in event_result.scalars().all()]
+    return [
+        _event_response(event, include_trader_identity=include_trader_identity)
+        for event in event_result.scalars().all()
+    ]

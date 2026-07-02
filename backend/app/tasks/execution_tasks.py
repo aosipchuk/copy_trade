@@ -20,35 +20,35 @@ logger = get_logger(__name__)
     retry=retry_if_not_exception_type(NonRetryableError),
     reraise=True,
 )
-async def execute_copy_trade_async(signal_id: int, user_id: int) -> None:
-    """Execute a copy trade for a specific user based on a signal."""
+async def execute_copy_trade_async(signal_id: int, subscription_id: int) -> None:
+    """Execute a copy trade for a specific subscription based on a signal."""
     from app.services.copy_engine.executor import execute_copy_trade as _exec
 
     try:
-        await _exec(signal_id, user_id)
+        await _exec(signal_id, subscription_id)
     except NonRetryableError as exc:
         logger.warning(
             "copy_trade_non_retryable",
             signal_id=signal_id,
-            user_id=user_id,
+            subscription_id=subscription_id,
             reason=str(exc),
         )
         raise
 
 
-async def simulate_demo_trade_async(signal_id: int, user_id: int) -> None:
+async def simulate_demo_trade_async(signal_id: int, subscription_id: int) -> None:
     """Paper-trade simulation for a demo subscription."""
     try:
         from app.services.copy_engine.demo_executor import (
             simulate_demo_trade as _sim,
         )
 
-        await _sim(signal_id, user_id)
+        await _sim(signal_id, subscription_id)
     except Exception as exc:
         logger.error(
             "simulate_demo_trade_failed",
             signal_id=signal_id,
-            user_id=user_id,
+            subscription_id=subscription_id,
             error=str(exc),
         )
 

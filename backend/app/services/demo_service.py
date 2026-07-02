@@ -16,6 +16,7 @@ from app.schemas.subscription import (
     DemoTradeItem,
 )
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
+from app.services.portfolio.access import user_can_view_subscription_trader_identity
 
 logger = get_logger(__name__)
 
@@ -219,7 +220,14 @@ async def get_demo_portfolio(db: AsyncSession, user_id: int) -> DemoPortfolioRes
             logger.warning("demo_portfolio_mids_fetch_failed", error=str(exc))
 
     sub_map = {s.id: s for s in active_subs}
-    trader_ids = list({s.trader_id for s in active_subs})
+    visible_identity_by_sub_id: dict[int, bool] = {}
+    for sub in active_subs:
+        visible_identity_by_sub_id[sub.id] = (
+            await user_can_view_subscription_trader_identity(db, user_id, sub)
+        )
+    trader_ids = list(
+        {s.trader_id for s in active_subs if visible_identity_by_sub_id.get(s.id)}
+    )
     trader_name_by_id: dict[int, str | None] = {}
     if trader_ids:
         trader_result = await db.execute(
@@ -240,8 +248,12 @@ async def get_demo_portfolio(db: AsyncSession, user_id: int) -> DemoPortfolioRes
         unrealized_pnl = (current_price - entry_price) * size * direction
         total_unrealized_pnl += unrealized_pnl
 
-        sub = sub_map.get(sub_id)
-        trader_name = trader_name_by_id.get(sub.trader_id) if sub else None
+        subscription = sub_map.get(sub_id)
+        trader_name = (
+            trader_name_by_id.get(subscription.trader_id)
+            if subscription and visible_identity_by_sub_id.get(subscription.id)
+            else None
+        )
 
         open_positions.append(
             DemoOpenPosition(

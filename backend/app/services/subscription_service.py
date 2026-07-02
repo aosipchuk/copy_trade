@@ -16,6 +16,7 @@ from app.schemas.subscription import (
 )
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import MarginSummary
+from app.services.portfolio.access import user_can_view_subscription_trader_identity
 from app.services.risk_manager import check_portfolio_risk
 
 logger = get_logger(__name__)
@@ -75,6 +76,8 @@ async def _to_response(
     db: AsyncSession,
     sub: Subscription,
     mids: dict[str, str] | None = None,
+    *,
+    include_trader_identity: bool = True,
 ) -> SubscriptionResponse:
     if sub.is_demo:
         pnl_result = await db.execute(
@@ -113,9 +116,11 @@ async def _to_response(
 
     return SubscriptionResponse(
         id=sub.id,
-        trader_id=sub.trader_id,
-        trader_address=trader_row[0] if trader_row else None,
-        trader_name=trader_row[1] if trader_row else None,
+        trader_id=sub.trader_id if include_trader_identity else None,
+        trader_address=(
+            trader_row[0] if trader_row and include_trader_identity else None
+        ),
+        trader_name=trader_row[1] if trader_row and include_trader_identity else None,
         max_allocation_usd=float(sub.max_allocation_usd),
         copy_ratio_pct=float(sub.copy_ratio_pct),
         stop_loss_pct=float(sub.stop_loss_pct),
@@ -225,7 +230,22 @@ async def list_subscriptions(
         except Exception as exc:
             logger.warning("demo_mids_fetch_failed", error=str(exc))
 
-    return [await _to_response(db, s, mids) for s in subs]
+    responses: list[SubscriptionResponse] = []
+    for sub in subs:
+        include_trader_identity = await user_can_view_subscription_trader_identity(
+            db,
+            user_id,
+            sub,
+        )
+        responses.append(
+            await _to_response(
+                db,
+                sub,
+                mids,
+                include_trader_identity=include_trader_identity,
+            )
+        )
+    return responses
 
 
 async def update_subscription(
@@ -248,7 +268,15 @@ async def update_subscription(
     if "allowed_coins" in data.model_fields_set:
         sub.allowed_coins = data.allowed_coins
 
-    return await _to_response(db, sub)
+    return await _to_response(
+        db,
+        sub,
+        include_trader_identity=await user_can_view_subscription_trader_identity(
+            db,
+            user_id,
+            sub,
+        ),
+    )
 
 
 async def delete_subscription(

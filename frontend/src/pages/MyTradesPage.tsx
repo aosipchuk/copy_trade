@@ -425,7 +425,7 @@ function DemoSubscriptionCard({
   const addr = sub.trader_address
   const shortAddr = addr
     ? `${addr.slice(0, 6)}…${addr.slice(-4)}`
-    : sub.trader_name ?? `Trader #${sub.trader_id}`
+    : sub.trader_name ?? (sub.trader_id == null ? 'Portfolio trader' : `Trader #${sub.trader_id}`)
 
   const unrealizedPnl = openPositions.reduce((acc, p) => acc + p.unrealized_pnl, 0)
   const totalPnl = sub.realized_pnl + unrealizedPnl
@@ -586,7 +586,7 @@ function SubscriptionCard({
   const addr = sub.trader_address
   const shortAddr = addr
     ? `${addr.slice(0, 6)}…${addr.slice(-4)}`
-    : sub.trader_name ?? `Trader #${sub.trader_id}`
+    : sub.trader_name ?? (sub.trader_id == null ? 'Portfolio trader' : `Trader #${sub.trader_id}`)
 
   const totalPnl = sub.realized_pnl + unrealizedPnl
 

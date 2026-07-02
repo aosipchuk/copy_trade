@@ -1,6 +1,8 @@
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, Numeric, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -62,6 +64,8 @@ class TraderStat(Base):
     profitable_days_pct: Mapped[float | None] = mapped_column(Numeric(5, 2))
     avg_trades_per_day: Mapped[float | None] = mapped_column(Numeric(8, 4))
     daily_pnl_std_dev: Mapped[float | None] = mapped_column(Numeric(20, 4))
+    daily_pnl_by_day: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    daily_returns_pct_by_day: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     long_ratio_pct: Mapped[float | None] = mapped_column(Numeric(5, 2))
     avg_position_size_usd: Mapped[float | None] = mapped_column(Numeric(20, 2))
     fees_paid_usd: Mapped[float | None] = mapped_column(Numeric(20, 4))

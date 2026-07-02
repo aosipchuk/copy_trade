@@ -30,9 +30,14 @@ from app.schemas.portfolio import (
 from app.schemas.subscription import SubscriptionCreate
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import MarginSummary
+from app.services.portfolio.access import user_can_view_portfolio_trader_identities
 from app.services.portfolio.billing import (
     require_live_portfolio_billing,
     user_has_beta_override,
+)
+from app.services.portfolio.subscription_lifecycle import (
+    deactivate_portfolio_owned_subscriptions,
+    lock_user_portfolio_subscription_slot,
 )
 from app.services.subscription_service import (
     _to_response as subscription_to_response,
@@ -282,6 +287,12 @@ async def _load_detail(
         raise LookupError("Portfolio subscription not found.")
 
     portfolio_subscription, portfolio, version = row
+    include_trader_identity = await user_can_view_portfolio_trader_identities(
+        db,
+        user_id,
+        portfolio.id,
+        version.id,
+    )
     item_result = await db.execute(
         select(UserPortfolioItem, Subscription, Trader)
         .join(Subscription, Subscription.id == UserPortfolioItem.subscription_id)
@@ -295,12 +306,20 @@ async def _load_detail(
 
     items: list[UserPortfolioItemDetailResponse] = []
     for item, subscription, trader in item_result.all():
+        item_payload = UserPortfolioItemResponse.model_validate(item).model_dump()
+        item_payload["trader_id"] = item.trader_id if include_trader_identity else None
         items.append(
             UserPortfolioItemDetailResponse(
-                **UserPortfolioItemResponse.model_validate(item).model_dump(),
-                subscription=await subscription_to_response(db, subscription),
-                trader_address=trader.hl_address,
-                trader_display_name=trader.display_name,
+                **item_payload,
+                subscription=await subscription_to_response(
+                    db,
+                    subscription,
+                    include_trader_identity=include_trader_identity,
+                ),
+                trader_address=trader.hl_address if include_trader_identity else None,
+                trader_display_name=(
+                    trader.display_name if include_trader_identity else None
+                ),
             )
         )
 
@@ -311,6 +330,7 @@ async def _load_detail(
         portfolio_slug=portfolio.slug,
         portfolio_name=portfolio.name,
         active_version_no=version.version_no,
+        trader_details_visible=include_trader_identity,
         items=items,
     )
 
@@ -450,6 +470,13 @@ async def activate_user_portfolio_subscription(
                 "activation."
             )
 
+        await lock_user_portfolio_subscription_slot(
+            db,
+            user_id=user_id,
+            portfolio_id=portfolio.id,
+            active_version_id=version.id,
+            is_demo=False,
+        )
         existing_live = await _find_existing_live(db, user_id, portfolio.id, version.id)
         if existing_live is not None and await _active_item_count(db, existing_live.id):
             return PortfolioActivationResult(
@@ -556,6 +583,13 @@ async def activate_user_portfolio_subscription(
             conflicts=[],
         )
 
+    await lock_user_portfolio_subscription_slot(
+        db,
+        user_id=user_id,
+        portfolio_id=portfolio.id,
+        active_version_id=version.id,
+        is_demo=True,
+    )
     existing = await _find_existing_active_demo(db, user_id, portfolio.id, version.id)
     if existing is not None:
         return PortfolioActivationResult(
@@ -639,45 +673,26 @@ async def cancel_user_portfolio_subscription(
     portfolio_subscription = result.scalar_one_or_none()
     if portfolio_subscription is None:
         raise LookupError("Portfolio subscription not found.")
-    if not portfolio_subscription.is_demo:
-        raise ValueError("Only demo portfolio subscriptions can be canceled here.")
     if portfolio_subscription.status == "canceled":
         return await _load_detail(db, user_id, portfolio_subscription.id)
 
     now = _now()
     portfolio_subscription.status = "canceled"
     portfolio_subscription.canceled_at = now
-
-    items_result = await db.execute(
-        select(UserPortfolioItem).where(
-            UserPortfolioItem.user_portfolio_subscription_id
-            == portfolio_subscription.id
-        )
+    disabled_subscription_count = await deactivate_portfolio_owned_subscriptions(
+        db,
+        portfolio_subscription,
+        close_positions=(
+            not portfolio_subscription.is_demo
+            and portfolio_subscription.close_removed_positions
+        ),
     )
-    items = list(items_result.scalars().all())
-    subscription_ids = [item.subscription_id for item in items]
-    for item in items:
-        item.status = "removed"
-        item.removed_at = now
-
-    if subscription_ids:
-        subscription_result = await db.execute(
-            select(Subscription).where(
-                Subscription.id.in_(subscription_ids),
-                Subscription.user_id == user_id,
-                Subscription.source_type == "model_portfolio",
-                Subscription.source_id == portfolio_subscription.id,
-                Subscription.managed_by_portfolio.is_(True),
-            )
-        )
-        for subscription in subscription_result.scalars().all():
-            subscription.is_active = False
 
     await db.flush()
     logger.info(
         "portfolio_subscription_canceled",
         user_id=user_id,
         portfolio_subscription_id=portfolio_subscription.id,
-        disabled_subscription_count=len(subscription_ids),
+        disabled_subscription_count=disabled_subscription_count,
     )
     return await _load_detail(db, user_id, portfolio_subscription.id)

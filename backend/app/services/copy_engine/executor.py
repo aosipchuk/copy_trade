@@ -26,19 +26,22 @@ from app.services.notifications.telegram import (
     format_trade_filled,
     send_trade_notification,
 )
+from app.services.portfolio.subscription_lifecycle import (
+    subscription_execution_allowed_clause,
+)
 from app.services.risk_manager import check_subscription_stop_loss
 from app.services.wallet.agent_manager import decrypt_agent_key
 
 logger = get_logger(__name__)
 
 
-def _dedup_key(signal_id: int, user_id: int) -> str:
-    return f"copy:dedup:{signal_id}:{user_id}"
+def _dedup_key(signal_id: int, subscription_id: int) -> str:
+    return f"copy:dedup:{signal_id}:sub:{subscription_id}"
 
 
-def _is_dedup(signal_id: int, user_id: int) -> bool:
+def _is_dedup(signal_id: int, subscription_id: int) -> bool:
     r = get_redis_client()
-    key = _dedup_key(signal_id, user_id)
+    key = _dedup_key(signal_id, subscription_id)
     if r.exists(key):
         return True
     r.setex(key, DEDUP_TTL_SECONDS, "1")
@@ -64,20 +67,27 @@ async def _resolve_asset_index(coin: str) -> int | None:
     return meta.asset_index(coin)
 
 
-async def execute_copy_trade(signal_id: int, user_id: int) -> None:
+async def execute_copy_trade(signal_id: int, subscription_id: int) -> None:
     """
-    Full copy-trade execution pipeline for one signal + one user.
+    Full copy-trade execution pipeline for one signal + one subscription.
     Pre-checks → build order → place on HL → record UserTrade.
     """
-    if _is_dedup(signal_id, user_id):
-        logger.info("copy_trade_dedup_skip", signal_id=signal_id, user_id=user_id)
+    if _is_dedup(signal_id, subscription_id):
+        logger.info(
+            "copy_trade_dedup_skip",
+            signal_id=signal_id,
+            subscription_id=subscription_id,
+        )
         return
 
     async with get_db_session() as db:
-        signal, subscription, agent, user = await _load_context(db, signal_id, user_id)
+        signal, subscription, agent, user = await _load_context(
+            db, signal_id, subscription_id
+        )
         if signal is None or subscription is None or agent is None or user is None:
             return
 
+        user_id = user.id
         telegram_id = user.telegram_id
         coin = signal.coin
 
@@ -263,7 +273,7 @@ async def execute_copy_trade(signal_id: int, user_id: int) -> None:
 
 
 async def _load_context(
-    db: AsyncSession, signal_id: int, user_id: int
+    db: AsyncSession, signal_id: int, subscription_id: int
 ) -> tuple[Signal | None, Subscription | None, UserAgent | None, User | None]:
     signal_res = await db.execute(select(Signal).where(Signal.id == signal_id))
     signal = signal_res.scalar_one_or_none()
@@ -273,32 +283,35 @@ async def _load_context(
 
     sub_res = await db.execute(
         select(Subscription).where(
+            Subscription.id == subscription_id,
             Subscription.trader_id == signal.trader_id,
-            Subscription.user_id == user_id,
             Subscription.is_active == True,  # noqa: E712
             Subscription.is_demo == False,  # noqa: E712
+            subscription_execution_allowed_clause(),
         )
     )
     subscription = sub_res.scalar_one_or_none()
     if subscription is None:
         logger.debug(
-            "executor_no_active_subscription", user_id=user_id, signal_id=signal_id
+            "executor_no_active_subscription",
+            subscription_id=subscription_id,
+            signal_id=signal_id,
         )  # noqa: E501
         return None, None, None, None
 
     agent_res = await db.execute(
         select(UserAgent).where(
-            UserAgent.user_id == user_id,
+            UserAgent.user_id == subscription.user_id,
             UserAgent.is_active == True,  # noqa: E712
             UserAgent.approved_at.is_not(None),
         )
     )
     agent = agent_res.scalar_one_or_none()
     if agent is None:
-        logger.info("executor_no_active_agent", user_id=user_id)
+        logger.info("executor_no_active_agent", user_id=subscription.user_id)
         return None, None, None, None
 
-    user_res = await db.execute(select(User).where(User.id == user_id))
+    user_res = await db.execute(select(User).where(User.id == subscription.user_id))
     user = user_res.scalar_one_or_none()
     return signal, subscription, agent, user
 

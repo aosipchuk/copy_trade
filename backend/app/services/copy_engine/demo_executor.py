@@ -13,27 +13,34 @@ from app.models.trade import UserTrade
 from app.services.copy_engine.order_builder import signal_to_order
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import Meta
+from app.services.portfolio.subscription_lifecycle import (
+    subscription_execution_allowed_clause,
+)
 
 logger = get_logger(__name__)
 
 DEMO_DEDUP_TTL: int = 3600
 
 
-def _demo_dedup_key(signal_id: int, user_id: int) -> str:
-    return f"demo:dedup:{signal_id}:{user_id}"
+def _demo_dedup_key(signal_id: int, subscription_id: int) -> str:
+    return f"demo:dedup:{signal_id}:sub:{subscription_id}"
 
 
-async def simulate_demo_trade(signal_id: int, user_id: int) -> None:
+async def simulate_demo_trade(signal_id: int, subscription_id: int) -> None:
     """Paper-trade simulation: fetch mid price and record a virtual UserTrade."""
     r = get_redis_client()
-    key = _demo_dedup_key(signal_id, user_id)
+    key = _demo_dedup_key(signal_id, subscription_id)
     if r.exists(key):
-        logger.info("demo_trade_dedup_skip", signal_id=signal_id, user_id=user_id)
+        logger.info(
+            "demo_trade_dedup_skip",
+            signal_id=signal_id,
+            subscription_id=subscription_id,
+        )
         return
     r.setex(key, DEMO_DEDUP_TTL, "1")
 
     async with get_db_session() as db:
-        signal, subscription = await _load_demo_context(db, signal_id, user_id)
+        signal, subscription = await _load_demo_context(db, signal_id, subscription_id)
         if signal is None or subscription is None:
             return
 
@@ -53,7 +60,7 @@ async def simulate_demo_trade(signal_id: int, user_id: int) -> None:
 
 
 async def _load_demo_context(
-    db: AsyncSession, signal_id: int, user_id: int
+    db: AsyncSession, signal_id: int, subscription_id: int
 ) -> tuple[Signal | None, Subscription | None]:
     signal_res = await db.execute(select(Signal).where(Signal.id == signal_id))
     signal = signal_res.scalar_one_or_none()
@@ -63,17 +70,18 @@ async def _load_demo_context(
 
     sub_res = await db.execute(
         select(Subscription).where(
+            Subscription.id == subscription_id,
             Subscription.trader_id == signal.trader_id,
-            Subscription.user_id == user_id,
             Subscription.is_active == True,  # noqa: E712
             Subscription.is_demo == True,  # noqa: E712
+            subscription_execution_allowed_clause(),
         )
     )
     subscription = sub_res.scalar_one_or_none()
     if subscription is None:
         logger.debug(
             "demo_executor_no_active_demo_subscription",
-            user_id=user_id,
+            subscription_id=subscription_id,
             signal_id=signal_id,
         )
     return signal, subscription

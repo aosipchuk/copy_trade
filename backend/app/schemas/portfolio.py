@@ -56,7 +56,7 @@ class ModelPortfolioAllocationResponse(BaseModel):
 
     id: int
     version_id: int
-    trader_id: int
+    trader_id: int | None
     target_weight_pct: float = Field(gt=0, le=100)
     copy_ratio_pct: float = Field(gt=0, le=100)
     max_leverage: float
@@ -139,7 +139,7 @@ class UserPortfolioItemResponse(BaseModel):
     subscription_id: int
     portfolio_version_id: int
     allocation_id: int
-    trader_id: int
+    trader_id: int | None
     target_allocation_usd: float
     target_weight_pct: float = Field(gt=0, le=100)
     status: PortfolioItemStatus
@@ -157,6 +157,7 @@ class UserPortfolioSubscriptionDetailResponse(UserPortfolioSubscriptionResponse)
     portfolio_slug: str
     portfolio_name: str
     active_version_no: int
+    trader_details_visible: bool = True
     items: list[UserPortfolioItemDetailResponse] = Field(default_factory=list)
 
 
@@ -255,8 +256,8 @@ class PortfolioBacktestResponse(BaseModel):
 
 class PortfolioAllocationExplanationResponse(BaseModel):
     allocation_id: int
-    trader_id: int
-    trader_address: str
+    trader_id: int | None
+    trader_address: str | None
     trader_display_name: str | None
     generated_by: PortfolioReportGeneratedBy
     prompt_version: str
@@ -274,6 +275,7 @@ class PortfolioExplanationResponse(BaseModel):
     generated_at: datetime
     generated_by: PortfolioReportGeneratedBy
     prompt_version: str
+    trader_details_visible: bool = True
     summary: str
     source_facts: JsonDict
     allocations: list[PortfolioAllocationExplanationResponse] = Field(
@@ -288,8 +290,8 @@ class PortfolioReportSection(BaseModel):
 
 class PortfolioReportAllocationNote(BaseModel):
     allocation_id: int
-    trader_id: int
-    trader_address: str
+    trader_id: int | None
+    trader_address: str | None
     trader_display_name: str | None
     note: str
 
@@ -306,6 +308,7 @@ class PortfolioWeeklyReportResponse(BaseModel):
     period_end: datetime
     generated_by: PortfolioReportGeneratedBy
     prompt_version: str
+    trader_details_visible: bool = True
     source_facts: JsonDict
     report_json: JsonDict
     summary: str
@@ -349,7 +352,8 @@ class ModelPortfolioListItemResponse(ModelPortfolioResponse):
 
 
 class ModelPortfolioAllocationDetailResponse(ModelPortfolioAllocationResponse):
-    trader_address: str
+    trader_id: int | None
+    trader_address: str | None
     trader_display_name: str | None
     portfolio_score: float | None
     source_metrics: JsonDict | None
@@ -363,6 +367,7 @@ class ModelPortfolioPublishedVersionDetailResponse(ModelPortfolioVersionResponse
 
 class ModelPortfolioDetailResponse(ModelPortfolioResponse):
     current_version: ModelPortfolioPublishedVersionDetailResponse
+    trader_details_visible: bool = True
     backtests: list[PortfolioBacktestResponse] = Field(default_factory=list)
 
 

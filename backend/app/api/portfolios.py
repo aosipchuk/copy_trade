@@ -26,6 +26,12 @@ from app.schemas.portfolio import (
     PortfolioExplanationResponse,
     PortfolioWeeklyReportResponse,
 )
+from app.services.portfolio.access import (
+    redact_trader_identity_payload,
+    redacted_json_dict,
+    user_can_view_portfolio_trader_identities,
+)
+from app.services.portfolio.billing import user_has_beta_override
 from app.services.portfolio.explanations import (
     build_portfolio_explanations,
     generate_weekly_report,
@@ -54,6 +60,10 @@ def _portfolio_score(allocation: ModelPortfolioAllocation) -> float | None:
     return _optional_float(score_snapshot.get("portfolio_score"))
 
 
+def _public_summary_json(value: object) -> dict[str, Any] | None:
+    return redacted_json_dict(value)
+
+
 def _version_summary(
     version: ModelPortfolioVersion,
 ) -> PortfolioCurrentVersionSummary:
@@ -69,7 +79,7 @@ def _version_summary(
             sum(_float(allocation.target_weight_pct) for allocation in allocations),
             3,
         ),
-        summary_json=version.summary_json,
+        summary_json=_public_summary_json(version.summary_json),
     )
 
 
@@ -206,24 +216,45 @@ async def get_portfolio(
     current_user: CurrentUser,
     db: DBSession,
 ) -> ModelPortfolioDetailResponse:
-    _ = current_user
     portfolio, version = await _published_detail(db, slug)
-    allocations = [
-        ModelPortfolioAllocationDetailResponse(
-            **ModelPortfolioAllocationResponse.model_validate(allocation).model_dump(),
-            trader_address=allocation.trader.hl_address,
-            trader_display_name=allocation.trader.display_name,
-            portfolio_score=_portfolio_score(allocation),
-            source_metrics=_source_metrics(allocation),
+    show_trader_details = await user_can_view_portfolio_trader_identities(
+        db,
+        current_user.id,
+        portfolio.id,
+        version.id,
+    )
+    allocations: list[ModelPortfolioAllocationDetailResponse] = []
+    for allocation in sorted(
+        version.allocations,
+        key=lambda item: _float(item.target_weight_pct),
+        reverse=True,
+    ):
+        payload = ModelPortfolioAllocationResponse.model_validate(
+            allocation
+        ).model_dump()
+        if not show_trader_details:
+            payload["trader_id"] = None
+        allocations.append(
+            ModelPortfolioAllocationDetailResponse(
+                **payload,
+                trader_address=(
+                    allocation.trader.hl_address if show_trader_details else None
+                ),
+                trader_display_name=(
+                    allocation.trader.display_name if show_trader_details else None
+                ),
+                portfolio_score=_portfolio_score(allocation),
+                source_metrics=_source_metrics(allocation),
+            )
         )
-        for allocation in sorted(
-            version.allocations,
-            key=lambda item: _float(item.target_weight_pct),
-            reverse=True,
+
+    version_data = ModelPortfolioVersionResponse.model_validate(version).model_dump()
+    if not show_trader_details:
+        version_data["summary_json"] = redact_trader_identity_payload(
+            version_data.get("summary_json")
         )
-    ]
     version_payload = ModelPortfolioPublishedVersionDetailResponse(
-        **ModelPortfolioVersionResponse.model_validate(version).model_dump(),
+        **version_data,
         allocations=allocations,
     )
     backtests = sorted(
@@ -239,6 +270,7 @@ async def get_portfolio(
     return ModelPortfolioDetailResponse(
         **ModelPortfolioResponse.model_validate(portfolio).model_dump(),
         current_version=version_payload,
+        trader_details_visible=show_trader_details,
         backtests=[
             PortfolioBacktestResponse.model_validate(backtest) for backtest in backtests
         ],
@@ -274,9 +306,18 @@ async def get_portfolio_explanations(
     current_user: CurrentUser,
     db: DBSession,
 ) -> PortfolioExplanationResponse:
-    _ = current_user
     try:
-        return await build_portfolio_explanations(db, slug)
+        portfolio, version = await _published_detail(db, slug)
+        return await build_portfolio_explanations(
+            db,
+            slug,
+            include_trader_identities=await user_can_view_portfolio_trader_identities(
+                db,
+                current_user.id,
+                portfolio.id,
+                version.id,
+            ),
+        )
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -293,9 +334,18 @@ async def get_portfolio_weekly_report(
     current_user: CurrentUser,
     db: DBSession,
 ) -> PortfolioWeeklyReportResponse | None:
-    _ = current_user
     try:
-        return await get_latest_weekly_report(db, slug)
+        portfolio, version = await _published_detail(db, slug)
+        return await get_latest_weekly_report(
+            db,
+            slug,
+            include_trader_identities=await user_can_view_portfolio_trader_identities(
+                db,
+                current_user.id,
+                portfolio.id,
+                version.id,
+            ),
+        )
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -309,7 +359,11 @@ async def create_portfolio_weekly_report(
     current_user: CurrentUser,
     db: DBSession,
 ) -> PortfolioWeeklyReportResponse:
-    _ = current_user
+    if not user_has_beta_override(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Manual weekly report generation is restricted.",
+        )
     try:
         return await generate_weekly_report(db, slug)
     except LookupError as exc:
