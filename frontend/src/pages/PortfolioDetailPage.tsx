@@ -2,15 +2,18 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   activateDemoPortfolio,
+  activateLivePortfolio,
   cancelPortfolioSubscription,
   createPortfolioBillingCheckout,
   fetchPortfolio,
   fetchPortfolioBillingStatus,
   fetchPortfolioSubscriptions,
 } from '../api/portfolios'
+import { fetchAgentStatus } from '../api/wallet'
 import { FullPageSpinner } from '../components/LoadingSpinner'
 import { useBackButton } from '../hooks/useTelegram'
 import type {
+  AgentStatus,
   ModelPortfolioAllocation,
   ModelPortfolioDetail,
   PortfolioBillingStatus,
@@ -63,14 +66,20 @@ export function PortfolioDetailPage() {
   const [portfolio, setPortfolio] = useState<ModelPortfolioDetail | null>(null)
   const [portfolioSubscription, setPortfolioSubscription] =
     useState<UserPortfolioSubscriptionDetail | null>(null)
+  const [livePortfolioSubscription, setLivePortfolioSubscription] =
+    useState<UserPortfolioSubscriptionDetail | null>(null)
   const [billingStatus, setBillingStatus] = useState<PortfolioBillingStatus | null>(
     null,
   )
+  const [walletStatus, setWalletStatus] = useState<AgentStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activationBusy, setActivationBusy] = useState(false)
   const [activationError, setActivationError] = useState<string | null>(null)
   const [activationNotice, setActivationNotice] = useState<string | null>(null)
+  const [liveActivationBusy, setLiveActivationBusy] = useState(false)
+  const [liveActivationError, setLiveActivationError] = useState<string | null>(null)
+  const [liveActivationNotice, setLiveActivationNotice] = useState<string | null>(null)
   const [billingBusy, setBillingBusy] = useState(false)
   const [billingError, setBillingError] = useState<string | null>(null)
   const [billingNotice, setBillingNotice] = useState<string | null>(null)
@@ -86,9 +95,13 @@ export function PortfolioDetailPage() {
     setError(null)
     setPortfolio(null)
     setPortfolioSubscription(null)
+    setLivePortfolioSubscription(null)
     setBillingStatus(null)
+    setWalletStatus(null)
     setActivationError(null)
     setActivationNotice(null)
+    setLiveActivationError(null)
+    setLiveActivationNotice(null)
     setBillingError(null)
     setBillingNotice(null)
     setConflicts([])
@@ -97,9 +110,19 @@ export function PortfolioDetailPage() {
       .then(async (nextPortfolio) => {
         if (canceled) return
         setPortfolio(nextPortfolio)
-        const [subscriptionsResult, billingResult] = await Promise.allSettled([
+        const [
+          subscriptionsResult,
+          liveSubscriptionsResult,
+          billingResult,
+          walletResult,
+        ] = await Promise.allSettled([
           fetchPortfolioSubscriptions({
             is_demo: true,
+            portfolio_id: nextPortfolio.id,
+            active_only: true,
+          }),
+          fetchPortfolioSubscriptions({
+            is_demo: false,
             portfolio_id: nextPortfolio.id,
             active_only: true,
           }),
@@ -107,6 +130,7 @@ export function PortfolioDetailPage() {
             portfolio_id: nextPortfolio.id,
             active_version_id: nextPortfolio.current_version.id,
           }),
+          fetchAgentStatus(),
         ])
         if (canceled) return
 
@@ -115,10 +139,21 @@ export function PortfolioDetailPage() {
         } else {
           setActivationError('Failed to load demo status')
         }
+        if (liveSubscriptionsResult.status === 'fulfilled') {
+          setLivePortfolioSubscription(
+            liveSubscriptionsResult.value.find((item) => item.items.length > 0) ??
+              null,
+          )
+        } else {
+          setLiveActivationError('Failed to load live activation status')
+        }
         if (billingResult.status === 'fulfilled') {
           setBillingStatus(billingResult.value)
         } else {
           setBillingError('Failed to load billing status')
+        }
+        if (walletResult.status === 'fulfilled') {
+          setWalletStatus(walletResult.value)
         }
       })
       .catch((err: unknown) => {
@@ -189,6 +224,38 @@ export function PortfolioDetailPage() {
       setActivationBusy(false)
     }
   }, [portfolioSubscription])
+
+  const handleActivateLive = useCallback(
+    async (totalAllocationUsd: number, riskDisclosureAccepted: boolean) => {
+      if (!portfolio) return
+      setLiveActivationBusy(true)
+      setLiveActivationError(null)
+      setLiveActivationNotice(null)
+
+      try {
+        const result = await activateLivePortfolio({
+          portfolio_id: portfolio.id,
+          active_version_id: portfolio.current_version.id,
+          is_demo: false,
+          auto_rebalance: false,
+          total_allocation_usd: totalAllocationUsd,
+          close_removed_positions: false,
+          risk_disclosure_accepted: riskDisclosureAccepted,
+        })
+        setLivePortfolioSubscription(result)
+        setLiveActivationNotice(
+          result.created ? 'Live portfolio activated' : 'Live portfolio already active',
+        )
+      } catch (err: unknown) {
+        const detail = (err as { response?: { data?: { detail?: string } } })?.response
+          ?.data?.detail
+        setLiveActivationError(detail ?? 'Failed to activate live portfolio')
+      } finally {
+        setLiveActivationBusy(false)
+      }
+    },
+    [portfolio],
+  )
 
   const handleCreateCheckout = useCallback(async () => {
     if (!portfolio) return
@@ -263,6 +330,17 @@ export function PortfolioDetailPage() {
           error={billingError}
           notice={billingNotice}
           onCheckout={handleCreateCheckout}
+        />
+        <LiveActivationPanel
+          portfolio={portfolio}
+          portfolioSubscription={livePortfolioSubscription}
+          billingStatus={billingStatus}
+          walletStatus={walletStatus}
+          busy={liveActivationBusy}
+          error={liveActivationError}
+          notice={liveActivationNotice}
+          onActivate={handleActivateLive}
+          onWalletSetup={() => navigate('/wallet')}
         />
         <DemoActivationPanel
           portfolio={portfolio}
@@ -401,6 +479,207 @@ function BillingPanel({
         {notice && <p className="mt-3 text-xs text-green-500">{notice}</p>}
         {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
       </div>
+    </section>
+  )
+}
+
+function LiveActivationPanel({
+  portfolio,
+  portfolioSubscription,
+  billingStatus,
+  walletStatus,
+  busy,
+  error,
+  notice,
+  onActivate,
+  onWalletSetup,
+}: {
+  portfolio: ModelPortfolioDetail
+  portfolioSubscription: UserPortfolioSubscriptionDetail | null
+  billingStatus: PortfolioBillingStatus | null
+  walletStatus: AgentStatus | null
+  busy: boolean
+  error: string | null
+  notice: string | null
+  onActivate: (
+    totalAllocationUsd: number,
+    riskDisclosureAccepted: boolean,
+  ) => Promise<void>
+  onWalletSetup: () => void
+}) {
+  const defaultAllocation = Math.max(100, Math.round(portfolio.min_equity_usd))
+  const [allocationInput, setAllocationInput] = useState(String(defaultAllocation))
+  const [riskAccepted, setRiskAccepted] = useState(false)
+
+  useEffect(() => {
+    setAllocationInput(String(defaultAllocation))
+    setRiskAccepted(false)
+  }, [defaultAllocation, portfolio.id])
+
+  const allocationUsd = Number(allocationInput)
+  const allocationInvalid =
+    !Number.isFinite(allocationUsd) || allocationUsd <= 10 || allocationUsd > 1_000_000
+  const paid = billingStatus?.can_activate_live ?? false
+  const walletReady = walletStatus?.is_active ?? false
+  const canSubmit = paid && walletReady && riskAccepted && !allocationInvalid && !busy
+
+  const previewRows = useMemo(
+    () =>
+      portfolio.current_version.allocations.map((allocation) => ({
+        id: allocation.id,
+        name: allocation.trader_display_name ?? allocation.trader_address.slice(0, 10),
+        address: allocation.trader_address,
+        weight: allocation.target_weight_pct,
+        allocationUsd: allocationInvalid
+          ? 0
+          : (allocationUsd * allocation.target_weight_pct) / 100,
+      })),
+    [allocationInvalid, allocationUsd, portfolio.current_version.allocations],
+  )
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    if (canSubmit) {
+      void onActivate(allocationUsd, riskAccepted)
+    }
+  }
+
+  if (portfolioSubscription && portfolioSubscription.status !== 'canceled') {
+    return (
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-tg-text">Live activation</h2>
+          <span className="text-xs text-tg-hint">
+            v{portfolioSubscription.active_version_no}
+          </span>
+        </div>
+
+        <div
+          className="rounded-lg px-3 py-3"
+          style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+        >
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-tg-text">
+                {portfolioSubscription.status}
+              </div>
+              <div className="mt-0.5 text-xs text-tg-hint">
+                {money(portfolioSubscription.total_allocation_usd)} live allocation
+              </div>
+            </div>
+            <span className="shrink-0 rounded bg-green-500/10 px-2 py-1 text-[10px] font-semibold uppercase text-green-500">
+              live
+            </span>
+          </div>
+
+          <div className="divide-y divide-gray-100 dark:divide-gray-800">
+            {portfolioSubscription.items.map((item) => (
+              <GeneratedSubscriptionLine
+                key={item.id}
+                name={item.trader_display_name ?? item.trader_address ?? 'Trader'}
+                address={item.trader_address}
+                allocationUsd={item.target_allocation_usd}
+                weight={item.target_weight_pct}
+                status={item.subscription.managed_by_portfolio ? 'Managed' : 'Manual'}
+              />
+            ))}
+          </div>
+
+          {notice && <p className="mt-3 text-xs text-green-500">{notice}</p>}
+          {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-tg-text">Live activation</h2>
+        <span className="text-xs text-tg-hint">
+          {portfolio.current_version.allocations.length} subscriptions
+        </span>
+      </div>
+
+      <form
+        className="rounded-lg px-3 py-3"
+        style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+        onSubmit={handleSubmit}
+      >
+        <div className="mb-3 space-y-1 border-b border-gray-200 pb-3 text-xs text-tg-hint dark:border-gray-700">
+          <Assumption label="Payment" value={paid ? 'active' : 'required'} />
+          <Assumption label="Agent" value={walletReady ? 'ready' : 'setup required'} />
+        </div>
+
+        {!walletReady && (
+          <button
+            className="mb-3 w-full rounded-md border border-tg-button px-3 py-2 text-xs font-semibold text-tg-button"
+            type="button"
+            onClick={onWalletSetup}
+          >
+            Open wallet setup
+          </button>
+        )}
+
+        <label className="block text-xs text-tg-hint" htmlFor="live-allocation">
+          Live allocation
+        </label>
+        <div className="mt-1 flex items-center gap-2">
+          <input
+            id="live-allocation"
+            className="min-w-0 flex-1 rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm font-semibold text-tg-text outline-none focus:border-tg-button dark:border-gray-700"
+            inputMode="decimal"
+            min={11}
+            max={1_000_000}
+            step={1}
+            type="number"
+            value={allocationInput}
+            onChange={(event) => setAllocationInput(event.target.value)}
+          />
+          <button
+            className="shrink-0 rounded-md bg-tg-button px-3 py-2 text-sm font-semibold text-tg-button-text disabled:opacity-50"
+            disabled={!canSubmit}
+            type="submit"
+          >
+            {busy ? 'Starting' : 'Start live'}
+          </button>
+        </div>
+
+        <label className="mt-3 flex items-start gap-2 text-xs leading-snug text-tg-hint">
+          <input
+            className="mt-0.5"
+            checked={riskAccepted}
+            type="checkbox"
+            onChange={(event) => setRiskAccepted(event.target.checked)}
+          />
+          <span>
+            I understand copy trading can lose funds; historical results and
+            backtests do not guarantee future returns, and execution can differ
+            because of fees, slippage, liquidity, minimum order size, and latency.
+          </span>
+        </label>
+
+        <div className="mt-3 divide-y divide-gray-100 dark:divide-gray-800">
+          {previewRows.map((row) => (
+            <GeneratedSubscriptionLine
+              key={row.id}
+              name={row.name}
+              address={row.address}
+              allocationUsd={row.allocationUsd}
+              weight={row.weight}
+              status="Preview"
+            />
+          ))}
+        </div>
+
+        {!paid && (
+          <p className="mt-3 text-xs text-amber-600">
+            Payment must be active before live activation.
+          </p>
+        )}
+        {notice && <p className="mt-3 text-xs text-green-500">{notice}</p>}
+        {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+      </form>
     </section>
   )
 }

@@ -15,6 +15,7 @@ from app.schemas.subscription import (
     SubscriptionUpdate,
 )
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
+from app.services.hyperliquid.models import MarginSummary
 from app.services.risk_manager import check_portfolio_risk
 
 logger = get_logger(__name__)
@@ -144,6 +145,12 @@ async def create_subscription(
     user_id: int,
     data: SubscriptionCreate,
     user_hl_address: str | None,
+    *,
+    source_type: str = "manual",
+    source_id: int | None = None,
+    source_version_id: int | None = None,
+    managed_by_portfolio: bool = False,
+    margin_summary: MarginSummary | None = None,
 ) -> SubscriptionResponse:
     trader_res = await db.execute(
         select(Trader).where(Trader.id == data.trader_id, Trader.is_active.is_(True))
@@ -156,14 +163,15 @@ async def create_subscription(
         if not user_hl_address:
             raise ValueError("HL wallet address required to create a subscription")
 
-        try:
-            hl = HyperliquidInfoClient()
-            margin_summary = await hl.get_account_summary(user_hl_address)
-        except Exception as exc:
-            logger.error("subscription_equity_fetch_failed", error=str(exc))
-            raise ValueError(
-                "Failed to fetch HL account data — try again later"
-            ) from exc
+        if margin_summary is None:
+            try:
+                hl = HyperliquidInfoClient()
+                margin_summary = await hl.get_account_summary(user_hl_address)
+            except Exception as exc:
+                logger.error("subscription_equity_fetch_failed", error=str(exc))
+                raise ValueError(
+                    "Failed to fetch HL account data — try again later"
+                ) from exc
 
         allowed, reason = await check_portfolio_risk(
             db,
@@ -185,6 +193,10 @@ async def create_subscription(
         sizing_mode=data.sizing_mode,
         max_per_coin_usd=data.max_per_coin_usd,
         allowed_coins=data.allowed_coins,
+        source_type=source_type,
+        source_id=source_id,
+        source_version_id=source_version_id,
+        managed_by_portfolio=managed_by_portfolio,
         is_active=True,
         is_demo=data.is_demo,
     )

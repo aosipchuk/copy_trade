@@ -309,6 +309,7 @@ export interface UserPortfolioSubscriptionCreate {
   auto_rebalance: boolean
   total_allocation_usd: number
   close_removed_positions: boolean
+  risk_disclosure_accepted?: boolean
 }
 
 export interface UserPortfolioSubscription {

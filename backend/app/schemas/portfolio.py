@@ -88,6 +88,7 @@ class UserPortfolioSubscriptionCreate(BaseModel):
     auto_rebalance: bool = False
     total_allocation_usd: float = Field(gt=10, le=1_000_000)
     close_removed_positions: bool = False
+    risk_disclosure_accepted: bool = False
 
 
 class UserPortfolioSubscriptionResponse(BaseModel):

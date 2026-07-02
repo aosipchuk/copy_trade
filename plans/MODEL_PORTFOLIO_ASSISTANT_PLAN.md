@@ -1208,6 +1208,17 @@ Frontend:
 
 Цель: платный пользователь включает live Balanced.
 
+Анализ перед реализацией от 2026-07-02:
+
+- новая Alembic migration для Phase 6 не нужна: live activation использует `user_portfolio_subscriptions`, `user_portfolio_items` и source-поля `subscriptions`, созданные Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py`;
+- Phase 5 уже создает live billing-holder `user_portfolio_subscriptions` без generated items; Phase 6 должна переиспользовать этот holder после успешной оплаты, а не создавать вторую live portfolio subscription;
+- live activation должна быть идемпотентной: повторный POST для уже materialized live portfolio возвращает существующую subscription и не создает дублирующие `subscriptions`;
+- backend не должен полагаться только на UI для risk disclosure: live request должен содержать явное подтверждение `risk_disclosure_accepted=true`;
+- wallet readiness для MVP: у пользователя должен быть `hl_address` и активный approved `user_agents` row; без этого live activation блокируется;
+- risk/margin validation должна идти через существующий `subscription_service`/`check_portfolio_risk`, чтобы generated subscriptions проходили тот же risk path, что и manual live subscriptions;
+- partial failure strategy для MVP: all-or-nothing transaction. Если один generated subscription не проходит validation/risk, запрос возвращает ошибку, dependency rollback откатывает уже подготовленные изменения, и частичная live exposure не остается в БД;
+- manual live overlap остается hard block для live activation, demo overlap остается warning как в Phase 4.
+
 Backend:
 
 1. Live `POST /portfolio-subscriptions`.
@@ -1231,6 +1242,35 @@ Frontend:
 - insufficient margin блокируется;
 - generated subscriptions имеют `source_type=model_portfolio`;
 - manual conflict блокирует activation.
+
+Реализация от 2026-07-02:
+
+- `backend/app/services/subscription_service.py` получил внутренние source-параметры (`source_type`, `source_id`, `source_version_id`, `managed_by_portfolio`) и optional cached `margin_summary`, manual API behavior сохранен;
+- `backend/app/services/portfolio/activation.py` реализует live activation вместо Phase 6 заглушки:
+  - проверяет manual live conflicts;
+  - проверяет billing через Phase 5 helper;
+  - требует `risk_disclosure_accepted=true`;
+  - проверяет `hl_address` и active approved agent;
+  - переиспользует paid billing-holder без items;
+  - создает ordinary live `subscriptions` через `create_subscription`;
+  - проставляет `source_type='model_portfolio'`, `source_id=user_portfolio_subscriptions.id`, `source_version_id=active_version_id`, `managed_by_portfolio=true`;
+  - повторный live POST возвращает существующую materialized portfolio subscription без дублей;
+- frontend detail page портфеля получил `Live activation` panel с payment/agent readiness, allocation preview, risk disclosure checkbox и success/failure summary;
+- `UserPortfolioSubscriptionCreate` расширен полем `risk_disclosure_accepted`;
+- добавлены/обновлены API tests:
+  - no payment blocks live;
+  - risk disclosure required;
+  - missing wallet blocks live;
+  - missing active agent blocks live;
+  - insufficient margin blocks live;
+  - generated live subscriptions are portfolio-owned;
+  - repeated live activation is idempotent;
+  - manual live conflict blocks activation.
+
+Миграции после Phase 6:
+
+- новых миграций нет;
+- обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена на сервере.
 
 ### Phase 7 — Rebalance engine
 
@@ -1759,6 +1799,106 @@ curl -i -X POST "$PUBLIC_URL/api/portfolio-subscriptions/billing/webhook" \
 7. Проверить UI в Telegram Mini App или браузере: на странице Balanced виден блок `Live billing`, price CTA, billing status, past_due/canceled state; demo activation продолжает работать.
 
 Миграции, которые нужно выполнить на сервере после Phase 5:
+
+- новых миграций нет;
+- обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.
+
+### Phase 6 deployment checklist
+
+Phase 6 не добавляет новых миграций. Перед включением live activation на сервере должна быть применена Phase 1 migration, должен существовать seed-шаблон `Balanced`, у него должна быть текущая `published` версия с allocations, и Phase 5 billing gate должен быть настроен или должен быть включен beta override для внутреннего тестового Telegram ID.
+
+1. Задеплоить backend + frontend код Phase 6 через обычный release path:
+
+```bash
+git pull --ff-only
+make deploy
+```
+
+`make deploy` выполняет `uv run alembic upgrade head`; для Phase 6 это должно быть no-op, если Phase 1 migration уже применена.
+
+2. Проверить миграционное состояние, seed и published-версию:
+
+```bash
+cd backend
+uv run alembic current
+uv run python -m scripts.seed_model_portfolios --check
+```
+
+Если published-версии Balanced еще нет, сначала выполнить Phase 3 manual publish/backtest checklist. Live activation нельзя выполнять против draft-версии.
+
+3. Проверить, что billing gate пропускает внутреннего paid/beta пользователя:
+
+```bash
+curl -fsS -H "Authorization: Bearer <user_jwt>" \
+  "$PUBLIC_URL/api/portfolio-subscriptions/billing/status?portfolio_id=<balanced_portfolio_id>&active_version_id=<published_version_id>"
+```
+
+Ожидаемый результат для тестового пользователя: `can_activate_live=true` через Stripe status `active|trialing` или `beta_override=true`.
+
+4. Проверить negative live activation без disclosure:
+
+```bash
+curl -i -X POST "$PUBLIC_URL/api/portfolio-subscriptions" \
+  -H "Authorization: Bearer <user_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "portfolio_id": <balanced_portfolio_id>,
+    "active_version_id": <published_version_id>,
+    "is_demo": false,
+    "auto_rebalance": false,
+    "total_allocation_usd": 1000,
+    "close_removed_positions": false,
+    "risk_disclosure_accepted": false
+  }'
+```
+
+Ожидаемый результат: `400` с сообщением про обязательный risk disclosure, если billing уже active/beta. Если billing не active, сначала будет `402`.
+
+5. Проверить negative live activation без wallet/agent тестовым пользователем, у которого есть active billing/beta, но нет wallet setup:
+
+```bash
+curl -i -X POST "$PUBLIC_URL/api/portfolio-subscriptions" \
+  -H "Authorization: Bearer <user_jwt_without_wallet>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "portfolio_id": <balanced_portfolio_id>,
+    "active_version_id": <published_version_id>,
+    "is_demo": false,
+    "auto_rebalance": false,
+    "total_allocation_usd": 1000,
+    "close_removed_positions": false,
+    "risk_disclosure_accepted": true
+  }'
+```
+
+Ожидаемый результат: `400` с сообщением про missing HL wallet address или active Hyperliquid agent.
+
+6. Выполнить один internal live activation только для тестового пользователя с активным wallet/agent и минимальной безопасной allocation:
+
+```bash
+curl -fsS -X POST "$PUBLIC_URL/api/portfolio-subscriptions" \
+  -H "Authorization: Bearer <internal_paid_user_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "portfolio_id": <balanced_portfolio_id>,
+    "active_version_id": <published_version_id>,
+    "is_demo": false,
+    "auto_rebalance": false,
+    "total_allocation_usd": 1000,
+    "close_removed_positions": false,
+    "risk_disclosure_accepted": true
+  }'
+```
+
+Ожидаемый результат: `created=true`, `is_demo=false`, `items` равно количеству allocations, вложенные `subscription` имеют `source_type='model_portfolio'`, `managed_by_portfolio=true`, `source_id=<portfolio_subscription_id>`.
+
+7. Повторить тот же live POST.
+
+Ожидаемый результат: `created=false`, тот же `id`, новые дублирующие live `subscriptions` не создаются.
+
+8. Проверить UI в Telegram Mini App или браузере: на странице Balanced виден блок `Live activation`, payment readiness, agent readiness, risk disclosure checkbox, preview generated subscriptions; после запуска видна live portfolio subscription summary.
+
+Миграции, которые нужно выполнить на сервере после Phase 6:
 
 - новых миграций нет;
 - обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.

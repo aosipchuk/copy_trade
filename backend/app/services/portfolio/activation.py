@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +17,7 @@ from app.models.portfolio import (
 )
 from app.models.subscription import Subscription
 from app.models.trader import Trader
+from app.models.user import User, UserAgent
 from app.schemas.portfolio import (
     PortfolioActivationConflict,
     UserPortfolioActivationResponse,
@@ -26,8 +27,19 @@ from app.schemas.portfolio import (
     UserPortfolioSubscriptionDetailResponse,
     UserPortfolioSubscriptionResponse,
 )
-from app.services.portfolio.billing import require_live_portfolio_billing
-from app.services.subscription_service import _to_response as subscription_to_response
+from app.schemas.subscription import SubscriptionCreate
+from app.services.hyperliquid.info_client import HyperliquidInfoClient
+from app.services.hyperliquid.models import MarginSummary
+from app.services.portfolio.billing import (
+    require_live_portfolio_billing,
+    user_has_beta_override,
+)
+from app.services.subscription_service import (
+    _to_response as subscription_to_response,
+)
+from app.services.subscription_service import (
+    create_subscription,
+)
 
 logger = get_logger(__name__)
 
@@ -173,6 +185,44 @@ async def _find_existing_active_demo(
     return result.scalar_one_or_none()
 
 
+async def _find_existing_live(
+    db: AsyncSession,
+    user_id: int,
+    portfolio_id: int,
+    active_version_id: int,
+) -> UserPortfolioSubscription | None:
+    result = await db.execute(
+        select(UserPortfolioSubscription)
+        .where(
+            UserPortfolioSubscription.user_id == user_id,
+            UserPortfolioSubscription.portfolio_id == portfolio_id,
+            UserPortfolioSubscription.active_version_id == active_version_id,
+            UserPortfolioSubscription.is_demo.is_(False),
+            UserPortfolioSubscription.status != "canceled",
+        )
+        .order_by(
+            UserPortfolioSubscription.created_at.desc(),
+            UserPortfolioSubscription.id.desc(),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _active_item_count(
+    db: AsyncSession,
+    user_portfolio_subscription_id: int,
+) -> int:
+    result = await db.execute(
+        select(func.count(UserPortfolioItem.id)).where(
+            UserPortfolioItem.user_portfolio_subscription_id
+            == user_portfolio_subscription_id,
+            UserPortfolioItem.status == "active",
+        )
+    )
+    return int(result.scalar_one())
+
+
 async def detect_manual_live_conflicts(
     db: AsyncSession,
     user_id: int,
@@ -304,6 +354,75 @@ async def get_user_portfolio_subscription(
     return await _load_detail(db, user_id, user_portfolio_subscription_id)
 
 
+async def _load_user(db: AsyncSession, user_id: int) -> User:
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise LookupError("User not found.")
+    return user
+
+
+async def _require_live_wallet_ready(db: AsyncSession, user: User) -> str:
+    if not user.hl_address:
+        raise ValueError("HL wallet address required to activate live model portfolio.")
+
+    result = await db.execute(
+        select(UserAgent.id)
+        .where(
+            UserAgent.user_id == user.id,
+            UserAgent.is_active.is_(True),
+            UserAgent.approved_at.is_not(None),
+        )
+        .limit(1)
+    )
+    if result.scalar_one_or_none() is None:
+        raise ValueError(
+            "Active Hyperliquid agent required to activate live model portfolio."
+        )
+
+    return user.hl_address
+
+
+async def _fetch_margin_summary(user_hl_address: str, user_id: int) -> MarginSummary:
+    try:
+        hl = HyperliquidInfoClient()
+        return await hl.get_account_summary(user_hl_address)
+    except Exception as exc:
+        logger.error(
+            "portfolio_activation_equity_fetch_failed",
+            user_id=user_id,
+            error=str(exc),
+        )
+        raise ValueError("Failed to fetch HL account data — try again later") from exc
+
+
+def _subscription_create(
+    allocation: ModelPortfolioAllocation,
+    target_allocation: Decimal,
+    *,
+    is_demo: bool,
+) -> SubscriptionCreate:
+    return SubscriptionCreate(
+        trader_id=allocation.trader_id,
+        max_allocation_usd=float(target_allocation),
+        copy_ratio_pct=float(allocation.copy_ratio_pct),
+        stop_loss_pct=float(allocation.stop_loss_pct),
+        max_leverage=float(allocation.max_leverage),
+        sizing_mode=allocation.sizing_mode,
+        max_per_coin_usd=(
+            float(allocation.max_per_coin_usd)
+            if allocation.max_per_coin_usd is not None
+            else None
+        ),
+        allowed_coins=(
+            list(allocation.allowed_coins)
+            if allocation.allowed_coins is not None
+            else None
+        ),
+        is_demo=is_demo,
+    )
+
+
 async def activate_user_portfolio_subscription(
     db: AsyncSession,
     user_id: int,
@@ -325,9 +444,116 @@ async def activate_user_portfolio_subscription(
                 "resolved first."
             )
         await require_live_portfolio_billing(db, user_id, portfolio.id, version.id)
-        raise ValueError(
-            "Live model portfolio activation passed billing gate, but execution "
-            "setup is not available until Phase 6."
+        if not data.risk_disclosure_accepted:
+            raise ValueError(
+                "Risk disclosure must be accepted before live model portfolio "
+                "activation."
+            )
+
+        existing_live = await _find_existing_live(db, user_id, portfolio.id, version.id)
+        if existing_live is not None and await _active_item_count(db, existing_live.id):
+            return PortfolioActivationResult(
+                detail=await _load_detail(db, user_id, existing_live.id),
+                created=False,
+                conflicts=[],
+            )
+
+        user = await _load_user(db, user_id)
+        user_hl_address = await _require_live_wallet_ready(db, user)
+        margin_summary = await _fetch_margin_summary(user_hl_address, user_id)
+
+        logger.info(
+            "portfolio_activation_started",
+            user_id=user_id,
+            portfolio_id=portfolio.id,
+            version_id=version.id,
+            is_demo=False,
+        )
+
+        portfolio_subscription = existing_live
+        if portfolio_subscription is None:
+            portfolio_subscription = UserPortfolioSubscription(
+                user_id=user_id,
+                portfolio_id=portfolio.id,
+                active_version_id=version.id,
+                status="active",
+                is_demo=False,
+                auto_rebalance=data.auto_rebalance,
+                total_allocation_usd=data.total_allocation_usd,
+                close_removed_positions=data.close_removed_positions,
+                billing_provider=(
+                    "admin_override" if user_has_beta_override(user) else None
+                ),
+            )
+            db.add(portfolio_subscription)
+            await db.flush()
+        else:
+            portfolio_subscription.status = "active"
+            portfolio_subscription.auto_rebalance = data.auto_rebalance
+            portfolio_subscription.total_allocation_usd = data.total_allocation_usd
+            portfolio_subscription.close_removed_positions = (
+                data.close_removed_positions
+            )
+            if (
+                user_has_beta_override(user)
+                and portfolio_subscription.billing_provider is None
+            ):
+                portfolio_subscription.billing_provider = "admin_override"
+            await db.flush()
+
+        target_allocations = _target_allocations(data.total_allocation_usd, allocations)
+        created_subscription_count = 0
+        try:
+            for allocation in allocations:
+                target_allocation = target_allocations[allocation.id]
+                subscription_response = await create_subscription(
+                    db,
+                    user_id,
+                    _subscription_create(allocation, target_allocation, is_demo=False),
+                    user_hl_address,
+                    source_type="model_portfolio",
+                    source_id=portfolio_subscription.id,
+                    source_version_id=version.id,
+                    managed_by_portfolio=True,
+                    margin_summary=margin_summary,
+                )
+                created_subscription_count += 1
+
+                db.add(
+                    UserPortfolioItem(
+                        user_portfolio_subscription_id=portfolio_subscription.id,
+                        subscription_id=subscription_response.id,
+                        portfolio_version_id=version.id,
+                        allocation_id=allocation.id,
+                        trader_id=allocation.trader_id,
+                        target_allocation_usd=float(target_allocation),
+                        target_weight_pct=allocation.target_weight_pct,
+                        status="active",
+                    )
+                )
+        except ValueError as exc:
+            logger.warning(
+                "portfolio_activation_failed",
+                user_id=user_id,
+                portfolio_id=portfolio.id,
+                version_id=version.id,
+                is_demo=False,
+                created_subscription_count=created_subscription_count,
+                error=str(exc),
+            )
+            raise
+
+        await db.flush()
+        logger.info(
+            "portfolio_activation_completed",
+            user_id=user_id,
+            portfolio_subscription_id=portfolio_subscription.id,
+            generated_subscription_count=len(allocations),
+        )
+        return PortfolioActivationResult(
+            detail=await _load_detail(db, user_id, portfolio_subscription.id),
+            created=True,
+            conflicts=[],
         )
 
     existing = await _find_existing_active_demo(db, user_id, portfolio.id, version.id)
@@ -361,34 +587,21 @@ async def activate_user_portfolio_subscription(
     target_allocations = _target_allocations(data.total_allocation_usd, allocations)
     for allocation in allocations:
         target_allocation = target_allocations[allocation.id]
-        subscription = Subscription(
-            user_id=user_id,
-            trader_id=allocation.trader_id,
-            max_allocation_usd=float(target_allocation),
-            copy_ratio_pct=allocation.copy_ratio_pct,
-            stop_loss_pct=allocation.stop_loss_pct,
-            max_leverage=allocation.max_leverage,
-            sizing_mode=allocation.sizing_mode,
-            max_per_coin_usd=allocation.max_per_coin_usd,
-            allowed_coins=(
-                list(allocation.allowed_coins)
-                if allocation.allowed_coins is not None
-                else None
-            ),
+        subscription_response = await create_subscription(
+            db,
+            user_id,
+            _subscription_create(allocation, target_allocation, is_demo=True),
+            user_hl_address=None,
             source_type="model_portfolio",
             source_id=portfolio_subscription.id,
             source_version_id=version.id,
             managed_by_portfolio=True,
-            is_active=True,
-            is_demo=True,
         )
-        db.add(subscription)
-        await db.flush()
 
         db.add(
             UserPortfolioItem(
                 user_portfolio_subscription_id=portfolio_subscription.id,
-                subscription_id=subscription.id,
+                subscription_id=subscription_response.id,
                 portfolio_version_id=version.id,
                 allocation_id=allocation.id,
                 trader_id=allocation.trader_id,

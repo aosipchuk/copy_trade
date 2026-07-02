@@ -8,23 +8,49 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.models.portfolio import (
     ModelPortfolio,
     ModelPortfolioAllocation,
     ModelPortfolioVersion,
     UserPortfolioItem,
+    UserPortfolioSubscription,
 )
 from app.models.subscription import Subscription
 from app.models.trader import Trader
+from app.models.user import User, UserAgent
+from app.services.hyperliquid.info_client import HyperliquidInfoClient
+from app.services.hyperliquid.models import MarginSummary
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 _counter: itertools.count = itertools.count(1)
+_FAKE_HL_ADDRESS = "0x" + "de" * 20
+_RICH_MARGIN = MarginSummary(
+    accountValue=Decimal("50000"),
+    totalMarginUsed=Decimal("0"),
+    totalRawUsd=Decimal("50000"),
+)
+_LOW_MARGIN = MarginSummary(
+    accountValue=Decimal("100"),
+    totalMarginUsed=Decimal("90"),
+    totalRawUsd=Decimal("100"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _mock_hl_margin():
+    with patch.object(
+        HyperliquidInfoClient,
+        "get_account_summary",
+        AsyncMock(return_value=_RICH_MARGIN),
+    ):
+        yield
 
 
 @dataclass(frozen=True)
@@ -144,6 +170,64 @@ def _activation_body(seed: SeededPortfolio, total: float = 1000.0) -> dict[str, 
         "total_allocation_usd": total,
         "close_removed_positions": False,
     }
+
+
+def _live_activation_body(
+    seed: SeededPortfolio,
+    total: float = 1000.0,
+    *,
+    risk_disclosure_accepted: bool = True,
+) -> dict[str, object]:
+    return {
+        "portfolio_id": seed.portfolio_id,
+        "active_version_id": seed.version_id,
+        "is_demo": False,
+        "auto_rebalance": False,
+        "total_allocation_usd": total,
+        "close_removed_positions": False,
+        "risk_disclosure_accepted": risk_disclosure_accepted,
+    }
+
+
+async def _make_user_live_ready(db_session, user_id: int) -> None:
+    await db_session.execute(
+        update(User).where(User.id == user_id).values(hl_address=_FAKE_HL_ADDRESS)
+    )
+    db_session.add(
+        UserAgent(
+            user_id=user_id,
+            agent_address="0x" + "ef" * 20,
+            agent_key_enc=b"encrypted-test-key",
+            approved_at=datetime(2026, 7, 2, 12, 30, 0),
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+
+
+async def _seed_paid_holder(
+    db_session,
+    seed: SeededPortfolio,
+    user_id: int,
+    *,
+    status: str = "active",
+) -> UserPortfolioSubscription:
+    subscription = UserPortfolioSubscription(
+        user_id=user_id,
+        portfolio_id=seed.portfolio_id,
+        active_version_id=seed.version_id,
+        status=status,
+        is_demo=False,
+        auto_rebalance=False,
+        total_allocation_usd=Decimal("1000.00"),
+        close_removed_positions=False,
+        billing_provider="stripe",
+        billing_customer_id=f"cus_live_{user_id}",
+        billing_subscription_id=f"sub_live_{user_id}",
+    )
+    db_session.add(subscription)
+    await db_session.commit()
+    return subscription
 
 
 class TestDemoPortfolioActivation:
@@ -313,3 +397,181 @@ class TestDemoPortfolioActivation:
         items = list(items_result.scalars().all())
         assert len(items) == 3
         assert all(item.status == "removed" for item in items)
+
+
+class TestLivePortfolioActivation:
+    async def test_live_activation_requires_payment(self, client, db_session) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91101)
+        await _make_user_live_ready(db_session, user_id)
+
+        response = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+
+        assert response.status_code == 402
+        assert "Payment is required" in response.json()["detail"]
+
+    async def test_live_activation_requires_risk_disclosure(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91102)
+        await _seed_paid_holder(db_session, seed, user_id)
+
+        response = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed, risk_disclosure_accepted=False),
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+        assert "Risk disclosure" in response.json()["detail"]
+
+    async def test_live_activation_requires_wallet_address(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91103)
+        await _seed_paid_holder(db_session, seed, user_id)
+
+        response = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+        assert "HL wallet address required" in response.json()["detail"]
+
+    async def test_live_activation_requires_active_agent(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91104)
+        await _seed_paid_holder(db_session, seed, user_id)
+        await db_session.execute(
+            update(User).where(User.id == user_id).values(hl_address=_FAKE_HL_ADDRESS)
+        )
+        await db_session.commit()
+
+        response = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+        assert "Active Hyperliquid agent required" in response.json()["detail"]
+
+    async def test_live_activation_blocks_insufficient_margin(
+        self, client, db_session, monkeypatch
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91105)
+        paid_holder = await _seed_paid_holder(db_session, seed, user_id)
+        await _make_user_live_ready(db_session, user_id)
+        monkeypatch.setattr(
+            HyperliquidInfoClient,
+            "get_account_summary",
+            AsyncMock(return_value=_LOW_MARGIN),
+        )
+
+        response = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+        assert "Insufficient free margin" in response.json()["detail"]
+
+        items_result = await db_session.execute(
+            select(UserPortfolioItem).where(
+                UserPortfolioItem.user_portfolio_subscription_id == paid_holder.id
+            )
+        )
+        assert list(items_result.scalars().all()) == []
+
+    async def test_live_activation_creates_portfolio_owned_subscriptions(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91106)
+        paid_holder = await _seed_paid_holder(db_session, seed, user_id)
+        await _make_user_live_ready(db_session, user_id)
+
+        response = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["created"] is True
+        assert body["id"] == paid_holder.id
+        assert body["is_demo"] is False
+        assert body["status"] == "active"
+        assert len(body["items"]) == 3
+
+        for item in body["items"]:
+            subscription = item["subscription"]
+            assert subscription["is_demo"] is False
+            assert subscription["source_type"] == "model_portfolio"
+            assert subscription["source_id"] == body["id"]
+            assert subscription["source_version_id"] == seed.version_id
+            assert subscription["managed_by_portfolio"] is True
+
+        second = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+
+        assert second.status_code == 200
+        assert second.json()["created"] is False
+        assert second.json()["id"] == body["id"]
+
+        subs_result = await db_session.execute(
+            select(Subscription).where(
+                Subscription.source_id == body["id"],
+                Subscription.source_type == "model_portfolio",
+                Subscription.is_demo.is_(False),
+            )
+        )
+        generated_subscriptions = list(subs_result.scalars().all())
+        assert len(generated_subscriptions) == 3
+
+    async def test_live_activation_blocks_manual_conflict(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91107)
+        await _seed_paid_holder(db_session, seed, user_id)
+        await _make_user_live_ready(db_session, user_id)
+        manual = Subscription(
+            user_id=user_id,
+            trader_id=seed.trader_ids[0],
+            max_allocation_usd=Decimal("100.00"),
+            copy_ratio_pct=Decimal("100.00"),
+            stop_loss_pct=Decimal("20.00"),
+            max_leverage=Decimal("8.00"),
+            is_active=True,
+            is_demo=False,
+            source_type="manual",
+            managed_by_portfolio=False,
+        )
+        db_session.add(manual)
+        await db_session.commit()
+
+        response = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+        assert "manual subscription conflicts" in response.json()["detail"]

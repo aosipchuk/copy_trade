@@ -78,6 +78,16 @@ export async function activateDemoPortfolio(
   return res.data
 }
 
+export async function activateLivePortfolio(
+  body: UserPortfolioSubscriptionCreate,
+): Promise<UserPortfolioActivationResponse> {
+  const res = await http.post<UserPortfolioActivationResponse>(
+    '/portfolio-subscriptions',
+    body,
+  )
+  return res.data
+}
+
 export async function cancelPortfolioSubscription(
   id: number,
 ): Promise<UserPortfolioSubscriptionDetail> {

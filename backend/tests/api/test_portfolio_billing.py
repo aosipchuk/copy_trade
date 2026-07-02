@@ -151,6 +151,7 @@ def _live_activation_body(seed: SeededPortfolio) -> dict[str, object]:
         "auto_rebalance": False,
         "total_allocation_usd": 1000,
         "close_removed_positions": False,
+        "risk_disclosure_accepted": True,
     }
 
 
@@ -186,7 +187,12 @@ class TestPortfolioBillingGate:
         assert body["portfolio_subscription"]["items"] == []
         assert body["billing_status"]["paid"] is False
 
-        items_result = await db_session.execute(select(UserPortfolioItem))
+        items_result = await db_session.execute(
+            select(UserPortfolioItem).where(
+                UserPortfolioItem.user_portfolio_subscription_id
+                == body["portfolio_subscription"]["id"]
+            )
+        )
         assert list(items_result.scalars().all()) == []
 
     async def test_webhook_signature_updates_billing_status(
@@ -273,7 +279,7 @@ class TestPortfolioBillingGate:
         )
 
         assert response.status_code == 400
-        assert "passed billing gate" in response.json()["detail"]
+        assert "HL wallet address required" in response.json()["detail"]
 
     async def test_past_due_blocks_live_activation(self, client, db_session) -> None:
         seed = await _seed_published_portfolio(db_session)
