@@ -2,6 +2,9 @@ import type {
   ModelPortfolioDetail,
   ModelPortfolioListItem,
   PortfolioBacktest,
+  UserPortfolioActivationResponse,
+  UserPortfolioSubscriptionCreate,
+  UserPortfolioSubscriptionDetail,
 } from '../types'
 import { http } from './http'
 
@@ -17,5 +20,45 @@ export async function fetchPortfolio(slug: string): Promise<ModelPortfolioDetail
 
 export async function fetchPortfolioBacktests(slug: string): Promise<PortfolioBacktest[]> {
   const res = await http.get<PortfolioBacktest[]>(`/portfolios/${slug}/backtests`)
+  return res.data
+}
+
+export async function fetchPortfolioSubscriptions(params?: {
+  is_demo?: boolean
+  portfolio_id?: number
+  active_only?: boolean
+}): Promise<UserPortfolioSubscriptionDetail[]> {
+  const res = await http.get<UserPortfolioSubscriptionDetail[]>(
+    '/portfolio-subscriptions',
+    { params },
+  )
+  return res.data
+}
+
+export async function fetchPortfolioSubscription(
+  id: number,
+): Promise<UserPortfolioSubscriptionDetail> {
+  const res = await http.get<UserPortfolioSubscriptionDetail>(
+    `/portfolio-subscriptions/${id}`,
+  )
+  return res.data
+}
+
+export async function activateDemoPortfolio(
+  body: UserPortfolioSubscriptionCreate,
+): Promise<UserPortfolioActivationResponse> {
+  const res = await http.post<UserPortfolioActivationResponse>(
+    '/portfolio-subscriptions',
+    body,
+  )
+  return res.data
+}
+
+export async function cancelPortfolioSubscription(
+  id: number,
+): Promise<UserPortfolioSubscriptionDetail> {
+  const res = await http.delete<UserPortfolioSubscriptionDetail>(
+    `/portfolio-subscriptions/${id}`,
+  )
   return res.data
 }

@@ -1102,6 +1102,14 @@ Exit criteria:
 
 Цель: пользователь может включить портфель в demo.
 
+Анализ перед реализацией от 2026-07-02:
+
+- таблицы `user_portfolio_subscriptions`, `user_portfolio_items` и source-поля в `subscriptions` уже созданы Phase 1 migration, поэтому новая Alembic migration для Phase 4 не нужна;
+- demo activation должна создавать обычные `subscriptions` с `is_demo=true`, `source_type='model_portfolio'`, `source_id=user_portfolio_subscriptions.id`, `source_version_id=active_version_id` и `managed_by_portfolio=true`;
+- активация должна быть идемпотентной для одной и той же published-версии: повторный POST возвращает существующую demo portfolio subscription и не создает дублирующие subscriptions;
+- demo activation не требует wallet, agent или payment и не блокируется manual live overlap, но manual live overlap должен быть обнаружен и возвращен как warning/conflict;
+- cancel должен отключать только portfolio-owned subscriptions и переводить `user_portfolio_items` в `removed`, не меняя manual subscriptions пользователя.
+
 Backend:
 
 1. `POST /portfolio-subscriptions` с `is_demo=true`.
@@ -1123,6 +1131,19 @@ Frontend:
 - cancel отключает только portfolio-owned subscriptions;
 - manual subscriptions не меняются;
 - повторная activation обрабатывается корректно.
+
+Реализация от 2026-07-02:
+
+- добавлен backend-сервис `backend/app/services/portfolio/activation.py`;
+- добавлен API router `backend/app/api/portfolio_subscriptions.py`:
+  - `POST /portfolio-subscriptions`;
+  - `GET /portfolio-subscriptions`;
+  - `GET /portfolio-subscriptions/{id}`;
+  - `DELETE /portfolio-subscriptions/{id}`;
+- `SubscriptionResponse` расширен source-полями, чтобы frontend и tests видели portfolio-owned marker;
+- frontend detail page портфеля теперь показывает demo activation panel, preview generated subscriptions, активную demo portfolio subscription и cancel action;
+- добавлены API tests `backend/tests/api/test_portfolio_subscriptions.py`;
+- новая Alembic migration для Phase 4 не нужна: используются таблицы и поля из Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py`.
 
 Exit criteria:
 
@@ -1560,6 +1581,75 @@ curl -fsS -H "Authorization: Bearer <user_jwt>" "$PUBLIC_URL/api/portfolios/bala
 6. Проверить UI в Telegram Mini App или браузере: появилась вкладка `Portfolios`; Balanced открывается; видны allocations, веса, risk metrics и assumptions.
 
 Миграции, которые нужно выполнить на сервере после Phase 3:
+
+- новых миграций нет;
+- обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.
+
+### Phase 4 deployment checklist
+
+Phase 4 не добавляет новых миграций. Перед включением demo activation на сервере должна быть применена Phase 1 migration, должен существовать seed-шаблон `Balanced`, и у него должна быть текущая `published` версия с allocations.
+
+1. Задеплоить backend + frontend код Phase 4 через обычный release path:
+
+```bash
+git pull --ff-only
+make deploy
+```
+
+`make deploy` выполняет `uv run alembic upgrade head`; для Phase 4 это должно быть no-op, если Phase 1 migration уже применена.
+
+2. Проверить миграционное состояние, seed и наличие published-версии:
+
+```bash
+cd backend
+uv run alembic current
+uv run python -m scripts.seed_model_portfolios --check
+```
+
+Если published-версии Balanced еще нет, сначала выполнить Phase 3 manual publish/backtest checklist. Demo activation нельзя включать против draft-версии.
+
+3. Проверить read-only API и новый portfolio subscription API:
+
+```bash
+curl -fsS "$PUBLIC_URL/api/health"
+curl -fsS -H "Authorization: Bearer <user_jwt>" "$PUBLIC_URL/api/portfolios/balanced"
+curl -fsS -H "Authorization: Bearer <user_jwt>" "$PUBLIC_URL/api/portfolio-subscriptions?is_demo=true&active_only=true"
+```
+
+4. Выполнить internal demo activation тестовым пользователем:
+
+```bash
+curl -fsS -X POST "$PUBLIC_URL/api/portfolio-subscriptions" \
+  -H "Authorization: Bearer <user_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "portfolio_id": <balanced_portfolio_id>,
+    "active_version_id": <published_version_id>,
+    "is_demo": true,
+    "auto_rebalance": false,
+    "total_allocation_usd": 1000,
+    "close_removed_positions": false
+  }'
+```
+
+Ожидаемый результат: `created=true` при первой активации, `items` равно количеству allocations, вложенные `subscription` имеют `is_demo=true`, `source_type='model_portfolio'`, `managed_by_portfolio=true`.
+
+5. Повторить тот же POST.
+
+Ожидаемый результат: `created=false`, тот же `id` portfolio subscription, новые дублирующие `subscriptions` не создаются.
+
+6. Проверить cancel:
+
+```bash
+curl -fsS -X DELETE "$PUBLIC_URL/api/portfolio-subscriptions/<portfolio_subscription_id>" \
+  -H "Authorization: Bearer <user_jwt>"
+```
+
+Ожидаемый результат: portfolio subscription получает `status='canceled'`, portfolio-owned generated subscriptions становятся inactive, manual subscriptions пользователя остаются active.
+
+7. Проверить UI в Telegram Mini App или браузере: на странице Balanced виден demo activation panel, preview generated subscriptions, после запуска видна portfolio subscription detail и cancel action.
+
+Миграции, которые нужно выполнить на сервере после Phase 4:
 
 - новых миграций нет;
 - обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.

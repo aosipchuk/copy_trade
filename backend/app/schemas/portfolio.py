@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.subscription import SubscriptionResponse
+
 SizingMode = Literal["fixed_ratio", "fixed_usd", "equity_pct"]
 RiskProfile = Literal["conservative", "balanced", "aggressive"]
 ModelPortfolioStatus = Literal["draft", "active", "paused", "retired"]
@@ -122,6 +124,32 @@ class UserPortfolioItemResponse(BaseModel):
     status: PortfolioItemStatus
     created_at: datetime
     removed_at: datetime | None
+
+
+class UserPortfolioItemDetailResponse(UserPortfolioItemResponse):
+    subscription: SubscriptionResponse
+    trader_address: str | None
+    trader_display_name: str | None
+
+
+class UserPortfolioSubscriptionDetailResponse(UserPortfolioSubscriptionResponse):
+    portfolio_slug: str
+    portfolio_name: str
+    active_version_no: int
+    items: list[UserPortfolioItemDetailResponse] = Field(default_factory=list)
+
+
+class PortfolioActivationConflict(BaseModel):
+    trader_id: int
+    trader_address: str
+    trader_display_name: str | None
+    subscription_id: int
+    is_demo: bool
+
+
+class UserPortfolioActivationResponse(UserPortfolioSubscriptionDetailResponse):
+    created: bool
+    conflicts: list[PortfolioActivationConflict] = Field(default_factory=list)
 
 
 class PortfolioRebalanceEventResponse(BaseModel):

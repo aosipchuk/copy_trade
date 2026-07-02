@@ -1,12 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { fetchPortfolio } from '../api/portfolios'
+import {
+  activateDemoPortfolio,
+  cancelPortfolioSubscription,
+  fetchPortfolio,
+  fetchPortfolioSubscriptions,
+} from '../api/portfolios'
 import { FullPageSpinner } from '../components/LoadingSpinner'
 import { useBackButton } from '../hooks/useTelegram'
 import type {
   ModelPortfolioAllocation,
   ModelPortfolioDetail,
+  PortfolioActivationConflict,
   PortfolioBacktest,
+  UserPortfolioSubscriptionDetail,
 } from '../types'
 
 function money(value: number | null | undefined): string {
@@ -51,29 +58,112 @@ export function PortfolioDetailPage() {
   const { slug } = useParams<{ slug: string }>()
   const navigate = useNavigate()
   const [portfolio, setPortfolio] = useState<ModelPortfolioDetail | null>(null)
+  const [portfolioSubscription, setPortfolioSubscription] =
+    useState<UserPortfolioSubscriptionDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activationBusy, setActivationBusy] = useState(false)
+  const [activationError, setActivationError] = useState<string | null>(null)
+  const [activationNotice, setActivationNotice] = useState<string | null>(null)
+  const [conflicts, setConflicts] = useState<PortfolioActivationConflict[]>([])
 
   const navigateBack = useCallback(() => navigate('/portfolios'), [navigate])
   useBackButton(navigateBack)
 
   useEffect(() => {
     if (!slug) return
+    let canceled = false
     setLoading(true)
     setError(null)
+    setPortfolio(null)
+    setPortfolioSubscription(null)
+    setActivationError(null)
+    setActivationNotice(null)
+    setConflicts([])
+
     fetchPortfolio(slug)
-      .then(setPortfolio)
+      .then(async (nextPortfolio) => {
+        if (canceled) return
+        setPortfolio(nextPortfolio)
+        try {
+          const subscriptions = await fetchPortfolioSubscriptions({
+            is_demo: true,
+            portfolio_id: nextPortfolio.id,
+            active_only: true,
+          })
+          if (!canceled) setPortfolioSubscription(subscriptions[0] ?? null)
+        } catch {
+          if (!canceled) setActivationError('Failed to load demo status')
+        }
+      })
       .catch((err: unknown) => {
         const status = (err as { response?: { status?: number } })?.response?.status
         setError(status === 404 ? 'not_found' : 'error')
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!canceled) setLoading(false)
+      })
+
+    return () => {
+      canceled = true
+    }
   }, [slug])
 
   const primaryBacktest = useMemo(
     () => portfolio?.backtests[0] ?? null,
     [portfolio],
   )
+
+  const handleActivateDemo = useCallback(
+    async (totalAllocationUsd: number) => {
+      if (!portfolio) return
+      setActivationBusy(true)
+      setActivationError(null)
+      setActivationNotice(null)
+      setConflicts([])
+
+      try {
+        const result = await activateDemoPortfolio({
+          portfolio_id: portfolio.id,
+          active_version_id: portfolio.current_version.id,
+          is_demo: true,
+          auto_rebalance: false,
+          total_allocation_usd: totalAllocationUsd,
+          close_removed_positions: false,
+        })
+        setPortfolioSubscription(result)
+        setConflicts(result.conflicts)
+        setActivationNotice(result.created ? 'Demo activated' : 'Demo already active')
+      } catch (err: unknown) {
+        const detail = (err as { response?: { data?: { detail?: string } } })?.response
+          ?.data?.detail
+        setActivationError(detail ?? 'Failed to activate demo')
+      } finally {
+        setActivationBusy(false)
+      }
+    },
+    [portfolio],
+  )
+
+  const handleCancelDemo = useCallback(async () => {
+    if (!portfolioSubscription) return
+    setActivationBusy(true)
+    setActivationError(null)
+    setActivationNotice(null)
+
+    try {
+      await cancelPortfolioSubscription(portfolioSubscription.id)
+      setPortfolioSubscription(null)
+      setActivationNotice('Demo canceled')
+      setConflicts([])
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response
+        ?.data?.detail
+      setActivationError(detail ?? 'Failed to cancel demo')
+    } finally {
+      setActivationBusy(false)
+    }
+  }, [portfolioSubscription])
 
   if (loading) return <FullPageSpinner />
 
@@ -115,6 +205,16 @@ export function PortfolioDetailPage() {
 
       <div className="space-y-4 px-4 pt-4">
         <VersionStats portfolio={portfolio} backtest={primaryBacktest} />
+        <DemoActivationPanel
+          portfolio={portfolio}
+          portfolioSubscription={portfolioSubscription}
+          conflicts={conflicts}
+          busy={activationBusy}
+          error={activationError}
+          notice={activationNotice}
+          onActivate={handleActivateDemo}
+          onCancel={handleCancelDemo}
+        />
         <AllocationsList allocations={portfolio.current_version.allocations} />
         <BacktestPanel backtest={primaryBacktest} />
       </div>
@@ -149,6 +249,223 @@ function StatCell({ label, value }: { label: string; value: string }) {
     >
       <div className="truncate text-[10px] text-tg-hint">{label}</div>
       <div className="truncate text-sm font-semibold text-tg-text">{value}</div>
+    </div>
+  )
+}
+
+function DemoActivationPanel({
+  portfolio,
+  portfolioSubscription,
+  conflicts,
+  busy,
+  error,
+  notice,
+  onActivate,
+  onCancel,
+}: {
+  portfolio: ModelPortfolioDetail
+  portfolioSubscription: UserPortfolioSubscriptionDetail | null
+  conflicts: PortfolioActivationConflict[]
+  busy: boolean
+  error: string | null
+  notice: string | null
+  onActivate: (totalAllocationUsd: number) => Promise<void>
+  onCancel: () => Promise<void>
+}) {
+  const defaultAllocation = Math.max(100, Math.round(portfolio.min_equity_usd))
+  const [allocationInput, setAllocationInput] = useState(String(defaultAllocation))
+
+  useEffect(() => {
+    setAllocationInput(String(defaultAllocation))
+  }, [defaultAllocation, portfolio.id])
+
+  const allocationUsd = Number(allocationInput)
+  const allocationInvalid =
+    !Number.isFinite(allocationUsd) || allocationUsd <= 10 || allocationUsd > 1_000_000
+
+  const previewRows = useMemo(
+    () =>
+      portfolio.current_version.allocations.map((allocation) => ({
+        id: allocation.id,
+        name: allocation.trader_display_name ?? allocation.trader_address.slice(0, 10),
+        address: allocation.trader_address,
+        weight: allocation.target_weight_pct,
+        allocationUsd: allocationInvalid
+          ? 0
+          : (allocationUsd * allocation.target_weight_pct) / 100,
+      })),
+    [allocationInvalid, allocationUsd, portfolio.current_version.allocations],
+  )
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault()
+    if (!allocationInvalid && !busy) {
+      void onActivate(allocationUsd)
+    }
+  }
+
+  if (portfolioSubscription && portfolioSubscription.status !== 'canceled') {
+    return (
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-tg-text">Demo activation</h2>
+          <span className="text-xs text-tg-hint">
+            v{portfolioSubscription.active_version_no}
+          </span>
+        </div>
+
+        <div
+          className="rounded-lg px-3 py-3"
+          style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+        >
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-tg-text">
+                {portfolioSubscription.status}
+              </div>
+              <div className="mt-0.5 text-xs text-tg-hint">
+                {money(portfolioSubscription.total_allocation_usd)} allocation
+              </div>
+            </div>
+            <button
+              className="shrink-0 rounded-md border border-red-400 px-3 py-1.5 text-xs font-semibold text-red-500 disabled:opacity-50"
+              disabled={busy}
+              onClick={() => {
+                void onCancel()
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+
+          <div className="divide-y divide-gray-100 dark:divide-gray-800">
+            {portfolioSubscription.items.map((item) => (
+              <GeneratedSubscriptionLine
+                key={item.id}
+                name={item.trader_display_name ?? item.trader_address ?? 'Trader'}
+                address={item.trader_address}
+                allocationUsd={item.target_allocation_usd}
+                weight={item.target_weight_pct}
+                status={item.subscription.managed_by_portfolio ? 'Managed' : 'Manual'}
+              />
+            ))}
+          </div>
+
+          <ConflictNotice conflicts={conflicts} />
+          {notice && <p className="mt-3 text-xs text-green-500">{notice}</p>}
+          {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-tg-text">Demo activation</h2>
+        <span className="text-xs text-tg-hint">
+          {portfolio.current_version.allocations.length} subscriptions
+        </span>
+      </div>
+
+      <form
+        className="rounded-lg px-3 py-3"
+        style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+        onSubmit={handleSubmit}
+      >
+        <label className="block text-xs text-tg-hint" htmlFor="demo-allocation">
+          Demo allocation
+        </label>
+        <div className="mt-1 flex items-center gap-2">
+          <input
+            id="demo-allocation"
+            className="min-w-0 flex-1 rounded-md border border-gray-200 bg-transparent px-3 py-2 text-sm font-semibold text-tg-text outline-none focus:border-tg-button dark:border-gray-700"
+            inputMode="decimal"
+            min={11}
+            max={1_000_000}
+            step={1}
+            type="number"
+            value={allocationInput}
+            onChange={(event) => setAllocationInput(event.target.value)}
+          />
+          <button
+            className="shrink-0 rounded-md bg-tg-button px-3 py-2 text-sm font-semibold text-tg-button-text disabled:opacity-50"
+            disabled={busy || allocationInvalid}
+            type="submit"
+          >
+            {busy ? 'Starting' : 'Start demo'}
+          </button>
+        </div>
+
+        <div className="mt-3 divide-y divide-gray-100 dark:divide-gray-800">
+          {previewRows.map((row) => (
+            <GeneratedSubscriptionLine
+              key={row.id}
+              name={row.name}
+              address={row.address}
+              allocationUsd={row.allocationUsd}
+              weight={row.weight}
+              status="Preview"
+            />
+          ))}
+        </div>
+
+        <ConflictNotice conflicts={conflicts} />
+        {notice && <p className="mt-3 text-xs text-green-500">{notice}</p>}
+        {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+      </form>
+    </section>
+  )
+}
+
+function ConflictNotice({
+  conflicts,
+}: {
+  conflicts: PortfolioActivationConflict[]
+}) {
+  if (conflicts.length === 0) return null
+
+  return (
+    <div className="mt-3 rounded-md border border-amber-300 px-2 py-2 text-xs leading-snug text-amber-600">
+      Manual live overlap:{' '}
+      {conflicts
+        .map((item) => item.trader_display_name ?? item.trader_address.slice(0, 10))
+        .join(', ')}
+    </div>
+  )
+}
+
+function GeneratedSubscriptionLine({
+  name,
+  address,
+  allocationUsd,
+  weight,
+  status,
+}: {
+  name: string
+  address: string | null
+  allocationUsd: number
+  weight: number
+  status: string
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2">
+      <div className="min-w-0">
+        <div className="truncate text-xs font-semibold text-tg-text">{name}</div>
+        {address && (
+          <div className="truncate font-mono text-[10px] text-tg-hint">
+            {address}
+          </div>
+        )}
+      </div>
+      <div className="shrink-0 text-right">
+        <div className="text-xs font-semibold text-tg-text">
+          {money(allocationUsd)}
+        </div>
+        <div className="text-[10px] text-tg-hint">
+          {weight.toFixed(3)}% · {status}
+        </div>
+      </div>
     </div>
   )
 }

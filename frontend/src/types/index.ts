@@ -128,6 +128,10 @@ export interface Subscription {
   sizing_mode: SizingMode
   max_per_coin_usd: number | null
   allowed_coins: string[] | null
+  source_type: 'manual' | 'model_portfolio'
+  source_id: number | null
+  source_version_id: number | null
+  managed_by_portfolio: boolean
   is_active: boolean
   is_demo: boolean
   created_at: string
@@ -193,6 +197,8 @@ export type SortKey = 'roi' | 'pnl' | 'volume'
 export type RiskProfile = 'conservative' | 'balanced' | 'aggressive'
 export type ModelPortfolioStatus = 'draft' | 'active' | 'paused' | 'retired'
 export type PortfolioVersionStatus = 'draft' | 'published' | 'retired' | 'rejected'
+export type UserPortfolioStatus = 'trialing' | 'active' | 'past_due' | 'paused' | 'canceled'
+export type PortfolioItemStatus = 'active' | 'removed' | 'failed' | 'paused'
 
 export interface PortfolioCurrentVersionSummary {
   id: number
@@ -293,6 +299,74 @@ export interface PortfolioBacktest extends PortfolioBacktestSummary {
 export interface ModelPortfolioDetail extends Omit<ModelPortfolioListItem, 'current_version' | 'latest_backtest'> {
   current_version: ModelPortfolioPublishedVersion
   backtests: PortfolioBacktest[]
+}
+
+export interface UserPortfolioSubscriptionCreate {
+  portfolio_id: number
+  active_version_id: number
+  is_demo: boolean
+  auto_rebalance: boolean
+  total_allocation_usd: number
+  close_removed_positions: boolean
+}
+
+export interface UserPortfolioSubscription {
+  id: number
+  user_id: number
+  portfolio_id: number
+  active_version_id: number
+  status: UserPortfolioStatus
+  is_demo: boolean
+  auto_rebalance: boolean
+  total_allocation_usd: number
+  close_removed_positions: boolean
+  billing_provider: string | null
+  billing_customer_id: string | null
+  billing_subscription_id: string | null
+  current_period_end: string | null
+  created_at: string
+  updated_at: string
+  canceled_at: string | null
+}
+
+export interface UserPortfolioItem {
+  id: number
+  user_portfolio_subscription_id: number
+  subscription_id: number
+  portfolio_version_id: number
+  allocation_id: number
+  trader_id: number
+  target_allocation_usd: number
+  target_weight_pct: number
+  status: PortfolioItemStatus
+  created_at: string
+  removed_at: string | null
+}
+
+export interface UserPortfolioItemDetail extends UserPortfolioItem {
+  subscription: Subscription
+  trader_address: string | null
+  trader_display_name: string | null
+}
+
+export interface UserPortfolioSubscriptionDetail extends UserPortfolioSubscription {
+  portfolio_slug: string
+  portfolio_name: string
+  active_version_no: number
+  items: UserPortfolioItemDetail[]
+}
+
+export interface PortfolioActivationConflict {
+  trader_id: number
+  trader_address: string
+  trader_display_name: string | null
+  subscription_id: number
+  is_demo: boolean
+}
+
+export interface UserPortfolioActivationResponse extends UserPortfolioSubscriptionDetail {
+  created: boolean
+  conflicts: PortfolioActivationConflict[]
 }
 
 export interface DemoOpenPosition {

@@ -126,6 +126,10 @@ async def _to_response(
         allowed_coins=(
             list(sub.allowed_coins) if sub.allowed_coins is not None else None
         ),
+        source_type=sub.source_type,
+        source_id=sub.source_id,
+        source_version_id=sub.source_version_id,
+        managed_by_portfolio=sub.managed_by_portfolio,
         is_active=sub.is_active,
         is_demo=sub.is_demo,
         created_at=sub.created_at,

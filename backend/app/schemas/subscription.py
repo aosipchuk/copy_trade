@@ -42,6 +42,10 @@ class SubscriptionResponse(BaseModel):
     sizing_mode: str
     max_per_coin_usd: float | None
     allowed_coins: list[str] | None
+    source_type: str
+    source_id: int | None
+    source_version_id: int | None
+    managed_by_portfolio: bool
     is_active: bool
     is_demo: bool
     created_at: datetime
