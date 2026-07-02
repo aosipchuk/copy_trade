@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: copytrade
-      POSTGRES_USER: copytrade
-      POSTGRES_PASSWORD: copytrade
+      POSTGRES_DB: ${POSTGRES_DB:-copytrade}
+      POSTGRES_USER: ${POSTGRES_USER:-copytrade}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-copytrade}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -42,9 +42,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    env_file: .env
+    env_file:
+      - ${APP_ENV_FILE:-.env}
     environment:
-      DATABASE_URL: postgresql+asyncpg://copytrade:copytrade@postgres:5432/copytrade
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-copytrade}:${POSTGRES_PASSWORD:-copytrade}@postgres:5432/${POSTGRES_DB:-copytrade}
       REDIS_URL: redis://redis:6379/0
     ports:
       - "8001:8000"
@@ -75,6 +76,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_WS_URL: ${VITE_WS_URL:-}
+        VITE_APP_URL: ${VITE_APP_URL:-}
         VITE_WALLETCONNECT_PROJECT_ID: ${VITE_WALLETCONNECT_PROJECT_ID:-}
     restart: unless-stopped
     logging:

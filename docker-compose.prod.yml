@@ -1,7 +1,7 @@
 # Production overlay — use with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
 # Differences from dev:
-#   - No exposed ports on postgres / redis / clickhouse (internal network only)
+#   - No exposed ports on postgres / redis (internal network only)
 #   - No source volume mounts (immutable images)
 #   - Backend runs without --reload
 #   - Frontend + API served by nginx-proxy on port 80

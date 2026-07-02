@@ -38,8 +38,9 @@ make test-cov    # pytest with --cov=app + HTML report
 
 # Production
 make prod-build  # Build all images
-make prod-up     # Start with prod overlay (no exposed DB ports, nginx-proxy, certbot)
-make ssl         # Issue cert via ACME webroot challenge (run once before prod-up)
+make prod-target # Show production target from .env.prod
+make prod-check-target # Validate target metadata and required prod env vars
+make prod-up     # Start with prod overlay (no exposed DB ports, nginx-proxy)
 make deploy      # Build → alembic upgrade → rolling restart of app services
 
 # Frontend dev (in frontend/)
@@ -132,11 +133,11 @@ copy_trade/
 │   │   └── pages/                     # TradersPage, TraderDetailPage, WalletPage, MyTradesPage
 │   ├── Dockerfile                     # node:22-alpine builder → nginx:1.27-alpine
 │   └── nginx.conf                     # SPA try_files, gzip, 1y cache for hashed assets
-├── infra/nginx/nginx.conf             # Reverse proxy: HTTP→HTTPS, /api/ → backend:8000, WS upgrade
+├── infra/nginx/nginx.conf             # Reverse proxy: /api/ → backend:8000, WS upgrade
 ├── docker-compose.yml                 # Dev stack
-├── docker-compose.prod.yml            # Prod overlay: no exposed DB ports, nginx-proxy, certbot
+├── docker-compose.prod.yml            # Prod overlay: no exposed DB ports, nginx-proxy
 ├── .env.example                       # Dev env template
-├── .env.prod.example                  # Prod env template with key-generation instructions
+├── .env.prod.example                  # Prod env + deployment target template
 └── Makefile
 ```
 
@@ -225,4 +226,5 @@ See `.env.example` for dev, `.env.prod.example` for production. Required non-def
 - `AGENT_ENCRYPTION_KEY` — 32-byte hex (64 chars); rotating this invalidates all stored agent keys
 - `SECRET_KEY` — JWT signing key, min 32 chars
 - `HL_NETWORK` — `mainnet` or `testnet`
+- `DEPLOY_TARGET`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, `PUBLIC_URL`, `HEALTHCHECK_URL` — make the production destination explicit
 - `VITE_DEV_JWT` — (frontend only, `.env.local`) skip Telegram initData auth in local dev

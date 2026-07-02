@@ -1,11 +1,11 @@
 .PHONY: up down build logs shell test lint typecheck migrate makemigrations install clean \
-        prod-up prod-down prod-logs prod-build ssl deploy deploy-backend deploy-frontend run
+        prod-up prod-down prod-logs prod-build prod-target prod-check-target \
+        deploy deploy-backend deploy-frontend run
 
-ifneq (,$(wildcard ./.env.prod))
-  include .env.prod
-  export
-else ifneq (,$(wildcard ./.env))
-  include .env
+PROD_ENV_FILE ?= $(if $(wildcard ./.env.prod),.env.prod,.env)
+
+ifneq (,$(wildcard ./$(PROD_ENV_FILE)))
+  include $(PROD_ENV_FILE)
   export
 endif
 
@@ -32,7 +32,13 @@ shell:
 
 # ─── Production ───────────────────────────────────────────────────────────────
 
-PROD_COMPOSE = docker compose -f docker-compose.yml -f docker-compose.prod.yml
+PROD_COMPOSE = APP_ENV_FILE=$(PROD_ENV_FILE) docker compose --env-file $(PROD_ENV_FILE) -f docker-compose.yml -f docker-compose.prod.yml
+PROD_REQUIRED_VARS = ENVIRONMENT SECRET_KEY TELEGRAM_BOT_TOKEN AGENT_ENCRYPTION_KEY \
+	TELEGRAM_WEBHOOK_SECRET POSTGRES_PASSWORD DATABASE_URL REDIS_PASSWORD HL_NETWORK \
+	BUILDER_ADDRESS \
+	VITE_WALLETCONNECT_PROJECT_ID VITE_API_URL VITE_WS_URL VITE_APP_URL \
+	DEPLOY_TARGET DEPLOY_HOST DEPLOY_USER DEPLOY_PATH DEPLOY_BRANCH DEPLOY_EDGE \
+	DOMAIN PUBLIC_URL HEALTHCHECK_URL TELEGRAM_MINI_APP_URL
 
 prod-build:
 	$(PROD_COMPOSE) build
@@ -46,13 +52,39 @@ prod-down:
 prod-logs:
 	$(PROD_COMPOSE) logs -f
 
-# Obtain/renew SSL certificate (run once before prod-up, requires DOMAIN in .env)
-ssl:
-	$(PROD_COMPOSE) run --rm certbot certonly \
-		--webroot -w /var/www/certbot \
-		--email admin@$(DOMAIN) \
-		--agree-tos --no-eff-email \
-		-d $(DOMAIN)
+prod-target:
+	@echo "Env file: $(PROD_ENV_FILE)"
+	@echo "Target: $${DEPLOY_TARGET:-<unset>}"
+	@echo "SSH: $${DEPLOY_USER:-<unset>}@$${DEPLOY_HOST:-<unset>}"
+	@echo "Path: $${DEPLOY_PATH:-<unset>}"
+	@echo "Branch: $${DEPLOY_BRANCH:-<unset>}"
+	@echo "Edge: $${DEPLOY_EDGE:-<unset>}"
+	@echo "Public URL: $${PUBLIC_URL:-<unset>}"
+	@echo "Health check: $${HEALTHCHECK_URL:-<unset>}"
+
+prod-check-target:
+	@missing=0; \
+	for var in $(PROD_REQUIRED_VARS); do \
+		val=$$(printenv "$$var" || true); \
+		if [ -z "$$val" ]; then \
+			echo "missing $$var"; missing=1; \
+		elif printf '%s\n' "$$val" | grep -Eq '(REPLACE_WITH|YOUR_|your\.domain\.com|https://your\.domain\.com|wss://your\.domain\.com|change-me)'; then \
+			echo "placeholder $$var=$$val"; missing=1; \
+		fi; \
+	done; \
+	if [ "$$ENVIRONMENT" != "production" ]; then \
+		echo "invalid ENVIRONMENT=$$ENVIRONMENT"; missing=1; \
+	fi; \
+	if [ "$(PROD_ENV_FILE)" = ".env" ]; then \
+		echo "warning: using .env for prod; prefer .env.prod"; \
+	fi; \
+	if [ "$$missing" -ne 0 ]; then \
+		echo "Fill $(PROD_ENV_FILE) using .env.prod.example."; exit 1; \
+	fi; \
+	echo "Production target OK"; \
+	echo "Target: $$DEPLOY_TARGET ($$DEPLOY_USER@$$DEPLOY_HOST:$$DEPLOY_PATH, branch $$DEPLOY_BRANCH)"; \
+	echo "Public URL: $$PUBLIC_URL"; \
+	echo "Health check: $$HEALTHCHECK_URL"
 
 # Full deploy: build → migrate → restart (use when frontend changed)
 deploy:
