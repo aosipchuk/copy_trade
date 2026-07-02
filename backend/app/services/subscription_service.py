@@ -255,9 +255,19 @@ async def delete_subscription(
     db: AsyncSession, user_id: int, subscription_id: int, close_positions: bool = True
 ) -> None:
     sub = await _get_owned(db, user_id, subscription_id)
+
+    if sub.is_demo:
+        from app.services.demo_service import (  # noqa: PLC0415
+            close_demo_subscription_positions,
+        )
+
+        await close_demo_subscription_positions(db, sub)
+        sub.is_active = False
+        return
+
     sub.is_active = False
 
-    if close_positions and not sub.is_demo:
+    if close_positions:
         from app.tasks.execution_tasks import (
             close_subscription_positions_async,  # noqa: PLC0415
         )

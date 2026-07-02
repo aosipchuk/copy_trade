@@ -567,6 +567,10 @@ export interface DemoPortfolioResponse {
   open_positions: DemoOpenPosition[]
 }
 
+export interface DemoResetResponse {
+  deleted_trades: number
+}
+
 export interface DemoTradeItem {
   id: number
   coin: string

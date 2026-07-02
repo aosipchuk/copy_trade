@@ -1,8 +1,18 @@
-import type { DemoClosedPositionItem, DemoPortfolioResponse, DemoTradeItem } from '../types'
+import type {
+  DemoClosedPositionItem,
+  DemoPortfolioResponse,
+  DemoResetResponse,
+  DemoTradeItem,
+} from '../types'
 import { http } from './http'
 
 export async function fetchDemoPortfolio(): Promise<DemoPortfolioResponse> {
   const res = await http.get<DemoPortfolioResponse>('/demo/portfolio')
+  return res.data
+}
+
+export async function resetDemoStats(): Promise<DemoResetResponse> {
+  const res = await http.post<DemoResetResponse>('/demo/reset')
   return res.data
 }
 

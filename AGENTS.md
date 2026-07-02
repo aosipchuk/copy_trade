@@ -21,6 +21,8 @@ Backend code targets Python 3.12 with 4-space indentation, Black line length `88
 
 ## Testing Guidelines
 
+Always run project tests and verification commands on the server, not locally. Do not run local pytest, frontend builds, type checks, lint checks, Docker test stacks, or database-backed verification unless the user explicitly asks for a local run. Local read-only inspection of files is fine.
+
 Use pytest for backend tests. Unit tests in `backend/tests/unit/` should not require external infrastructure. API tests in `backend/tests/api/` require Postgres on `localhost:5433`, usually from `make up`. Name test files `test_*.py` and test functions `test_*`. Run focused tests with:
 
 ```bash

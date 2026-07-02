@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 
 import pytest
-from sqlalchemy import insert, update
+from sqlalchemy import insert, select, update
 
 from app.models.signal import Signal
 from app.models.trade import UserTrade
@@ -400,3 +400,194 @@ class TestDemoPortfolio:
         assert data["win_count"] == 1
         assert data["win_rate_pct"] == pytest.approx(50.0)
         assert data["total_realized_pnl"] == pytest.approx(60.0)
+
+    @pytest.mark.asyncio
+    async def test_portfolio_keeps_realized_after_demo_unsubscribe(
+        self, client, db_session
+    ) -> None:
+        """Stopping a demo subscription must not remove realized PnL history."""
+        trader_id = await _seed_trader(db_session)
+        headers = await _get_auth_header(client, user_id=80023)
+
+        sub_r = await client.post(
+            "/api/subscriptions", json=_demo_body(trader_id), headers=headers
+        )
+        assert sub_r.status_code == 201
+        sub_id = sub_r.json()["id"]
+
+        sig_result = await db_session.execute(
+            insert(Signal)
+            .values(
+                trader_id=trader_id,
+                signal_type="CLOSE",
+                coin="BTC",
+                side="long",
+                size=0.1,
+            )
+            .returning(Signal.id)
+        )
+        signal_id = sig_result.scalar_one()
+        await db_session.execute(
+            insert(UserTrade).values(
+                subscription_id=sub_id,
+                signal_id=signal_id,
+                coin="BTC",
+                side="long",
+                size=0.1,
+                price=55000.0,
+                status="filled",
+                trade_type="close",
+                realized_pnl=42.0,
+                is_demo=True,
+            )
+        )
+        await db_session.commit()
+
+        delete_r = await client.delete(
+            f"/api/subscriptions/{sub_id}",
+            headers=headers,
+            params={"close_positions": False},
+        )
+        assert delete_r.status_code == 204
+
+        list_r = await client.get("/api/subscriptions?is_demo=true", headers=headers)
+        assert list_r.status_code == 200
+        assert list_r.json() == []
+
+        portfolio_r = await client.get("/api/demo/portfolio", headers=headers)
+        assert portfolio_r.status_code == 200
+        data = portfolio_r.json()
+        assert data["total_realized_pnl"] == pytest.approx(42.0)
+        assert data["trade_count"] == 1
+        assert data["win_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_demo_unsubscribe_closes_open_positions_as_realized(
+        self, client, db_session
+    ) -> None:
+        """Stopping demo converts open simulated PnL into a close trade."""
+        trader_id = await _seed_trader(db_session)
+        headers = await _get_auth_header(client, user_id=80024)
+
+        sub_r = await client.post(
+            "/api/subscriptions", json=_demo_body(trader_id), headers=headers
+        )
+        assert sub_r.status_code == 201
+        sub_id = sub_r.json()["id"]
+
+        sig_result = await db_session.execute(
+            insert(Signal)
+            .values(
+                trader_id=trader_id,
+                signal_type="OPEN",
+                coin="BTC",
+                side="long",
+                size=2.0,
+            )
+            .returning(Signal.id)
+        )
+        signal_id = sig_result.scalar_one()
+        await db_session.execute(
+            insert(UserTrade).values(
+                subscription_id=sub_id,
+                signal_id=signal_id,
+                coin="BTC",
+                side="long",
+                size=2.0,
+                price=100.0,
+                status="filled",
+                trade_type="open",
+                is_demo=True,
+            )
+        )
+        await db_session.commit()
+
+        with patch.object(
+            HyperliquidInfoClient,
+            "get_all_mids",
+            AsyncMock(return_value={"BTC": "105.0"}),
+        ):
+            delete_r = await client.delete(
+                f"/api/subscriptions/{sub_id}",
+                headers=headers,
+                params={"close_positions": False},
+            )
+
+        assert delete_r.status_code == 204
+
+        close_result = await db_session.execute(
+            select(UserTrade).where(
+                UserTrade.subscription_id == sub_id,
+                UserTrade.trade_type == "close",
+                UserTrade.is_demo.is_(True),
+            )
+        )
+        close_trade = close_result.scalar_one()
+        assert float(close_trade.realized_pnl) == pytest.approx(10.0)
+
+        portfolio_r = await client.get("/api/demo/portfolio", headers=headers)
+        assert portfolio_r.status_code == 200
+        data = portfolio_r.json()
+        assert data["total_realized_pnl"] == pytest.approx(10.0)
+        assert data["total_unrealized_pnl"] == 0.0
+        assert data["open_positions"] == []
+
+    @pytest.mark.asyncio
+    async def test_reset_demo_stats_clears_history_but_keeps_subscription(
+        self, client, db_session
+    ) -> None:
+        """Reset clears demo trade history without deleting active demo subscriptions."""
+        trader_id = await _seed_trader(db_session)
+        headers = await _get_auth_header(client, user_id=80025)
+
+        sub_r = await client.post(
+            "/api/subscriptions", json=_demo_body(trader_id), headers=headers
+        )
+        assert sub_r.status_code == 201
+        sub_id = sub_r.json()["id"]
+
+        sig_result = await db_session.execute(
+            insert(Signal)
+            .values(
+                trader_id=trader_id,
+                signal_type="CLOSE",
+                coin="ETH",
+                side="long",
+                size=0.1,
+            )
+            .returning(Signal.id)
+        )
+        signal_id = sig_result.scalar_one()
+        await db_session.execute(
+            insert(UserTrade).values(
+                subscription_id=sub_id,
+                signal_id=signal_id,
+                coin="ETH",
+                side="long",
+                size=0.1,
+                price=3000.0,
+                status="filled",
+                trade_type="close",
+                realized_pnl=25.0,
+                is_demo=True,
+            )
+        )
+        await db_session.commit()
+
+        reset_r = await client.post("/api/demo/reset", headers=headers)
+        assert reset_r.status_code == 200
+        assert reset_r.json()["deleted_trades"] == 1
+
+        portfolio_r = await client.get("/api/demo/portfolio", headers=headers)
+        data = portfolio_r.json()
+        assert data["total_realized_pnl"] == 0.0
+        assert data["total_unrealized_pnl"] == 0.0
+        assert data["trade_count"] == 0
+        assert data["open_positions"] == []
+
+        list_r = await client.get("/api/subscriptions?is_demo=true", headers=headers)
+        subs = list_r.json()
+        assert len(subs) == 1
+        assert subs[0]["id"] == sub_id
+        assert subs[0]["realized_pnl"] == 0.0
+        assert subs[0]["trade_count"] == 0

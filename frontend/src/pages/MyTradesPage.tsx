@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { fetchDemoPortfolio } from '../api/demo'
+import { fetchDemoPortfolio, resetDemoStats } from '../api/demo'
 import { deleteSubscription, listSubscriptions, updateSubscription } from '../api/subscriptions'
 import { fetchWalletPositions } from '../api/wallet'
 import { FullPageSpinner } from '../components/LoadingSpinner'
@@ -23,6 +23,16 @@ function getTabFromSearch(search: string): Tab | null {
 
 function getActiveTab(search: string, state: unknown): Tab {
   return getTabFromSearch(search) ?? getTabFromState(state) ?? 'live'
+}
+
+function hasDemoStats(portfolio: DemoPortfolioResponse | null): boolean {
+  if (!portfolio) return false
+  return (
+    portfolio.total_realized_pnl !== 0 ||
+    portfolio.total_unrealized_pnl !== 0 ||
+    portfolio.trade_count > 0 ||
+    portfolio.open_positions.length > 0
+  )
 }
 
 export function MyTradesPage() {
@@ -170,6 +180,7 @@ function DemoTab() {
   const [portfolio, setPortfolio] = useState<DemoPortfolioResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [unsubscribeId, setUnsubscribeId] = useState<number | null>(null)
+  const [resetOpen, setResetOpen] = useState(false)
   const navigate = useNavigate()
 
   const reload = () => {
@@ -186,32 +197,65 @@ function DemoTab() {
 
   const handleUnsubscribe = async () => {
     if (unsubscribeId === null) return
-    await deleteSubscription(unsubscribeId, false)
+    await deleteSubscription(unsubscribeId, true)
     setUnsubscribeId(null)
+    reload()
+  }
+
+  const handleReset = async () => {
+    await resetDemoStats()
+    setResetOpen(false)
     reload()
   }
 
   if (loading) return <FullPageSpinner />
 
+  const showPortfolio = portfolio !== null && (subs.length > 0 || hasDemoStats(portfolio))
+
   if (subs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center mt-16">
-        <p className="text-tg-hint">No demo subscriptions yet</p>
-        <p className="text-xs text-tg-hint">Go to a trader and tap "Try Demo"</p>
-        <button
-          className="px-5 py-2.5 rounded-xl text-sm font-semibold text-tg-button-text"
-          style={{ background: 'var(--tg-theme-button-color)' }}
-          onClick={() => navigate('/')}
-        >
-          Browse Traders
-        </button>
+      <div className="px-4 pt-4 space-y-3">
+        {showPortfolio && portfolio && (
+          <DemoPortfolioCard
+            portfolio={portfolio}
+            subCount={subs.length}
+            onReset={() => setResetOpen(true)}
+          />
+        )}
+
+        <div className="flex flex-col items-center justify-center gap-4 px-2 text-center mt-12">
+          <p className="text-tg-hint">
+            {showPortfolio ? 'No active demo subscriptions' : 'No demo subscriptions yet'}
+          </p>
+          <p className="text-xs text-tg-hint">Go to a trader and tap "Try Demo"</p>
+          <button
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-tg-button-text"
+            style={{ background: 'var(--tg-theme-button-color)' }}
+            onClick={() => navigate('/')}
+          >
+            Browse Traders
+          </button>
+        </div>
+
+        {resetOpen && (
+          <DemoResetModal
+            onCancel={() => setResetOpen(false)}
+            onConfirm={handleReset}
+          />
+        )}
       </div>
     )
   }
 
   return (
     <div className="px-4 pt-4 space-y-3">
-      {portfolio && <DemoPortfolioCard portfolio={portfolio} subCount={subs.length} />}
+      {portfolio && (
+        <DemoPortfolioCard
+          portfolio={portfolio}
+          subCount={subs.length}
+          onReset={() => setResetOpen(true)}
+        />
+      )}
 
       {subs.map((sub) => {
         const openPositions = portfolio?.open_positions.filter(
@@ -232,6 +276,13 @@ function DemoTab() {
         <DemoUnsubscribeModal
           onCancel={() => setUnsubscribeId(null)}
           onConfirm={handleUnsubscribe}
+        />
+      )}
+
+      {resetOpen && (
+        <DemoResetModal
+          onCancel={() => setResetOpen(false)}
+          onConfirm={handleReset}
         />
       )}
     </div>
@@ -298,9 +349,11 @@ function LivePortfolioCard({
 function DemoPortfolioCard({
   portfolio,
   subCount,
+  onReset,
 }: {
   portfolio: DemoPortfolioResponse
   subCount: number
+  onReset: () => void
 }) {
   const totalPnl = portfolio.total_realized_pnl + portfolio.total_unrealized_pnl
   return (
@@ -310,12 +363,20 @@ function DemoPortfolioCard({
     >
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm font-semibold text-tg-text">Demo Portfolio</span>
-        <span
-          className="text-xs px-2 py-0.5 rounded-full font-semibold"
-          style={{ background: '#7c3aed', color: '#fff' }}
-        >
-          DEMO
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            className="text-xs px-2 py-0.5 rounded-full font-semibold border border-tg-button text-tg-button"
+            onClick={onReset}
+          >
+            Reset
+          </button>
+          <span
+            className="text-xs px-2 py-0.5 rounded-full font-semibold"
+            style={{ background: '#7c3aed', color: '#fff' }}
+          >
+            DEMO
+          </span>
+        </div>
       </div>
       <div className={`text-xl font-bold mb-2 ${totalPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
         {fmt.usd(totalPnl)}
@@ -443,6 +504,46 @@ function DemoUnsubscribeModal({
             onClick={onConfirm}
           >
             Stop Demo
+          </button>
+          <button
+            className="w-full py-3 rounded-xl text-sm text-tg-hint"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+function DemoResetModal({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end" onClick={onCancel}>
+      <div
+        className="w-full rounded-t-2xl"
+        style={{ background: 'var(--tg-theme-bg-color, #fff)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 pt-5 pb-4">
+          <h2 className="text-base font-semibold text-tg-text mb-1">Reset Demo Stats</h2>
+          <p className="text-sm text-tg-hint">
+            This will clear all simulated trade history and open demo positions. Active demo subscriptions will stay on.
+          </p>
+        </div>
+        <div className="px-5 space-y-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
+          <button
+            className="w-full py-3 rounded-xl text-sm font-semibold border border-red-400 text-red-400"
+            onClick={onConfirm}
+          >
+            Reset Stats
           </button>
           <button
             className="w-full py-3 rounded-xl text-sm text-tg-hint"

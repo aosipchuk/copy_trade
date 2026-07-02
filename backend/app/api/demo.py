@@ -4,12 +4,14 @@ from app.api.deps import CurrentUser, DBSession
 from app.schemas.subscription import (
     DemoClosedPositionItem,
     DemoPortfolioResponse,
+    DemoResetResponse,
     DemoTradeItem,
 )
 from app.services.demo_service import (
     get_demo_closed_position_cycles,
     get_demo_portfolio,
     get_demo_subscription_trades,
+    reset_demo_stats,
 )
 
 router = APIRouter(prefix="/demo", tags=["demo"])
@@ -22,6 +24,15 @@ async def demo_portfolio(
 ) -> DemoPortfolioResponse:
     """Aggregate simulated P&L stats across all demo subscriptions."""
     return await get_demo_portfolio(db, current_user.id)
+
+
+@router.post("/reset", response_model=DemoResetResponse)
+async def demo_reset(
+    current_user: CurrentUser,
+    db: DBSession,
+) -> DemoResetResponse:
+    """Reset simulated trade history while keeping demo subscriptions active."""
+    return await reset_demo_stats(db, current_user.id)
 
 
 @router.get(

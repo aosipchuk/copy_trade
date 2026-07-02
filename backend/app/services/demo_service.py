@@ -1,6 +1,7 @@
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -11,6 +12,7 @@ from app.schemas.subscription import (
     DemoClosedPositionItem,
     DemoOpenPosition,
     DemoPortfolioResponse,
+    DemoResetResponse,
     DemoTradeItem,
 )
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
@@ -18,16 +20,164 @@ from app.services.hyperliquid.info_client import HyperliquidInfoClient
 logger = get_logger(__name__)
 
 
+async def _load_truly_open_demo_trades(
+    db: AsyncSession, subscription_ids: list[int]
+) -> dict[tuple[int, str | None], UserTrade]:
+    if not subscription_ids:
+        return {}
+
+    open_result = await db.execute(
+        select(UserTrade)
+        .where(
+            UserTrade.subscription_id.in_(subscription_ids),
+            UserTrade.trade_type == "open",
+            UserTrade.is_demo.is_(True),
+            UserTrade.status == "filled",
+        )
+        .order_by(UserTrade.executed_at.asc())
+    )
+    all_open_trades = open_result.scalars().all()
+    if not all_open_trades:
+        return {}
+
+    close_result = await db.execute(
+        select(
+            UserTrade.subscription_id,
+            UserTrade.coin,
+            func.max(UserTrade.executed_at),
+        )
+        .where(
+            UserTrade.subscription_id.in_(subscription_ids),
+            UserTrade.trade_type == "close",
+            UserTrade.is_demo.is_(True),
+            UserTrade.status == "filled",
+        )
+        .group_by(UserTrade.subscription_id, UserTrade.coin)
+    )
+    last_close_by_sub_coin: dict[tuple[int, str | None], datetime] = {
+        (row[0], row[1]): row[2] for row in close_result.all()
+    }
+
+    truly_open: dict[tuple[int, str | None], UserTrade] = {}
+    for trade in reversed(all_open_trades):
+        key = (trade.subscription_id, trade.coin)
+        if key in truly_open:
+            continue
+        last_close = last_close_by_sub_coin.get(key)
+        if last_close is not None and last_close >= trade.executed_at:
+            continue
+        truly_open[key] = trade
+
+    return truly_open
+
+
+async def close_demo_subscription_positions(
+    db: AsyncSession, subscription: Subscription
+) -> int:
+    """Convert open demo positions for a subscription into realized close trades."""
+    open_positions = await _load_truly_open_demo_trades(db, [subscription.id])
+    if not open_positions:
+        return 0
+
+    try:
+        hl = HyperliquidInfoClient()
+        mids = await hl.get_all_mids()
+    except Exception as exc:
+        logger.warning(
+            "demo_unsubscribe_mids_fetch_failed",
+            subscription_id=subscription.id,
+            error=str(exc),
+        )
+        raise ValueError(
+            "Failed to fetch demo market prices — try again later"
+        ) from exc
+
+    closed_count = 0
+    for (_sub_id, coin), open_trade in open_positions.items():
+        mid_str = mids.get(coin or "")
+        if (
+            not coin
+            or mid_str is None
+            or open_trade.price is None
+            or open_trade.size is None
+        ):
+            logger.warning(
+                "demo_unsubscribe_close_skipped",
+                subscription_id=subscription.id,
+                trade_id=open_trade.id,
+                coin=coin,
+                has_mid=mid_str is not None,
+            )
+            raise ValueError("Failed to close all demo positions — try again later")
+
+        close_price = Decimal(mid_str)
+        entry_price = Decimal(str(open_trade.price))
+        size = Decimal(str(open_trade.size))
+        side = open_trade.side or "long"
+        direction = Decimal("1") if side == "long" else Decimal("-1")
+        realized_pnl = (close_price - entry_price) * size * direction
+
+        db.add(
+            UserTrade(
+                subscription_id=subscription.id,
+                signal_id=open_trade.signal_id,
+                coin=coin,
+                side=side,
+                size=float(size),
+                price=float(close_price),
+                status="filled",
+                trade_type="close",
+                realized_pnl=float(realized_pnl),
+                is_demo=True,
+            )
+        )
+        closed_count += 1
+
+    logger.info(
+        "demo_unsubscribe_positions_closed",
+        subscription_id=subscription.id,
+        closed=closed_count,
+    )
+    return closed_count
+
+
+async def reset_demo_stats(db: AsyncSession, user_id: int) -> DemoResetResponse:
+    subs_result = await db.execute(
+        select(Subscription.id).where(
+            Subscription.user_id == user_id,
+            Subscription.is_demo.is_(True),
+        )
+    )
+    sub_ids = list(subs_result.scalars().all())
+    if not sub_ids:
+        return DemoResetResponse(deleted_trades=0)
+
+    count_result = await db.execute(
+        select(func.count(UserTrade.id)).where(
+            UserTrade.subscription_id.in_(sub_ids),
+            UserTrade.is_demo.is_(True),
+        )
+    )
+    deleted_trades = int(count_result.scalar_one())
+
+    await db.execute(
+        delete(UserTrade).where(
+            UserTrade.subscription_id.in_(sub_ids),
+            UserTrade.is_demo.is_(True),
+        )
+    )
+    return DemoResetResponse(deleted_trades=deleted_trades)
+
+
 async def get_demo_portfolio(db: AsyncSession, user_id: int) -> DemoPortfolioResponse:
     subs_result = await db.execute(
         select(Subscription).where(
             Subscription.user_id == user_id,
             Subscription.is_demo.is_(True),
-            Subscription.is_active.is_(True),
         )
     )
-    subs = subs_result.scalars().all()
-    sub_ids = [s.id for s in subs]
+    all_subs = subs_result.scalars().all()
+    sub_ids = [s.id for s in all_subs]
 
     if not sub_ids:
         return DemoPortfolioResponse(
@@ -56,46 +206,9 @@ async def get_demo_portfolio(db: AsyncSession, user_id: int) -> DemoPortfolioRes
     trade_count = int(pnl_row[1])
     win_count = int(pnl_row[2])
 
-    open_result = await db.execute(
-        select(UserTrade)
-        .where(
-            UserTrade.subscription_id.in_(sub_ids),
-            UserTrade.trade_type == "open",
-            UserTrade.is_demo.is_(True),
-            UserTrade.status == "filled",
-        )
-        .order_by(UserTrade.executed_at.asc())
-    )
-    all_open_trades = open_result.scalars().all()
-
-    close_result = await db.execute(
-        select(
-            UserTrade.subscription_id,
-            UserTrade.coin,
-            func.max(UserTrade.executed_at),
-        )
-        .where(
-            UserTrade.subscription_id.in_(sub_ids),
-            UserTrade.trade_type == "close",
-            UserTrade.is_demo.is_(True),
-        )
-        .group_by(UserTrade.subscription_id, UserTrade.coin)
-    )
-    last_close_by_sub_coin: dict[tuple[int, str | None], datetime] = {
-        (row[0], row[1]): row[2] for row in close_result.all()
-    }
-
-    # For each (subscription, coin) keep only the most recent open trade
-    # that has no close trade after it.
-    truly_open: dict[tuple[int, str | None], UserTrade] = {}
-    for trade in reversed(all_open_trades):
-        key = (trade.subscription_id, trade.coin)
-        if key in truly_open:
-            continue
-        last_close = last_close_by_sub_coin.get(key)
-        if last_close is not None and last_close >= trade.executed_at:
-            continue
-        truly_open[key] = trade
+    active_subs = [s for s in all_subs if s.is_active]
+    active_sub_ids = [s.id for s in active_subs]
+    truly_open = await _load_truly_open_demo_trades(db, active_sub_ids)
 
     mids: dict[str, str] = {}
     if truly_open:
@@ -105,14 +218,14 @@ async def get_demo_portfolio(db: AsyncSession, user_id: int) -> DemoPortfolioRes
         except Exception as exc:
             logger.warning("demo_portfolio_mids_fetch_failed", error=str(exc))
 
-    sub_map = {s.id: s for s in subs}
-    trader_ids = list({s.trader_id for s in subs})
-    trader_result = await db.execute(
-        select(Trader.id, Trader.display_name).where(Trader.id.in_(trader_ids))
-    )
-    trader_name_by_id: dict[int, str | None] = {
-        row[0]: row[1] for row in trader_result.all()
-    }
+    sub_map = {s.id: s for s in active_subs}
+    trader_ids = list({s.trader_id for s in active_subs})
+    trader_name_by_id: dict[int, str | None] = {}
+    if trader_ids:
+        trader_result = await db.execute(
+            select(Trader.id, Trader.display_name).where(Trader.id.in_(trader_ids))
+        )
+        trader_name_by_id = {row[0]: row[1] for row in trader_result.all()}
 
     open_positions: list[DemoOpenPosition] = []
     total_unrealized_pnl = 0.0

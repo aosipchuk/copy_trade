@@ -74,6 +74,10 @@ class DemoPortfolioResponse(BaseModel):
     open_positions: list[DemoOpenPosition]
 
 
+class DemoResetResponse(BaseModel):
+    deleted_trades: int
+
+
 class DemoTradeItem(BaseModel):
     id: int
     coin: str
