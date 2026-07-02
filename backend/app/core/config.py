@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "production", "test"] = "development"
     debug: bool = False
     secret_key: str = _SECRET_KEY_DEFAULT  # noqa: S105
+    public_url: str = ""
 
     # PostgreSQL
     database_url: str = (
@@ -62,6 +63,16 @@ class Settings(BaseSettings):
     builder_fee_rate: int = 50  # tenth-bps: 50 = 0.05%, 100 = 0.1%
     builder_max_fee_rate: str = "0.075%"  # EIP-712 payload — slightly above real rate
 
+    # Model portfolio billing
+    billing_provider: Literal["stripe"] = "stripe"
+    stripe_api_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_portfolio_price_id: str = ""
+    stripe_checkout_success_url: str = ""
+    stripe_checkout_cancel_url: str = ""
+    stripe_api_url: str = "https://api.stripe.com/v1"
+    model_portfolio_beta_override_telegram_ids: list[int] = []
+
     # ── Validators ────────────────────────────────────────────────────────────
 
     @field_validator("secret_key")
@@ -99,6 +110,20 @@ class Settings(BaseSettings):
             raise ValueError("AGENT_ENCRYPTION_KEY must be valid hexadecimal.") from exc
         return v
 
+    @field_validator("model_portfolio_beta_override_telegram_ids", mode="before")
+    @classmethod
+    def parse_beta_override_telegram_ids(cls, v: Any) -> list[int]:
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            return [int(item.strip()) for item in v.split(",") if item.strip()]
+        if isinstance(v, list):
+            return [int(item) for item in v]
+        raise ValueError(
+            "MODEL_PORTFOLIO_BETA_OVERRIDE_TELEGRAM_IDS must be a comma-separated "
+            "list of Telegram IDs."
+        )
+
     @model_validator(mode="after")
     def reject_weak_keys_in_production(self) -> "Settings":
         if (
@@ -119,6 +144,15 @@ class Settings(BaseSettings):
         if self.hl_network == "testnet":
             return self.hl_testnet_api_url
         return self.hl_mainnet_api_url
+
+    @property
+    def stripe_billing_configured(self) -> bool:
+        return bool(
+            self.stripe_api_key
+            and self.stripe_portfolio_price_id
+            and self.stripe_checkout_success_url
+            and self.stripe_checkout_cancel_url
+        )
 
     @property
     def is_development(self) -> bool:

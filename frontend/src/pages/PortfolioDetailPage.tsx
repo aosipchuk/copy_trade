@@ -3,7 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   activateDemoPortfolio,
   cancelPortfolioSubscription,
+  createPortfolioBillingCheckout,
   fetchPortfolio,
+  fetchPortfolioBillingStatus,
   fetchPortfolioSubscriptions,
 } from '../api/portfolios'
 import { FullPageSpinner } from '../components/LoadingSpinner'
@@ -11,6 +13,7 @@ import { useBackButton } from '../hooks/useTelegram'
 import type {
   ModelPortfolioAllocation,
   ModelPortfolioDetail,
+  PortfolioBillingStatus,
   PortfolioActivationConflict,
   PortfolioBacktest,
   UserPortfolioSubscriptionDetail,
@@ -60,11 +63,17 @@ export function PortfolioDetailPage() {
   const [portfolio, setPortfolio] = useState<ModelPortfolioDetail | null>(null)
   const [portfolioSubscription, setPortfolioSubscription] =
     useState<UserPortfolioSubscriptionDetail | null>(null)
+  const [billingStatus, setBillingStatus] = useState<PortfolioBillingStatus | null>(
+    null,
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activationBusy, setActivationBusy] = useState(false)
   const [activationError, setActivationError] = useState<string | null>(null)
   const [activationNotice, setActivationNotice] = useState<string | null>(null)
+  const [billingBusy, setBillingBusy] = useState(false)
+  const [billingError, setBillingError] = useState<string | null>(null)
+  const [billingNotice, setBillingNotice] = useState<string | null>(null)
   const [conflicts, setConflicts] = useState<PortfolioActivationConflict[]>([])
 
   const navigateBack = useCallback(() => navigate('/portfolios'), [navigate])
@@ -77,23 +86,39 @@ export function PortfolioDetailPage() {
     setError(null)
     setPortfolio(null)
     setPortfolioSubscription(null)
+    setBillingStatus(null)
     setActivationError(null)
     setActivationNotice(null)
+    setBillingError(null)
+    setBillingNotice(null)
     setConflicts([])
 
     fetchPortfolio(slug)
       .then(async (nextPortfolio) => {
         if (canceled) return
         setPortfolio(nextPortfolio)
-        try {
-          const subscriptions = await fetchPortfolioSubscriptions({
+        const [subscriptionsResult, billingResult] = await Promise.allSettled([
+          fetchPortfolioSubscriptions({
             is_demo: true,
             portfolio_id: nextPortfolio.id,
             active_only: true,
-          })
-          if (!canceled) setPortfolioSubscription(subscriptions[0] ?? null)
-        } catch {
-          if (!canceled) setActivationError('Failed to load demo status')
+          }),
+          fetchPortfolioBillingStatus({
+            portfolio_id: nextPortfolio.id,
+            active_version_id: nextPortfolio.current_version.id,
+          }),
+        ])
+        if (canceled) return
+
+        if (subscriptionsResult.status === 'fulfilled') {
+          setPortfolioSubscription(subscriptionsResult.value[0] ?? null)
+        } else {
+          setActivationError('Failed to load demo status')
+        }
+        if (billingResult.status === 'fulfilled') {
+          setBillingStatus(billingResult.value)
+        } else {
+          setBillingError('Failed to load billing status')
         }
       })
       .catch((err: unknown) => {
@@ -165,6 +190,32 @@ export function PortfolioDetailPage() {
     }
   }, [portfolioSubscription])
 
+  const handleCreateCheckout = useCallback(async () => {
+    if (!portfolio) return
+    setBillingBusy(true)
+    setBillingError(null)
+    setBillingNotice(null)
+
+    try {
+      const result = await createPortfolioBillingCheckout({
+        portfolio_id: portfolio.id,
+        active_version_id: portfolio.current_version.id,
+        total_allocation_usd: Math.max(100, Math.round(portfolio.min_equity_usd)),
+      })
+      setBillingStatus(result.billing_status)
+      setBillingNotice(result.message)
+      if (result.checkout_url) {
+        window.open(result.checkout_url, '_blank', 'noopener,noreferrer')
+      }
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response
+        ?.data?.detail
+      setBillingError(detail ?? 'Failed to start payment')
+    } finally {
+      setBillingBusy(false)
+    }
+  }, [portfolio])
+
   if (loading) return <FullPageSpinner />
 
   if (!portfolio) {
@@ -205,6 +256,14 @@ export function PortfolioDetailPage() {
 
       <div className="space-y-4 px-4 pt-4">
         <VersionStats portfolio={portfolio} backtest={primaryBacktest} />
+        <BillingPanel
+          portfolio={portfolio}
+          billingStatus={billingStatus}
+          busy={billingBusy}
+          error={billingError}
+          notice={billingNotice}
+          onCheckout={handleCreateCheckout}
+        />
         <DemoActivationPanel
           portfolio={portfolio}
           portfolioSubscription={portfolioSubscription}
@@ -250,6 +309,99 @@ function StatCell({ label, value }: { label: string; value: string }) {
       <div className="truncate text-[10px] text-tg-hint">{label}</div>
       <div className="truncate text-sm font-semibold text-tg-text">{value}</div>
     </div>
+  )
+}
+
+function BillingPanel({
+  portfolio,
+  billingStatus,
+  busy,
+  error,
+  notice,
+  onCheckout,
+}: {
+  portfolio: ModelPortfolioDetail
+  billingStatus: PortfolioBillingStatus | null
+  busy: boolean
+  error: string | null
+  notice: string | null
+  onCheckout: () => Promise<void>
+}) {
+  const status = billingStatus?.status ?? 'not_started'
+  const paid = billingStatus?.paid ?? false
+  const blocked = status === 'past_due' || status === 'canceled'
+  const periodEnd = billingStatus?.current_period_end
+  const ctaLabel =
+    status === 'past_due'
+      ? 'Update payment'
+      : status === 'canceled'
+        ? 'Restart payment'
+        : 'Start payment'
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-tg-text">Live billing</h2>
+        <span
+          className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${
+            paid
+              ? 'bg-green-500/10 text-green-500'
+              : blocked
+                ? 'bg-red-500/10 text-red-500'
+                : 'bg-amber-500/10 text-amber-600'
+          }`}
+        >
+          {paid ? 'paid' : status.replace('_', ' ')}
+        </span>
+      </div>
+
+      <div
+        className="rounded-lg px-3 py-3"
+        style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-tg-text">
+              {money(portfolio.monthly_price_usd)}/mo
+            </div>
+            <div className="mt-0.5 text-xs text-tg-hint">
+              {portfolio.trial_days} day trial · live access gate
+            </div>
+          </div>
+          {!paid && (
+            <button
+              className="shrink-0 rounded-md bg-tg-button px-3 py-2 text-xs font-semibold text-tg-button-text disabled:opacity-50"
+              disabled={busy}
+              onClick={() => {
+                void onCheckout()
+              }}
+            >
+              {busy ? 'Opening' : ctaLabel}
+            </button>
+          )}
+        </div>
+
+        <div className="mt-3 space-y-1 border-t border-gray-200 pt-3 text-xs text-tg-hint dark:border-gray-700">
+          <Assumption
+            label="Provider"
+            value={billingStatus?.provider?.replace('_', ' ') ?? 'stripe'}
+          />
+          <Assumption label="Status" value={status.replace('_', ' ')} />
+          <Assumption label="Period end" value={dateText(periodEnd)} />
+          {billingStatus?.beta_override && (
+            <Assumption label="Override" value="beta active" />
+          )}
+        </div>
+
+        {blocked && (
+          <div className="mt-3 rounded-md border border-red-300 px-2 py-2 text-xs leading-snug text-red-500">
+            Billing must be active before live activation or rebalance.
+          </div>
+        )}
+        {notice && <p className="mt-3 text-xs text-green-500">{notice}</p>}
+        {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+      </div>
+    </section>
   )
 }
 

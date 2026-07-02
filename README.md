@@ -441,5 +441,11 @@ copy_trade/
 | `DATABASE_URL` | Да | Строка подключения asyncpg |
 | `REDIS_URL` | Да | Строка подключения Redis |
 | `REDIS_PASSWORD` | Только prod | Пароль Redis, используется `docker-compose.prod.yml` |
+| `BILLING_PROVIDER` | Phase 5 | Платежный провайдер для model portfolios, сейчас поддерживается `stripe` |
+| `STRIPE_API_KEY` | Перед paid launch | Secret key Stripe для создания Checkout Sessions |
+| `STRIPE_WEBHOOK_SECRET` | Перед paid launch | Signing secret Stripe webhook endpoint `/api/portfolio-subscriptions/billing/webhook` |
+| `STRIPE_PORTFOLIO_PRICE_ID` | Перед paid launch | Stripe Price ID для подписки Portfolio Basic |
+| `STRIPE_CHECKOUT_SUCCESS_URL`, `STRIPE_CHECKOUT_CANCEL_URL` | Перед paid launch | URL возврата из Stripe Checkout |
+| `MODEL_PORTFOLIO_BETA_OVERRIDE_TELEGRAM_IDS` | Опционально | Comma-separated Telegram IDs, которым billing gate разрешает private beta live readiness без Stripe оплаты |
 
 > **Важно по безопасности**: `AGENT_ENCRYPTION_KEY` шифрует все сохранённые приватные ключи агентов. Смена этого ключа аннулирует все существующие делегирования — пользователям придётся повторно подтвердить агента.

@@ -12,6 +12,7 @@ from app.services.portfolio.activation import (
     get_user_portfolio_subscription,
     list_user_portfolio_subscriptions,
 )
+from app.services.portfolio.billing import BillingPaymentRequiredError
 
 router = APIRouter(prefix="/portfolio-subscriptions", tags=["portfolio-subscriptions"])
 
@@ -28,6 +29,10 @@ async def create(
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except BillingPaymentRequiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc)
         ) from exc
     except ValueError as exc:
         raise HTTPException(

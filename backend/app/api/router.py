@@ -4,6 +4,7 @@ from app.api import (
     auth,
     demo,
     health,
+    portfolio_billing,
     portfolio_subscriptions,
     portfolios,
     subscriptions,
@@ -20,6 +21,7 @@ api_router.include_router(traders.router)
 api_router.include_router(ws_traders.router)
 api_router.include_router(wallet.router)
 api_router.include_router(subscriptions.router)
+api_router.include_router(portfolio_billing.router)
 api_router.include_router(portfolio_subscriptions.router)
 api_router.include_router(portfolios.router)
 api_router.include_router(demo.router)

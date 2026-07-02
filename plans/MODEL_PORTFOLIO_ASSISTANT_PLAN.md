@@ -1153,6 +1153,16 @@ Exit criteria:
 
 Цель: live portfolio доступен только платным пользователям.
 
+Анализ перед реализацией от 2026-07-02:
+
+- Phase 1 уже создала billing-поля в `user_portfolio_subscriptions`, поэтому новая Alembic migration для Phase 5 не нужна;
+- Phase 5 не должна создавать live generated `subscriptions`: это остается задачей Phase 6 после wallet/agent/risk checks;
+- payment checkout должен создавать или переиспользовать non-demo billing-holder `user_portfolio_subscriptions` без `user_portfolio_items`;
+- Stripe webhook является источником обновления `status`, `billing_customer_id`, `billing_subscription_id` и `current_period_end`;
+- live activation в Phase 5 должна сначала проходить billing gate: unpaid/past_due/canceled возвращают payment-required, paid/beta override проходят billing gate и блокируются уже сообщением Phase 6;
+- rebalance engine будущей Phase 7 должен использовать общий billing helper, который блокирует live rebalance при `past_due`/`paused`/`canceled`;
+- admin override для beta реализуется как env allowlist Telegram IDs, чтобы не вводить отдельную admin-role модель до админки.
+
 Backend:
 
 1. Выбрать и подключить платежный провайдер.
@@ -1175,6 +1185,24 @@ Frontend:
 - active payment allows live;
 - past_due blocks live;
 - canceled keeps history but blocks rebalance.
+
+Реализация от 2026-07-02:
+
+- выбран Stripe как Phase 5 provider; добавлены настройки `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PORTFOLIO_PRICE_ID`, checkout success/cancel URLs;
+- добавлен backend-сервис `backend/app/services/portfolio/billing.py`:
+  - Stripe-compatible HMAC verification для webhook payload;
+  - создание Checkout Session через Stripe API при наличии env-настроек;
+  - local billing-holder без generated `subscriptions`;
+  - beta override через `MODEL_PORTFOLIO_BETA_OVERRIDE_TELEGRAM_IDS`;
+  - helpers для live billing gate и future rebalance gate;
+- добавлен API router `backend/app/api/portfolio_billing.py`:
+  - `GET /portfolio-subscriptions/billing/status`;
+  - `POST /portfolio-subscriptions/billing/checkout`;
+  - `POST /portfolio-subscriptions/billing/webhook`;
+- live `POST /portfolio-subscriptions` теперь возвращает `402` для unpaid/past_due/canceled и только после active payment/beta override доходит до Phase 6 unavailable boundary;
+- frontend detail page портфеля показывает `Live billing` panel с pricing CTA, billing status, current period, beta override и past_due/canceled state;
+- добавлены API tests `backend/tests/api/test_portfolio_billing.py`;
+- новая Alembic migration для Phase 5 не нужна: используются поля Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py`.
 
 ### Phase 6 — Live activation
 
@@ -1650,6 +1678,87 @@ curl -fsS -X DELETE "$PUBLIC_URL/api/portfolio-subscriptions/<portfolio_subscrip
 7. Проверить UI в Telegram Mini App или браузере: на странице Balanced виден demo activation panel, preview generated subscriptions, после запуска видна portfolio subscription detail и cancel action.
 
 Миграции, которые нужно выполнить на сервере после Phase 4:
+
+- новых миграций нет;
+- обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.
+
+### Phase 5 deployment checklist
+
+Phase 5 не добавляет новых миграций. Перед включением billing gate на сервере должна быть применена Phase 1 migration, должен существовать seed-шаблон `Balanced`, и у него должна быть текущая `published` версия с allocations.
+
+1. Задеплоить backend + frontend код Phase 5 через обычный release path:
+
+```bash
+git pull --ff-only
+make deploy
+```
+
+`make deploy` выполняет `uv run alembic upgrade head`; для Phase 5 это должно быть no-op, если Phase 1 migration уже применена.
+
+2. Проверить миграционное состояние, seed и published-версию:
+
+```bash
+cd backend
+uv run alembic current
+uv run python -m scripts.seed_model_portfolios --check
+```
+
+Если published-версии Balanced еще нет, сначала выполнить Phase 3 manual publish/backtest checklist. Billing status нельзя проверять против draft-версии.
+
+3. Настроить Stripe env перед публичным paid launch:
+
+```dotenv
+BILLING_PROVIDER=stripe
+STRIPE_API_KEY=<stripe_secret_key>
+STRIPE_WEBHOOK_SECRET=<stripe_webhook_signing_secret>
+STRIPE_PORTFOLIO_PRICE_ID=<stripe_price_id_for_portfolio_basic>
+STRIPE_CHECKOUT_SUCCESS_URL=$PUBLIC_URL/portfolios
+STRIPE_CHECKOUT_CANCEL_URL=$PUBLIC_URL/portfolios
+```
+
+Для private beta без реального Stripe можно временно разрешить конкретные Telegram IDs:
+
+```dotenv
+MODEL_PORTFOLIO_BETA_OVERRIDE_TELEGRAM_IDS=123456789,987654321
+```
+
+4. В Stripe Dashboard добавить webhook endpoint:
+
+```text
+$PUBLIC_URL/api/portfolio-subscriptions/billing/webhook
+```
+
+Минимальные events для MVP:
+
+- `checkout.session.completed`;
+- `customer.subscription.created`;
+- `customer.subscription.updated`;
+- `customer.subscription.deleted`.
+
+5. Проверить health и billing status API:
+
+```bash
+curl -fsS "$PUBLIC_URL/api/health"
+curl -fsS -H "Authorization: Bearer <user_jwt>" \
+  "$PUBLIC_URL/api/portfolio-subscriptions/billing/status?portfolio_id=<balanced_portfolio_id>&active_version_id=<published_version_id>"
+```
+
+Ожидаемый результат без оплаты и без beta override: `paid=false`, `can_activate_live=false`, `status=null` или unpaid local status.
+
+6. Проверить webhook signature guard:
+
+```bash
+curl -i -X POST "$PUBLIC_URL/api/portfolio-subscriptions/billing/webhook" \
+  -H "Stripe-Signature: t=1,v1=bad" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"evt_bad","type":"checkout.session.completed","data":{"object":{}}}'
+```
+
+Ожидаемый результат: `400` при настроенном `STRIPE_WEBHOOK_SECRET` или `503`, если signing secret еще не задан. Успешный webhook проверять через Stripe CLI/Dashboard с реальным signing secret.
+
+7. Проверить UI в Telegram Mini App или браузере: на странице Balanced виден блок `Live billing`, price CTA, billing status, past_due/canceled state; demo activation продолжает работать.
+
+Миграции, которые нужно выполнить на сервере после Phase 5:
 
 - новых миграций нет;
 - обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.

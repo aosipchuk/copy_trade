@@ -199,6 +199,7 @@ export type ModelPortfolioStatus = 'draft' | 'active' | 'paused' | 'retired'
 export type PortfolioVersionStatus = 'draft' | 'published' | 'retired' | 'rejected'
 export type UserPortfolioStatus = 'trialing' | 'active' | 'past_due' | 'paused' | 'canceled'
 export type PortfolioItemStatus = 'active' | 'removed' | 'failed' | 'paused'
+export type BillingProvider = 'stripe' | 'admin_override'
 
 export interface PortfolioCurrentVersionSummary {
   id: number
@@ -367,6 +368,37 @@ export interface PortfolioActivationConflict {
 export interface UserPortfolioActivationResponse extends UserPortfolioSubscriptionDetail {
   created: boolean
   conflicts: PortfolioActivationConflict[]
+}
+
+export interface PortfolioBillingCheckoutCreate {
+  portfolio_id: number
+  active_version_id: number
+  total_allocation_usd: number
+  success_url?: string | null
+  cancel_url?: string | null
+}
+
+export interface PortfolioBillingStatus {
+  portfolio_id: number
+  active_version_id: number
+  paid: boolean
+  can_activate_live: boolean
+  can_rebalance: boolean
+  beta_override: boolean
+  provider: BillingProvider | null
+  status: UserPortfolioStatus | null
+  current_period_end: string | null
+  portfolio_subscription: UserPortfolioSubscriptionDetail | null
+  message: string
+}
+
+export interface PortfolioBillingCheckoutResponse {
+  provider: BillingProvider
+  provider_configured: boolean
+  checkout_url: string | null
+  portfolio_subscription: UserPortfolioSubscriptionDetail
+  billing_status: PortfolioBillingStatus
+  message: string
 }
 
 export interface DemoOpenPosition {

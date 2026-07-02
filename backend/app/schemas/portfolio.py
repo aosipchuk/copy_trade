@@ -15,6 +15,7 @@ RebalanceEventType = Literal["scheduled", "emergency", "manual", "user_apply"]
 RebalanceStatus = Literal[
     "draft", "pending", "running", "completed", "failed", "skipped"
 ]
+BillingProvider = Literal["stripe", "admin_override"]
 JsonDict = dict[str, Any]
 
 
@@ -240,3 +241,40 @@ class ModelPortfolioPublishedVersionDetailResponse(ModelPortfolioVersionResponse
 class ModelPortfolioDetailResponse(ModelPortfolioResponse):
     current_version: ModelPortfolioPublishedVersionDetailResponse
     backtests: list[PortfolioBacktestResponse] = Field(default_factory=list)
+
+
+class PortfolioBillingCheckoutCreate(BaseModel):
+    portfolio_id: int
+    active_version_id: int
+    total_allocation_usd: float = Field(gt=10, le=1_000_000)
+    success_url: str | None = None
+    cancel_url: str | None = None
+
+
+class PortfolioBillingStatusResponse(BaseModel):
+    portfolio_id: int
+    active_version_id: int
+    paid: bool
+    can_activate_live: bool
+    can_rebalance: bool
+    beta_override: bool
+    provider: BillingProvider | None
+    status: UserPortfolioStatus | None
+    current_period_end: datetime | None
+    portfolio_subscription: UserPortfolioSubscriptionDetailResponse | None = None
+    message: str
+
+
+class PortfolioBillingCheckoutResponse(BaseModel):
+    provider: BillingProvider
+    provider_configured: bool
+    checkout_url: str | None
+    portfolio_subscription: UserPortfolioSubscriptionDetailResponse
+    billing_status: PortfolioBillingStatusResponse
+    message: str
+
+
+class PortfolioBillingWebhookResponse(BaseModel):
+    received: bool
+    event_type: str
+    updated_subscription_id: int | None = None

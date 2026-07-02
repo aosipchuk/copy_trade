@@ -1,6 +1,9 @@
 import type {
   ModelPortfolioDetail,
   ModelPortfolioListItem,
+  PortfolioBillingCheckoutCreate,
+  PortfolioBillingCheckoutResponse,
+  PortfolioBillingStatus,
   PortfolioBacktest,
   UserPortfolioActivationResponse,
   UserPortfolioSubscriptionCreate,
@@ -40,6 +43,27 @@ export async function fetchPortfolioSubscription(
 ): Promise<UserPortfolioSubscriptionDetail> {
   const res = await http.get<UserPortfolioSubscriptionDetail>(
     `/portfolio-subscriptions/${id}`,
+  )
+  return res.data
+}
+
+export async function fetchPortfolioBillingStatus(params: {
+  portfolio_id: number
+  active_version_id: number
+}): Promise<PortfolioBillingStatus> {
+  const res = await http.get<PortfolioBillingStatus>(
+    '/portfolio-subscriptions/billing/status',
+    { params },
+  )
+  return res.data
+}
+
+export async function createPortfolioBillingCheckout(
+  body: PortfolioBillingCheckoutCreate,
+): Promise<PortfolioBillingCheckoutResponse> {
+  const res = await http.post<PortfolioBillingCheckoutResponse>(
+    '/portfolio-subscriptions/billing/checkout',
+    body,
   )
   return res.data
 }

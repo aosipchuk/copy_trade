@@ -26,6 +26,7 @@ from app.schemas.portfolio import (
     UserPortfolioSubscriptionDetailResponse,
     UserPortfolioSubscriptionResponse,
 )
+from app.services.portfolio.billing import require_live_portfolio_billing
 from app.services.subscription_service import _to_response as subscription_to_response
 
 logger = get_logger(__name__)
@@ -323,7 +324,11 @@ async def activate_user_portfolio_subscription(
                 "Live activation has manual subscription conflicts that must be "
                 "resolved first."
             )
-        raise ValueError("Live model portfolio activation is not available yet.")
+        await require_live_portfolio_billing(db, user_id, portfolio.id, version.id)
+        raise ValueError(
+            "Live model portfolio activation passed billing gate, but execution "
+            "setup is not available until Phase 6."
+        )
 
     existing = await _find_existing_active_demo(db, user_id, portfolio.id, version.id)
     if existing is not None:
