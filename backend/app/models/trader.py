@@ -30,6 +30,12 @@ class Trader(Base):
     subscriptions: Mapped[list["Subscription"]] = relationship(  # type: ignore[name-defined]
         back_populates="trader", lazy="noload"
     )
+    portfolio_allocations: Mapped[list["ModelPortfolioAllocation"]] = relationship(  # type: ignore[name-defined]
+        back_populates="trader", lazy="noload"
+    )
+    portfolio_items: Mapped[list["UserPortfolioItem"]] = relationship(  # type: ignore[name-defined]
+        back_populates="trader", lazy="noload"
+    )
 
 
 class TraderStat(Base):

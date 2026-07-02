@@ -210,9 +210,7 @@ class TestListDemoSubscriptions:
         assert any(s["id"] == demo_sub_id for s in subs)
 
     @pytest.mark.asyncio
-    async def test_list_live_filter_returns_only_live(
-        self, client, db_session
-    ) -> None:
+    async def test_list_live_filter_returns_only_live(self, client, db_session) -> None:
         """GET /subscriptions?is_demo=false returns only live subscriptions."""
         trader_id = await _seed_trader(db_session)
         headers = await _auth_with_wallet(client, db_session, user_id=80011)
@@ -351,7 +349,9 @@ class TestDemoPortfolio:
         assert data["win_rate_pct"] == pytest.approx(100.0)
 
     @pytest.mark.asyncio
-    async def test_portfolio_win_rate_with_mixed_results(self, client, db_session) -> None:
+    async def test_portfolio_win_rate_with_mixed_results(
+        self, client, db_session
+    ) -> None:
         """Win rate = win_count / trade_count * 100 with one win and one loss."""
         trader_id = await _seed_trader(db_session)
         headers = await _get_auth_header(client, user_id=80022)

@@ -1,3 +1,12 @@
+from app.models.portfolio import (
+    ModelPortfolio,
+    ModelPortfolioAllocation,
+    ModelPortfolioVersion,
+    PortfolioBacktest,
+    PortfolioRebalanceEvent,
+    UserPortfolioItem,
+    UserPortfolioSubscription,
+)
 from app.models.signal import Signal
 from app.models.subscription import Subscription
 from app.models.trade import UserTrade
@@ -12,4 +21,11 @@ __all__ = [
     "Signal",
     "Subscription",
     "UserTrade",
+    "ModelPortfolio",
+    "ModelPortfolioVersion",
+    "ModelPortfolioAllocation",
+    "UserPortfolioSubscription",
+    "UserPortfolioItem",
+    "PortfolioRebalanceEvent",
+    "PortfolioBacktest",
 ]

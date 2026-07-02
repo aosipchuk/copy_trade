@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 import pytest
 from sqlalchemy import insert, update
 
+from app.models.subscription import Subscription
 from app.models.trader import Trader, TraderStat
 from app.models.user import User
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
@@ -128,6 +129,13 @@ class TestSubscriptionsCRUD:
         data = response.json()
         assert data["trader_id"] == trader_id
         assert data["is_active"] is True
+
+        subscription = await db_session.get(Subscription, data["id"])
+        assert subscription is not None
+        assert subscription.source_type == "manual"
+        assert subscription.source_id is None
+        assert subscription.source_version_id is None
+        assert subscription.managed_by_portfolio is False
 
     @pytest.mark.asyncio
     async def test_create_subscription_invalid_trader_returns_400(

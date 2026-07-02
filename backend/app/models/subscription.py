@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import ARRAY, BigInteger, Boolean, ForeignKey, Numeric, Text
+from sqlalchemy import (
+    ARRAY,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Numeric,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -9,6 +17,12 @@ from app.core.database import Base
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
+    __table_args__ = (
+        CheckConstraint(
+            "source_type IN ('manual', 'model_portfolio')",
+            name="ck_subscriptions_source_type",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -26,6 +40,14 @@ class Subscription(Base):
     )
     max_per_coin_usd: Mapped[float | None] = mapped_column(Numeric(20, 2))
     allowed_coins: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    source_type: Mapped[str] = mapped_column(
+        Text, default="manual", server_default="manual", nullable=False
+    )
+    source_id: Mapped[int | None] = mapped_column(BigInteger)
+    source_version_id: Mapped[int | None] = mapped_column(BigInteger)
+    managed_by_portfolio: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -37,5 +59,8 @@ class Subscription(Base):
         back_populates="subscriptions"
     )
     trades: Mapped[list["UserTrade"]] = relationship(  # type: ignore[name-defined]
+        back_populates="subscription", lazy="noload"
+    )
+    portfolio_item: Mapped["UserPortfolioItem | None"] = relationship(  # type: ignore[name-defined]
         back_populates="subscription", lazy="noload"
     )
