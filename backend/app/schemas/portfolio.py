@@ -28,6 +28,8 @@ RebalanceDiffAction = Literal[
 ]
 RebalancePreviewStatus = Literal["up_to_date", "pending", "blocked"]
 BillingProvider = Literal["stripe", "admin_override"]
+PortfolioReportType = Literal["weekly"]
+PortfolioReportGeneratedBy = Literal["template", "openai_compatible", "fallback"]
 JsonDict = dict[str, Any]
 
 
@@ -202,6 +204,8 @@ class PortfolioRebalanceDiffItem(BaseModel):
     to_allocation_usd: float | None = None
     changed_fields: list[str] = Field(default_factory=list)
     message: str
+    rationale: str | None = None
+    source_facts: JsonDict | None = None
 
 
 class PortfolioRebalancePreviewResponse(BaseModel):
@@ -246,6 +250,67 @@ class PortfolioBacktestResponse(BaseModel):
     missed_trade_count: int
     assumptions_json: JsonDict
     equity_curve_json: JsonDict
+    created_at: datetime
+
+
+class PortfolioAllocationExplanationResponse(BaseModel):
+    allocation_id: int
+    trader_id: int
+    trader_address: str
+    trader_display_name: str | None
+    generated_by: PortfolioReportGeneratedBy
+    prompt_version: str
+    explanation: str
+    source_facts: JsonDict
+    used_source_fact_keys: list[str] = Field(default_factory=list)
+
+
+class PortfolioExplanationResponse(BaseModel):
+    portfolio_id: int
+    portfolio_slug: str
+    portfolio_name: str
+    version_id: int
+    version_no: int
+    generated_at: datetime
+    generated_by: PortfolioReportGeneratedBy
+    prompt_version: str
+    summary: str
+    source_facts: JsonDict
+    allocations: list[PortfolioAllocationExplanationResponse] = Field(
+        default_factory=list
+    )
+
+
+class PortfolioReportSection(BaseModel):
+    title: str
+    body: str
+
+
+class PortfolioReportAllocationNote(BaseModel):
+    allocation_id: int
+    trader_id: int
+    trader_address: str
+    trader_display_name: str | None
+    note: str
+
+
+class PortfolioWeeklyReportResponse(BaseModel):
+    id: int
+    portfolio_id: int
+    portfolio_slug: str
+    portfolio_name: str
+    portfolio_version_id: int
+    version_no: int
+    report_type: PortfolioReportType
+    period_start: datetime
+    period_end: datetime
+    generated_by: PortfolioReportGeneratedBy
+    prompt_version: str
+    source_facts: JsonDict
+    report_json: JsonDict
+    summary: str
+    sections: list[PortfolioReportSection] = Field(default_factory=list)
+    allocation_notes: list[PortfolioReportAllocationNote] = Field(default_factory=list)
     created_at: datetime
 
 

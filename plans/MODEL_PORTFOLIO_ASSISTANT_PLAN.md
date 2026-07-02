@@ -1330,6 +1330,15 @@ Frontend:
 
 Цель: добавить понятные объяснения без black box.
 
+Анализ перед реализацией от 2026-07-02:
+
+- объяснения не должны менять выбор трейдеров, activation, execution или rebalance apply path: это read/reporting слой поверх уже сохраненных facts;
+- per-trader explanations должны использовать только `score_snapshot`, `constraint_snapshot`, allocation settings и portfolio/version metadata, чтобы текст не ссылался на несуществующие факты;
+- LLM-provider должен быть опциональным и выключенным по умолчанию; при ошибке provider, отсутствии env-настроек или forbidden wording используется deterministic template fallback;
+- weekly report должен сохранять `source_facts`, `prompt_version`, `generated_by` и `report_json`, поэтому для Phase 8 нужна отдельная таблица `portfolio_reports`;
+- rebalance rationale можно добавить без новой таблицы через расширение preview/apply payload; при apply rationale/source facts сохраняются в существующем `portfolio_rebalance_events.diff_json`;
+- запрещены формулировки с обещаниями доходности, безопасностью, guarantee/risk-free/stable income и аналогичные русские варианты.
+
 Backend:
 
 1. Шаблонные explanations.
@@ -1348,6 +1357,29 @@ Frontend:
 - нет forbidden wording;
 - explanation не ссылается на несуществующие факты;
 - fallback работает.
+
+Реализация от 2026-07-02:
+
+- добавлена таблица `portfolio_reports` migration `p2q3r4s5t6u7_add_portfolio_reports.py` для сохранения weekly reports, `source_facts`, `prompt_version`, `generated_by` и `report_json`;
+- добавлен сервис `backend/app/services/portfolio/explanations.py`:
+  - deterministic template explanations для allocation-level rationale;
+  - forbidden wording guard;
+  - optional `openai_compatible` LLM summary provider через env-настройки, выключен по умолчанию;
+  - template fallback при provider error, missing config или forbidden wording;
+  - weekly report generation из сохраненных portfolio/version/allocation/backtest facts;
+- добавлены endpoints:
+  - `GET /api/portfolios/{slug}/explanations`;
+  - `GET /api/portfolios/{slug}/weekly-report`;
+  - `POST /api/portfolios/{slug}/weekly-report`;
+- `PortfolioRebalanceDiffItem` расширен `rationale` и `source_facts`; apply сохраняет эти facts в `portfolio_rebalance_events.diff_json`;
+- scheduler получил job `generate_weekly_portfolio_reports` каждые 86400 секунд, генерация идемпотентна по portfolio/version/week;
+- frontend detail page показывает weekly report, methodology notes, reason per trader и rebalance rationale;
+- добавлены tests `backend/tests/unit/test_portfolio_explanations.py` и Phase 8 API checks в `backend/tests/api/test_portfolios.py`.
+
+Миграции после Phase 8:
+
+- требуется применить новую migration `p2q3r4s5t6u7_add_portfolio_reports.py`;
+- предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена на сервере.
 
 ### Phase 9 — Advanced optimization
 
@@ -1582,6 +1614,53 @@ uv run python -m scripts.seed_model_portfolios --check
 Миграции, которые нужно выполнить на сервере после Phase 1:
 
 - `o1p2q3r4s5t6_add_model_portfolio_tables.py` — создает таблицы model portfolio, backtest/rebalance history и добавляет source-поля в `subscriptions`.
+
+### Phase 8 deployment checklist
+
+1. Задеплоить backend/frontend-код Phase 8 обычным release path: commit, push, pull/deploy на сервере.
+2. Выполнить новую migration на сервере:
+
+```bash
+cd backend
+uv run alembic upgrade head
+```
+
+В Docker/prod окружении использовать эквивалентную команду внутри backend-контейнера или существующий deploy script, если он выполняет `alembic upgrade head`.
+
+3. Проверить, что текущий revision включает Phase 8:
+
+```bash
+cd backend
+uv run alembic current
+```
+
+Ожидаемый head: `p2q3r4s5t6u7`.
+
+4. Проверить read/report endpoints на опубликованном Balanced:
+
+```bash
+curl -sS "$PUBLIC_API_URL/api/portfolios/balanced/explanations" -H "Authorization: Bearer <token>"
+curl -sS "$PUBLIC_API_URL/api/portfolios/balanced/weekly-report" -H "Authorization: Bearer <token>"
+```
+
+Если weekly report еще не создан scheduler job, сгенерировать его вручную авторизованным запросом:
+
+```bash
+curl -sS -X POST "$PUBLIC_API_URL/api/portfolios/balanced/weekly-report" -H "Authorization: Bearer <token>"
+```
+
+5. Перезапустить backend/scheduler после успешной миграции, чтобы job `generate_weekly_portfolio_reports` была зарегистрирована.
+6. Optional LLM provider включать только после проверки env-настроек:
+   - `MODEL_PORTFOLIO_EXPLANATIONS_PROVIDER=openai_compatible`;
+   - `MODEL_PORTFOLIO_LLM_API_URL`;
+   - `MODEL_PORTFOLIO_LLM_API_KEY`;
+   - `MODEL_PORTFOLIO_LLM_MODEL`.
+
+Если эти env не заданы, production продолжит использовать template explanations без внешних LLM-вызовов.
+
+Миграции, которые нужно выполнить на сервере после Phase 8:
+
+- `p2q3r4s5t6u7_add_portfolio_reports.py` — создает `portfolio_reports` для сохранения weekly report, source facts и generated report JSON.
 
 ### Phase 2 deployment checklist
 

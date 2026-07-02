@@ -128,6 +128,9 @@ class ModelPortfolioVersion(Base):
     backtests: Mapped[list["PortfolioBacktest"]] = relationship(
         back_populates="portfolio_version", lazy="noload"
     )
+    reports: Mapped[list["PortfolioReport"]] = relationship(
+        back_populates="portfolio_version", lazy="noload"
+    )
 
 
 class ModelPortfolioAllocation(Base):
@@ -397,4 +400,53 @@ class PortfolioBacktest(Base):
 
     portfolio_version: Mapped["ModelPortfolioVersion"] = relationship(
         back_populates="backtests"
+    )
+
+
+class PortfolioReport(Base):
+    __tablename__ = "portfolio_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id",
+            "portfolio_version_id",
+            "report_type",
+            "period_start",
+            "period_end",
+            name="uq_portfolio_reports_period",
+        ),
+        CheckConstraint(
+            "report_type IN ('weekly')",
+            name="ck_portfolio_reports_report_type",
+        ),
+        CheckConstraint(
+            "generated_by IN ('template', 'openai_compatible', 'fallback')",
+            name="ck_portfolio_reports_generated_by",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    portfolio_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("model_portfolios.id"), nullable=False
+    )
+    portfolio_version_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("model_portfolio_versions.id"), nullable=False
+    )
+    report_type: Mapped[str] = mapped_column(
+        Text, default="weekly", server_default="weekly", nullable=False
+    )
+    period_start: Mapped[datetime] = mapped_column(nullable=False)
+    period_end: Mapped[datetime] = mapped_column(nullable=False)
+    generated_by: Mapped[str] = mapped_column(
+        Text, default="template", server_default="template", nullable=False
+    )
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    source_facts: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    report_json: Mapped[JsonDict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False
+    )
+
+    portfolio: Mapped["ModelPortfolio"] = relationship()
+    portfolio_version: Mapped["ModelPortfolioVersion"] = relationship(
+        back_populates="reports"
     )

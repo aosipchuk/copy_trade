@@ -222,3 +222,65 @@ class TestPortfoliosReadOnly:
         backtests = response.json()
         assert backtests[0]["period_days"] == 180
         assert backtests[0]["initial_equity_usd"] == 10000.0
+
+    @pytest.mark.asyncio
+    async def test_explanations_endpoint_returns_safe_source_fact_rationales(
+        self, client, db_session
+    ) -> None:
+        slug = await _seed_published_portfolio(db_session)
+        headers = await _auth_header(client, user_id=90004)
+
+        response = await client.get(
+            f"/api/portfolios/{slug}/explanations", headers=headers
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        forbidden = ("guarantee", "guaranteed", "risk-free", "безопас")
+        assert not any(word in body["summary"].lower() for word in forbidden)
+        assert body["generated_by"] == "template"
+        assert len(body["allocations"]) == 2
+        first = body["allocations"][0]
+        assert "source_facts" in first
+        assert first["explanation"]
+        available = set(first["source_facts"]["available_fact_keys"])
+        assert set(first["used_source_fact_keys"]) <= available
+        assert not any(word in first["explanation"].lower() for word in forbidden)
+
+    @pytest.mark.asyncio
+    async def test_weekly_report_generation_persists_source_facts(
+        self, client, db_session
+    ) -> None:
+        slug = await _seed_published_portfolio(db_session)
+        headers = await _auth_header(client, user_id=90005)
+
+        before = await client.get(
+            f"/api/portfolios/{slug}/weekly-report", headers=headers
+        )
+        assert before.status_code == 200
+        assert before.json() is None
+
+        created = await client.post(
+            f"/api/portfolios/{slug}/weekly-report", headers=headers
+        )
+        fetched = await client.get(
+            f"/api/portfolios/{slug}/weekly-report", headers=headers
+        )
+
+        assert created.status_code == 200
+        assert fetched.status_code == 200
+        created_body = created.json()
+        fetched_body = fetched.json()
+        assert fetched_body["id"] == created_body["id"]
+        assert created_body["generated_by"] == "template"
+        assert created_body["source_facts"]["allocation_count"] == 2
+        assert created_body["source_facts"]["target_weight_sum_pct"] == 100.0
+        assert created_body["summary"]
+        assert created_body["sections"]
+        assert created_body["allocation_notes"]
+
+        repeated = await client.post(
+            f"/api/portfolios/{slug}/weekly-report", headers=headers
+        )
+        assert repeated.status_code == 200
+        assert repeated.json()["id"] == created_body["id"]

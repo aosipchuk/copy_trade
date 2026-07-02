@@ -4,6 +4,7 @@ from app.models.portfolio import (
     ModelPortfolioVersion,
     PortfolioBacktest,
     PortfolioRebalanceEvent,
+    PortfolioReport,
     UserPortfolioItem,
     UserPortfolioSubscription,
 )
@@ -28,4 +29,5 @@ __all__ = [
     "UserPortfolioItem",
     "PortfolioRebalanceEvent",
     "PortfolioBacktest",
+    "PortfolioReport",
 ]

@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     stripe_api_url: str = "https://api.stripe.com/v1"
     model_portfolio_beta_override_telegram_ids: list[int] = []
 
+    # Model portfolio explanations. The default is deterministic templates.
+    # openai_compatible is optional and falls back to templates on any error.
+    model_portfolio_explanations_provider: Literal["template", "openai_compatible"] = (
+        "template"
+    )
+    model_portfolio_llm_api_url: str = ""
+    model_portfolio_llm_api_key: str = ""
+    model_portfolio_llm_model: str = ""
+
     # ── Validators ────────────────────────────────────────────────────────────
 
     @field_validator("secret_key")

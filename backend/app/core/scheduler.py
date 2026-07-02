@@ -21,7 +21,10 @@ def setup_scheduler() -> None:
         refresh_leaderboard_async,
         track_active_traders_async,
     )
-    from app.tasks.portfolio_tasks import apply_due_user_rebalances_async
+    from app.tasks.portfolio_tasks import (
+        apply_due_user_rebalances_async,
+        generate_weekly_portfolio_reports_async,
+    )
 
     scheduler.add_job(
         refresh_leaderboard_async,
@@ -76,6 +79,13 @@ def setup_scheduler() -> None:
         apply_due_user_rebalances_async,
         IntervalTrigger(seconds=300),
         id="apply_due_user_rebalances",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        generate_weekly_portfolio_reports_async,
+        IntervalTrigger(seconds=86400),
+        id="generate_weekly_portfolio_reports",
         replace_existing=True,
         max_instances=1,
     )

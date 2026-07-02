@@ -8,8 +8,11 @@ import {
   createPortfolioBillingCheckout,
   fetchPortfolio,
   fetchPortfolioBillingStatus,
+  fetchPortfolioExplanations,
   fetchPortfolioRebalanceHistory,
   fetchPortfolioSubscriptions,
+  fetchPortfolioWeeklyReport,
+  generatePortfolioWeeklyReport,
   previewPortfolioRebalance,
   updatePortfolioSubscription,
 } from '../api/portfolios'
@@ -18,13 +21,16 @@ import { FullPageSpinner } from '../components/LoadingSpinner'
 import { useBackButton } from '../hooks/useTelegram'
 import type {
   AgentStatus,
+  PortfolioAllocationExplanation,
   ModelPortfolioAllocation,
   ModelPortfolioDetail,
   PortfolioBillingStatus,
   PortfolioActivationConflict,
   PortfolioBacktest,
+  PortfolioExplanation,
   PortfolioRebalanceEvent,
   PortfolioRebalancePreview,
+  PortfolioWeeklyReport,
   UserPortfolioSubscriptionDetail,
 } from '../types'
 
@@ -78,6 +84,8 @@ export function PortfolioDetailPage() {
     null,
   )
   const [walletStatus, setWalletStatus] = useState<AgentStatus | null>(null)
+  const [explanations, setExplanations] = useState<PortfolioExplanation | null>(null)
+  const [weeklyReport, setWeeklyReport] = useState<PortfolioWeeklyReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activationBusy, setActivationBusy] = useState(false)
@@ -89,6 +97,8 @@ export function PortfolioDetailPage() {
   const [billingBusy, setBillingBusy] = useState(false)
   const [billingError, setBillingError] = useState<string | null>(null)
   const [billingNotice, setBillingNotice] = useState<string | null>(null)
+  const [reportBusy, setReportBusy] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
   const [conflicts, setConflicts] = useState<PortfolioActivationConflict[]>([])
 
   const navigateBack = useCallback(() => navigate('/portfolios'), [navigate])
@@ -104,12 +114,15 @@ export function PortfolioDetailPage() {
     setLivePortfolioSubscription(null)
     setBillingStatus(null)
     setWalletStatus(null)
+    setExplanations(null)
+    setWeeklyReport(null)
     setActivationError(null)
     setActivationNotice(null)
     setLiveActivationError(null)
     setLiveActivationNotice(null)
     setBillingError(null)
     setBillingNotice(null)
+    setReportError(null)
     setConflicts([])
 
     fetchPortfolio(slug)
@@ -121,6 +134,8 @@ export function PortfolioDetailPage() {
           liveSubscriptionsResult,
           billingResult,
           walletResult,
+          explanationsResult,
+          weeklyReportResult,
         ] = await Promise.allSettled([
           fetchPortfolioSubscriptions({
             is_demo: true,
@@ -137,6 +152,8 @@ export function PortfolioDetailPage() {
             active_version_id: nextPortfolio.current_version.id,
           }),
           fetchAgentStatus(),
+          fetchPortfolioExplanations(slug),
+          fetchPortfolioWeeklyReport(slug),
         ])
         if (canceled) return
 
@@ -161,6 +178,12 @@ export function PortfolioDetailPage() {
         if (walletResult.status === 'fulfilled') {
           setWalletStatus(walletResult.value)
         }
+        if (explanationsResult.status === 'fulfilled') {
+          setExplanations(explanationsResult.value)
+        }
+        if (weeklyReportResult.status === 'fulfilled') {
+          setWeeklyReport(weeklyReportResult.value)
+        }
       })
       .catch((err: unknown) => {
         const status = (err as { response?: { status?: number } })?.response?.status
@@ -179,6 +202,14 @@ export function PortfolioDetailPage() {
     () => portfolio?.backtests[0] ?? null,
     [portfolio],
   )
+
+  const explanationByAllocationId = useMemo(() => {
+    const map = new Map<number, PortfolioAllocationExplanation>()
+    for (const item of explanations?.allocations ?? []) {
+      map.set(item.allocation_id, item)
+    }
+    return map
+  }, [explanations])
 
   const handleActivateDemo = useCallback(
     async (totalAllocationUsd: number) => {
@@ -289,6 +320,22 @@ export function PortfolioDetailPage() {
     }
   }, [portfolio])
 
+  const handleGenerateWeeklyReport = useCallback(async () => {
+    if (!slug) return
+    setReportBusy(true)
+    setReportError(null)
+    try {
+      const report = await generatePortfolioWeeklyReport(slug)
+      setWeeklyReport(report)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response
+        ?.data?.detail
+      setReportError(detail ?? 'Failed to generate weekly report')
+    } finally {
+      setReportBusy(false)
+    }
+  }, [slug])
+
   if (loading) return <FullPageSpinner />
 
   if (!portfolio) {
@@ -329,6 +376,13 @@ export function PortfolioDetailPage() {
 
       <div className="space-y-4 px-4 pt-4">
         <VersionStats portfolio={portfolio} backtest={primaryBacktest} />
+        <WeeklyReportPanel
+          report={weeklyReport}
+          busy={reportBusy}
+          error={reportError}
+          onGenerate={handleGenerateWeeklyReport}
+        />
+        <PortfolioExplanationPanel explanations={explanations} />
         <BillingPanel
           portfolio={portfolio}
           billingStatus={billingStatus}
@@ -372,7 +426,10 @@ export function PortfolioDetailPage() {
             onSubscriptionChange={setPortfolioSubscription}
           />
         )}
-        <AllocationsList allocations={portfolio.current_version.allocations} />
+        <AllocationsList
+          allocations={portfolio.current_version.allocations}
+          explanations={explanationByAllocationId}
+        />
         <BacktestPanel backtest={primaryBacktest} />
       </div>
     </div>
@@ -407,6 +464,109 @@ function StatCell({ label, value }: { label: string; value: string }) {
       <div className="truncate text-[10px] text-tg-hint">{label}</div>
       <div className="truncate text-sm font-semibold text-tg-text">{value}</div>
     </div>
+  )
+}
+
+function WeeklyReportPanel({
+  report,
+  busy,
+  error,
+  onGenerate,
+}: {
+  report: PortfolioWeeklyReport | null
+  busy: boolean
+  error: string | null
+  onGenerate: () => Promise<void>
+}) {
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-tg-text">Weekly report</h2>
+        <button
+          className="rounded-md border border-tg-button px-2 py-1 text-xs font-semibold text-tg-button disabled:opacity-50"
+          disabled={busy}
+          onClick={() => {
+            void onGenerate()
+          }}
+        >
+          {busy ? 'Generating' : report ? 'Refresh' : 'Generate'}
+        </button>
+      </div>
+
+      <div
+        className="rounded-lg px-3 py-3"
+        style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+      >
+        {report ? (
+          <>
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <p className="min-w-0 text-sm leading-snug text-tg-text">
+                {report.summary}
+              </p>
+              <span className="shrink-0 rounded bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase text-tg-button">
+                {report.generated_by.replace('_', ' ')}
+              </span>
+            </div>
+            <div className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
+              <StatCell label="Period start" value={dateText(report.period_start)} />
+              <StatCell label="Created" value={dateText(report.created_at)} />
+            </div>
+            <div className="space-y-2 border-t border-gray-200 pt-3 dark:border-gray-700">
+              {report.sections.slice(0, 3).map((section) => (
+                <div key={section.title}>
+                  <div className="text-[10px] font-semibold uppercase text-tg-hint">
+                    {section.title}
+                  </div>
+                  <p className="mt-0.5 text-xs leading-snug text-tg-hint">
+                    {section.body}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-tg-hint">
+            No saved report for the current published version.
+          </p>
+        )}
+        {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+      </div>
+    </section>
+  )
+}
+
+function PortfolioExplanationPanel({
+  explanations,
+}: {
+  explanations: PortfolioExplanation | null
+}) {
+  if (!explanations) return null
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-tg-text">Methodology notes</h2>
+        <span className="text-xs text-tg-hint">
+          {explanations.generated_by.replace('_', ' ')}
+        </span>
+      </div>
+      <div
+        className="rounded-lg px-3 py-3"
+        style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+      >
+        <p className="text-sm leading-snug text-tg-text">{explanations.summary}</p>
+        <div className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
+          <StatCell
+            label="Version"
+            value={`v${explanations.version_no}`}
+          />
+          <StatCell
+            label="Facts"
+            value={String(explanations.allocations.length)}
+          />
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -1151,6 +1311,9 @@ function RebalanceDiffLine({
         </div>
       </div>
       <p className="mt-1 text-xs leading-snug text-tg-hint">{item.message}</p>
+      {item.rationale && (
+        <p className="mt-1 text-xs leading-snug text-tg-text">{item.rationale}</p>
+      )}
       {item.changed_fields.length > 0 && (
         <div className="mt-1 text-[10px] text-tg-hint">
           {item.changed_fields.join(', ')}
@@ -1197,8 +1360,10 @@ function GeneratedSubscriptionLine({
 
 function AllocationsList({
   allocations,
+  explanations,
 }: {
   allocations: ModelPortfolioAllocation[]
+  explanations: Map<number, PortfolioAllocationExplanation>
 }) {
   return (
     <section>
@@ -1208,7 +1373,11 @@ function AllocationsList({
       </div>
       <div className="space-y-2">
         {allocations.map((allocation) => (
-          <AllocationRow key={allocation.id} allocation={allocation} />
+          <AllocationRow
+            key={allocation.id}
+            allocation={allocation}
+            explanation={explanations.get(allocation.id)}
+          />
         ))}
       </div>
     </section>
@@ -1217,8 +1386,10 @@ function AllocationsList({
 
 function AllocationRow({
   allocation,
+  explanation,
 }: {
   allocation: ModelPortfolioAllocation
+  explanation?: PortfolioAllocationExplanation
 }) {
   const metrics = allocation.source_metrics
   const drawdown = numberMetric(metrics, 'max_drawdown_pct')
@@ -1255,10 +1426,16 @@ function AllocationRow({
         <MiniMetric label="Leverage" value={leverage == null ? 'n/a' : `${leverage.toFixed(2)}x`} />
       </div>
 
-      {allocation.reason_text && (
+      {(explanation?.explanation ?? allocation.reason_text) && (
         <p className="mt-2 text-xs leading-snug text-tg-hint">
-          {allocation.reason_text}
+          {explanation?.explanation ?? allocation.reason_text}
         </p>
+      )}
+
+      {explanation && explanation.used_source_fact_keys.length > 0 && (
+        <div className="mt-2 truncate text-[10px] text-tg-hint">
+          Facts: {explanation.used_source_fact_keys.slice(0, 3).join(', ')}
+        </div>
       )}
     </div>
   )

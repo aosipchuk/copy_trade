@@ -23,6 +23,13 @@ from app.schemas.portfolio import (
     PortfolioBacktestResponse,
     PortfolioBacktestSummary,
     PortfolioCurrentVersionSummary,
+    PortfolioExplanationResponse,
+    PortfolioWeeklyReportResponse,
+)
+from app.services.portfolio.explanations import (
+    build_portfolio_explanations,
+    generate_weekly_report,
+    get_latest_weekly_report,
 )
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
@@ -259,3 +266,54 @@ async def get_portfolio_backtests(
     return [
         PortfolioBacktestResponse.model_validate(backtest) for backtest in backtests
     ]
+
+
+@router.get("/{slug}/explanations", response_model=PortfolioExplanationResponse)
+async def get_portfolio_explanations(
+    slug: str,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> PortfolioExplanationResponse:
+    _ = current_user
+    try:
+        return await build_portfolio_explanations(db, slug)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/{slug}/weekly-report",
+    response_model=PortfolioWeeklyReportResponse | None,
+)
+async def get_portfolio_weekly_report(
+    slug: str,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> PortfolioWeeklyReportResponse | None:
+    _ = current_user
+    try:
+        return await get_latest_weekly_report(db, slug)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post("/{slug}/weekly-report", response_model=PortfolioWeeklyReportResponse)
+async def create_portfolio_weekly_report(
+    slug: str,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> PortfolioWeeklyReportResponse:
+    _ = current_user
+    try:
+        return await generate_weekly_report(db, slug)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc

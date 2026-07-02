@@ -24,6 +24,7 @@ def test_portfolio_models_are_registered_in_metadata() -> None:
         "user_portfolio_items",
         "portfolio_rebalance_events",
         "portfolio_backtests",
+        "portfolio_reports",
     }
     assert expected_tables.issubset(Base.metadata.tables)
 

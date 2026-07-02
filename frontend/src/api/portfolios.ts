@@ -5,9 +5,11 @@ import type {
   PortfolioBillingCheckoutResponse,
   PortfolioBillingStatus,
   PortfolioBacktest,
+  PortfolioExplanation,
   PortfolioRebalanceApplyResponse,
   PortfolioRebalanceEvent,
   PortfolioRebalancePreview,
+  PortfolioWeeklyReport,
   UserPortfolioActivationResponse,
   UserPortfolioSubscriptionCreate,
   UserPortfolioSubscriptionDetail,
@@ -27,6 +29,33 @@ export async function fetchPortfolio(slug: string): Promise<ModelPortfolioDetail
 
 export async function fetchPortfolioBacktests(slug: string): Promise<PortfolioBacktest[]> {
   const res = await http.get<PortfolioBacktest[]>(`/portfolios/${slug}/backtests`)
+  return res.data
+}
+
+export async function fetchPortfolioExplanations(
+  slug: string,
+): Promise<PortfolioExplanation> {
+  const res = await http.get<PortfolioExplanation>(
+    `/portfolios/${slug}/explanations`,
+  )
+  return res.data
+}
+
+export async function fetchPortfolioWeeklyReport(
+  slug: string,
+): Promise<PortfolioWeeklyReport | null> {
+  const res = await http.get<PortfolioWeeklyReport | null>(
+    `/portfolios/${slug}/weekly-report`,
+  )
+  return res.data
+}
+
+export async function generatePortfolioWeeklyReport(
+  slug: string,
+): Promise<PortfolioWeeklyReport> {
+  const res = await http.post<PortfolioWeeklyReport>(
+    `/portfolios/${slug}/weekly-report`,
+  )
   return res.data
 }
 

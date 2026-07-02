@@ -424,6 +424,8 @@ export interface PortfolioRebalanceDiffItem {
   to_allocation_usd: number | null
   changed_fields: string[]
   message: string
+  rationale: string | null
+  source_facts: Record<string, unknown> | null
 }
 
 export interface PortfolioRebalancePreview {
@@ -479,6 +481,70 @@ export interface PortfolioBillingCheckoutResponse {
   portfolio_subscription: UserPortfolioSubscriptionDetail
   billing_status: PortfolioBillingStatus
   message: string
+}
+
+export type PortfolioReportGeneratedBy =
+  | 'template'
+  | 'openai_compatible'
+  | 'fallback'
+
+export interface PortfolioAllocationExplanation {
+  allocation_id: number
+  trader_id: number
+  trader_address: string
+  trader_display_name: string | null
+  generated_by: PortfolioReportGeneratedBy
+  prompt_version: string
+  explanation: string
+  source_facts: Record<string, unknown>
+  used_source_fact_keys: string[]
+}
+
+export interface PortfolioExplanation {
+  portfolio_id: number
+  portfolio_slug: string
+  portfolio_name: string
+  version_id: number
+  version_no: number
+  generated_at: string
+  generated_by: PortfolioReportGeneratedBy
+  prompt_version: string
+  summary: string
+  source_facts: Record<string, unknown>
+  allocations: PortfolioAllocationExplanation[]
+}
+
+export interface PortfolioReportSection {
+  title: string
+  body: string
+}
+
+export interface PortfolioReportAllocationNote {
+  allocation_id: number
+  trader_id: number
+  trader_address: string
+  trader_display_name: string | null
+  note: string
+}
+
+export interface PortfolioWeeklyReport {
+  id: number
+  portfolio_id: number
+  portfolio_slug: string
+  portfolio_name: string
+  portfolio_version_id: number
+  version_no: number
+  report_type: 'weekly'
+  period_start: string
+  period_end: string
+  generated_by: PortfolioReportGeneratedBy
+  prompt_version: string
+  source_facts: Record<string, unknown>
+  report_json: Record<string, unknown>
+  summary: string
+  sections: PortfolioReportSection[]
+  allocation_notes: PortfolioReportAllocationNote[]
+  created_at: string
 }
 
 export interface DemoOpenPosition {

@@ -40,6 +40,10 @@ from app.services.portfolio.billing import (
     BillingPaymentRequiredError,
     require_portfolio_rebalance_billing,
 )
+from app.services.portfolio.explanations import (
+    allocation_source_facts,
+    rebalance_rationale,
+)
 from app.services.risk_manager import check_portfolio_risk
 from app.services.subscription_service import create_subscription
 
@@ -322,7 +326,7 @@ def _allocation_name(allocation: ModelPortfolioAllocation) -> str:
     trader = allocation.trader
     if trader is None:
         return f"Trader {allocation.trader_id}"
-    return trader.display_name or trader.hl_address[:10]
+    return str(trader.display_name or trader.hl_address[:10])
 
 
 def _item_name(item: ManagedPortfolioItem) -> str:
@@ -331,6 +335,69 @@ def _item_name(item: ManagedPortfolioItem) -> str:
 
 def _trader_label(display_name: str | None, address: str) -> str:
     return display_name or address[:10]
+
+
+def _item_source_facts(item: ManagedPortfolioItem) -> JsonDict:
+    return {
+        "current_item": {
+            "user_portfolio_item_id": item.item.id,
+            "subscription_id": item.subscription.id,
+            "allocation_id": item.item.allocation_id,
+            "trader_id": item.item.trader_id,
+            "target_weight_pct": _float(item.item.target_weight_pct),
+            "target_allocation_usd": _float(item.item.target_allocation_usd),
+            "copy_ratio_pct": _float(item.subscription.copy_ratio_pct),
+            "stop_loss_pct": _float(item.subscription.stop_loss_pct),
+            "max_leverage": _float(item.subscription.max_leverage),
+            "sizing_mode": item.subscription.sizing_mode,
+            "max_per_coin_usd": (
+                _float(item.subscription.max_per_coin_usd)
+                if item.subscription.max_per_coin_usd is not None
+                else None
+            ),
+            "allowed_coins": list(item.subscription.allowed_coins or []),
+            "source_type": item.subscription.source_type,
+            "managed_by_portfolio": item.subscription.managed_by_portfolio,
+        },
+        "trader": {
+            "id": item.trader.id,
+            "address": item.trader.hl_address,
+            "display_name": item.trader.display_name,
+        },
+    }
+
+
+def _target_source_facts(
+    allocation: ModelPortfolioAllocation,
+    target_allocation: Decimal | None,
+) -> JsonDict:
+    facts = allocation_source_facts(allocation)
+    facts["target_allocation"] = {
+        "allocation_id": allocation.id,
+        "trader_id": allocation.trader_id,
+        "target_weight_pct": _float(allocation.target_weight_pct),
+        "target_allocation_usd": (
+            float(target_allocation) if target_allocation is not None else None
+        ),
+        "copy_ratio_pct": _float(allocation.copy_ratio_pct),
+        "stop_loss_pct": _float(allocation.stop_loss_pct),
+        "max_leverage": _float(allocation.max_leverage),
+        "sizing_mode": allocation.sizing_mode,
+        "max_per_coin_usd": (
+            _float(allocation.max_per_coin_usd)
+            if allocation.max_per_coin_usd is not None
+            else None
+        ),
+        "allowed_coins": list(allocation.allowed_coins or []),
+    }
+    return facts
+
+
+def _merge_source_facts(*items: JsonDict) -> JsonDict:
+    merged: JsonDict = {}
+    for item in items:
+        merged.update(item)
+    return merged
 
 
 def _risk_setting_changes(
@@ -370,6 +437,7 @@ def _build_diff(ctx: RebalanceContext) -> list[PortfolioRebalanceDiffItem]:
     for trader_id, item in sorted(active_by_trader.items()):
         if trader_id in target_by_trader:
             continue
+        source_facts = _item_source_facts(item)
         diff.append(
             PortfolioRebalanceDiffItem(
                 action="remove_trader",
@@ -381,14 +449,20 @@ def _build_diff(ctx: RebalanceContext) -> list[PortfolioRebalanceDiffItem]:
                 from_weight_pct=_float(item.item.target_weight_pct),
                 from_allocation_usd=_float(item.item.target_allocation_usd),
                 message=f"Remove {_item_name(item)} from the managed portfolio.",
+                rationale=rebalance_rationale(
+                    "remove_trader",
+                    source_facts=source_facts,
+                ),
+                source_facts=source_facts,
             )
         )
 
     for trader_id, allocation in sorted(target_by_trader.items()):
         trader = allocation.trader
         target_amount = target_amounts[allocation.id]
-        item = active_by_trader.get(trader_id)
-        if item is None:
+        active_item = active_by_trader.get(trader_id)
+        if active_item is None:
+            source_facts = _target_source_facts(allocation, target_amount)
             diff.append(
                 PortfolioRebalanceDiffItem(
                     action="add_trader",
@@ -404,45 +478,63 @@ def _build_diff(ctx: RebalanceContext) -> list[PortfolioRebalanceDiffItem]:
                         f"Add {_allocation_name(allocation)} at "
                         f"{float(allocation.target_weight_pct):.3f}% target weight."
                     ),
+                    rationale=rebalance_rationale(
+                        "add_trader",
+                        source_facts=source_facts,
+                    ),
+                    source_facts=source_facts,
                 )
             )
             continue
 
-        old_weight = _float(item.item.target_weight_pct)
+        old_weight = _float(active_item.item.target_weight_pct)
         new_weight = _float(allocation.target_weight_pct)
-        old_amount = _float(item.item.target_allocation_usd)
+        old_amount = _float(active_item.item.target_allocation_usd)
         new_amount = float(target_amount)
         if abs(old_weight - new_weight) > 0.001 or abs(old_amount - new_amount) > 0.01:
+            source_facts = _merge_source_facts(
+                _item_source_facts(active_item),
+                _target_source_facts(allocation, target_amount),
+            )
             diff.append(
                 PortfolioRebalanceDiffItem(
                     action="change_weight",
                     trader_id=trader_id,
-                    trader_address=item.trader.hl_address,
-                    trader_display_name=item.trader.display_name,
-                    subscription_id=item.subscription.id,
-                    from_allocation_id=item.item.allocation_id,
+                    trader_address=active_item.trader.hl_address,
+                    trader_display_name=active_item.trader.display_name,
+                    subscription_id=active_item.subscription.id,
+                    from_allocation_id=active_item.item.allocation_id,
                     to_allocation_id=allocation.id,
                     from_weight_pct=old_weight,
                     to_weight_pct=new_weight,
                     from_allocation_usd=old_amount,
                     to_allocation_usd=new_amount,
                     message=(
-                        f"Change {_item_name(item)} target weight from "
+                        f"Change {_item_name(active_item)} target weight from "
                         f"{old_weight:.3f}% to {new_weight:.3f}%."
                     ),
+                    rationale=rebalance_rationale(
+                        "change_weight",
+                        source_facts=source_facts,
+                    ),
+                    source_facts=source_facts,
                 )
             )
 
-        changed_fields = _risk_setting_changes(item, allocation)
+        changed_fields = _risk_setting_changes(active_item, allocation)
         if changed_fields:
+            source_facts = _merge_source_facts(
+                _item_source_facts(active_item),
+                _target_source_facts(allocation, target_amount),
+            )
             diff.append(
                 PortfolioRebalanceDiffItem(
                     action="change_risk_settings",
                     trader_id=trader_id,
-                    trader_address=item.trader.hl_address,
-                    trader_display_name=item.trader.display_name,
-                    subscription_id=item.subscription.id,
-                    from_allocation_id=item.item.allocation_id,
+                    trader_address=active_item.trader.hl_address,
+                    trader_display_name=active_item.trader.display_name,
+                    subscription_id=active_item.subscription.id,
+                    from_allocation_id=active_item.item.allocation_id,
                     to_allocation_id=allocation.id,
                     from_weight_pct=old_weight,
                     to_weight_pct=new_weight,
@@ -450,18 +542,35 @@ def _build_diff(ctx: RebalanceContext) -> list[PortfolioRebalanceDiffItem]:
                     to_allocation_usd=new_amount,
                     changed_fields=changed_fields,
                     message=(
-                        f"Update {_item_name(item)} risk settings: "
+                        f"Update {_item_name(active_item)} risk settings: "
                         + ", ".join(changed_fields)
                         + "."
                     ),
+                    rationale=rebalance_rationale(
+                        "change_risk_settings",
+                        source_facts=source_facts,
+                        changed_fields=changed_fields,
+                    ),
+                    source_facts=source_facts,
                 )
             )
 
     if not diff:
+        source_facts = {
+            "from_version_id": ctx.from_version.id,
+            "to_version_id": ctx.to_version.id,
+            "active_item_count": len(ctx.active_items),
+            "target_allocation_count": len(ctx.target_allocations),
+        }
         diff.append(
             PortfolioRebalanceDiffItem(
                 action="no_change",
                 message="Portfolio subscription already matches the current version.",
+                rationale=rebalance_rationale(
+                    "no_change",
+                    source_facts=source_facts,
+                ),
+                source_facts=source_facts,
             )
         )
     return diff
@@ -480,20 +589,39 @@ async def _preview_blockers(
         try:
             await require_portfolio_rebalance_billing(db, ctx.portfolio_subscription.id)
         except BillingPaymentRequiredError as exc:
+            source_facts = {
+                "portfolio_subscription_id": ctx.portfolio_subscription.id,
+                "is_demo": ctx.portfolio_subscription.is_demo,
+                "status": ctx.portfolio_subscription.status,
+            }
             return [
                 PortfolioRebalanceDiffItem(
                     action="blocked_by_payment",
                     message=str(exc),
+                    rationale=rebalance_rationale(
+                        "blocked_by_payment",
+                        source_facts=source_facts,
+                    ),
+                    source_facts=source_facts,
                 )
             ], str(exc)
 
         ready, reason = await _wallet_ready_for_live(db, ctx.user)
         if not ready:
             message = reason or "Live rebalance requires a ready wallet and agent."
+            source_facts = {
+                "user_id": ctx.user.id,
+                "has_hl_address": bool(ctx.user.hl_address),
+            }
             return [
                 PortfolioRebalanceDiffItem(
                     action="blocked_by_wallet",
                     message=message,
+                    rationale=rebalance_rationale(
+                        "blocked_by_wallet",
+                        source_facts=source_facts,
+                    ),
+                    source_facts=source_facts,
                 )
             ], message
 
@@ -523,6 +651,21 @@ async def _preview_blockers(
                             "Manual live subscription conflict blocks adding "
                             f"{trader_label}."
                         ),
+                        rationale=rebalance_rationale(
+                            "blocked_by_user_conflict",
+                            source_facts={
+                                "conflict_subscription_id": conflict.subscription_id,
+                                "trader_id": conflict.trader_id,
+                                "is_demo": conflict.is_demo,
+                            },
+                        ),
+                        source_facts={
+                            "conflict_subscription_id": conflict.subscription_id,
+                            "trader_id": conflict.trader_id,
+                            "trader_address": conflict.trader_address,
+                            "trader_display_name": conflict.trader_display_name,
+                            "is_demo": conflict.is_demo,
+                        },
                     )
                 )
             return blocker_diff, "Manual live subscription conflict blocks rebalance."
@@ -756,10 +899,10 @@ async def _apply_rebalance_mutations(
 
     for allocation in ctx.target_allocations:
         target_allocation = target_amounts[allocation.id]
-        item = active_by_trader.get(allocation.trader_id)
-        if item is not None:
+        active_item = active_by_trader.get(allocation.trader_id)
+        if active_item is not None:
             _apply_target_to_existing_item(
-                item,
+                active_item,
                 allocation,
                 target_allocation,
                 ctx.to_version.id,
