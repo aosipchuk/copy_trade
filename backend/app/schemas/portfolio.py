@@ -15,6 +15,18 @@ RebalanceEventType = Literal["scheduled", "emergency", "manual", "user_apply"]
 RebalanceStatus = Literal[
     "draft", "pending", "running", "completed", "failed", "skipped"
 ]
+RebalanceDiffAction = Literal[
+    "add_trader",
+    "remove_trader",
+    "change_weight",
+    "change_risk_settings",
+    "no_change",
+    "blocked_by_user_conflict",
+    "blocked_by_payment",
+    "blocked_by_wallet",
+    "failed_risk_check",
+]
+RebalancePreviewStatus = Literal["up_to_date", "pending", "blocked"]
 BillingProvider = Literal["stripe", "admin_override"]
 JsonDict = dict[str, Any]
 
@@ -89,6 +101,11 @@ class UserPortfolioSubscriptionCreate(BaseModel):
     total_allocation_usd: float = Field(gt=10, le=1_000_000)
     close_removed_positions: bool = False
     risk_disclosure_accepted: bool = False
+
+
+class UserPortfolioSubscriptionUpdate(BaseModel):
+    auto_rebalance: bool | None = None
+    close_removed_positions: bool | None = None
 
 
 class UserPortfolioSubscriptionResponse(BaseModel):
@@ -169,6 +186,46 @@ class PortfolioRebalanceEventResponse(BaseModel):
     idempotency_key: str
     created_at: datetime
     executed_at: datetime | None
+
+
+class PortfolioRebalanceDiffItem(BaseModel):
+    action: RebalanceDiffAction
+    trader_id: int | None = None
+    trader_address: str | None = None
+    trader_display_name: str | None = None
+    subscription_id: int | None = None
+    from_allocation_id: int | None = None
+    to_allocation_id: int | None = None
+    from_weight_pct: float | None = None
+    to_weight_pct: float | None = None
+    from_allocation_usd: float | None = None
+    to_allocation_usd: float | None = None
+    changed_fields: list[str] = Field(default_factory=list)
+    message: str
+
+
+class PortfolioRebalancePreviewResponse(BaseModel):
+    user_portfolio_subscription_id: int
+    portfolio_id: int
+    portfolio_slug: str
+    portfolio_name: str
+    from_version_id: int
+    from_version_no: int
+    to_version_id: int
+    to_version_no: int
+    status: RebalancePreviewStatus
+    can_apply: bool
+    auto_rebalance: bool
+    close_removed_positions: bool
+    is_demo: bool
+    total_allocation_usd: float
+    diff: list[PortfolioRebalanceDiffItem] = Field(default_factory=list)
+    blocker: str | None = None
+
+
+class PortfolioRebalanceApplyResponse(PortfolioRebalancePreviewResponse):
+    event: PortfolioRebalanceEventResponse
+    portfolio_subscription: UserPortfolioSubscriptionDetailResponse
 
 
 class PortfolioBacktestResponse(BaseModel):

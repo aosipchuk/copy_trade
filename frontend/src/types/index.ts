@@ -200,6 +200,25 @@ export type PortfolioVersionStatus = 'draft' | 'published' | 'retired' | 'reject
 export type UserPortfolioStatus = 'trialing' | 'active' | 'past_due' | 'paused' | 'canceled'
 export type PortfolioItemStatus = 'active' | 'removed' | 'failed' | 'paused'
 export type BillingProvider = 'stripe' | 'admin_override'
+export type RebalanceEventType = 'scheduled' | 'emergency' | 'manual' | 'user_apply'
+export type RebalanceStatus =
+  | 'draft'
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+export type RebalanceDiffAction =
+  | 'add_trader'
+  | 'remove_trader'
+  | 'change_weight'
+  | 'change_risk_settings'
+  | 'no_change'
+  | 'blocked_by_user_conflict'
+  | 'blocked_by_payment'
+  | 'blocked_by_wallet'
+  | 'failed_risk_check'
+export type RebalancePreviewStatus = 'up_to_date' | 'pending' | 'blocked'
 
 export interface PortfolioCurrentVersionSummary {
   id: number
@@ -358,6 +377,11 @@ export interface UserPortfolioSubscriptionDetail extends UserPortfolioSubscripti
   items: UserPortfolioItemDetail[]
 }
 
+export interface UserPortfolioSubscriptionUpdate {
+  auto_rebalance?: boolean | null
+  close_removed_positions?: boolean | null
+}
+
 export interface PortfolioActivationConflict {
   trader_id: number
   trader_address: string
@@ -369,6 +393,61 @@ export interface PortfolioActivationConflict {
 export interface UserPortfolioActivationResponse extends UserPortfolioSubscriptionDetail {
   created: boolean
   conflicts: PortfolioActivationConflict[]
+}
+
+export interface PortfolioRebalanceEvent {
+  id: number
+  portfolio_id: number
+  from_version_id: number | null
+  to_version_id: number | null
+  user_portfolio_subscription_id: number | null
+  event_type: RebalanceEventType
+  status: RebalanceStatus
+  diff_json: Record<string, unknown> | null
+  error_msg: string | null
+  idempotency_key: string
+  created_at: string
+  executed_at: string | null
+}
+
+export interface PortfolioRebalanceDiffItem {
+  action: RebalanceDiffAction
+  trader_id: number | null
+  trader_address: string | null
+  trader_display_name: string | null
+  subscription_id: number | null
+  from_allocation_id: number | null
+  to_allocation_id: number | null
+  from_weight_pct: number | null
+  to_weight_pct: number | null
+  from_allocation_usd: number | null
+  to_allocation_usd: number | null
+  changed_fields: string[]
+  message: string
+}
+
+export interface PortfolioRebalancePreview {
+  user_portfolio_subscription_id: number
+  portfolio_id: number
+  portfolio_slug: string
+  portfolio_name: string
+  from_version_id: number
+  from_version_no: number
+  to_version_id: number
+  to_version_no: number
+  status: RebalancePreviewStatus
+  can_apply: boolean
+  auto_rebalance: boolean
+  close_removed_positions: boolean
+  is_demo: boolean
+  total_allocation_usd: number
+  diff: PortfolioRebalanceDiffItem[]
+  blocker: string | null
+}
+
+export interface PortfolioRebalanceApplyResponse extends PortfolioRebalancePreview {
+  event: PortfolioRebalanceEvent
+  portfolio_subscription: UserPortfolioSubscriptionDetail
 }
 
 export interface PortfolioBillingCheckoutCreate {

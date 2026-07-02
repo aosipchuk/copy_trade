@@ -2,9 +2,13 @@ from fastapi import APIRouter, HTTPException, Response, status
 
 from app.api.deps import CurrentUser, DBSession
 from app.schemas.portfolio import (
+    PortfolioRebalanceApplyResponse,
+    PortfolioRebalanceEventResponse,
+    PortfolioRebalancePreviewResponse,
     UserPortfolioActivationResponse,
     UserPortfolioSubscriptionCreate,
     UserPortfolioSubscriptionDetailResponse,
+    UserPortfolioSubscriptionUpdate,
 )
 from app.services.portfolio.activation import (
     activate_user_portfolio_subscription,
@@ -13,6 +17,12 @@ from app.services.portfolio.activation import (
     list_user_portfolio_subscriptions,
 )
 from app.services.portfolio.billing import BillingPaymentRequiredError
+from app.services.portfolio.rebalance import (
+    apply_user_portfolio_rebalance,
+    list_user_portfolio_rebalance_events,
+    preview_user_portfolio_rebalance,
+    update_user_portfolio_subscription_settings,
+)
 
 router = APIRouter(prefix="/portfolio-subscriptions", tags=["portfolio-subscriptions"])
 
@@ -74,6 +84,99 @@ async def get(
     try:
         return await get_user_portfolio_subscription(
             db, current_user.id, portfolio_subscription_id
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+
+@router.patch(
+    "/{portfolio_subscription_id}",
+    response_model=UserPortfolioSubscriptionDetailResponse,
+)
+async def update(
+    portfolio_subscription_id: int,
+    body: UserPortfolioSubscriptionUpdate,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> UserPortfolioSubscriptionDetailResponse:
+    try:
+        return await update_user_portfolio_subscription_settings(
+            db, current_user.id, portfolio_subscription_id, body
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+
+@router.post(
+    "/{portfolio_subscription_id}/preview-rebalance",
+    response_model=PortfolioRebalancePreviewResponse,
+)
+async def preview_rebalance(
+    portfolio_subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> PortfolioRebalancePreviewResponse:
+    try:
+        return await preview_user_portfolio_rebalance(
+            db, current_user.id, portfolio_subscription_id
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+
+@router.post(
+    "/{portfolio_subscription_id}/apply-rebalance",
+    response_model=PortfolioRebalanceApplyResponse,
+)
+async def apply_rebalance(
+    portfolio_subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> PortfolioRebalanceApplyResponse:
+    try:
+        return await apply_user_portfolio_rebalance(
+            db, current_user.id, portfolio_subscription_id
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+
+@router.get(
+    "/{portfolio_subscription_id}/rebalance-history",
+    response_model=list[PortfolioRebalanceEventResponse],
+)
+async def rebalance_history(
+    portfolio_subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+    limit: int = 20,
+) -> list[PortfolioRebalanceEventResponse]:
+    try:
+        return await list_user_portfolio_rebalance_events(
+            db,
+            current_user.id,
+            portfolio_subscription_id,
+            limit=max(1, min(limit, 100)),
         )
     except LookupError as exc:
         raise HTTPException(

@@ -1,13 +1,17 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
+  applyPortfolioRebalance,
   activateDemoPortfolio,
   activateLivePortfolio,
   cancelPortfolioSubscription,
   createPortfolioBillingCheckout,
   fetchPortfolio,
   fetchPortfolioBillingStatus,
+  fetchPortfolioRebalanceHistory,
   fetchPortfolioSubscriptions,
+  previewPortfolioRebalance,
+  updatePortfolioSubscription,
 } from '../api/portfolios'
 import { fetchAgentStatus } from '../api/wallet'
 import { FullPageSpinner } from '../components/LoadingSpinner'
@@ -19,6 +23,8 @@ import type {
   PortfolioBillingStatus,
   PortfolioActivationConflict,
   PortfolioBacktest,
+  PortfolioRebalanceEvent,
+  PortfolioRebalancePreview,
   UserPortfolioSubscriptionDetail,
 } from '../types'
 
@@ -342,6 +348,13 @@ export function PortfolioDetailPage() {
           onActivate={handleActivateLive}
           onWalletSetup={() => navigate('/wallet')}
         />
+        {livePortfolioSubscription && livePortfolioSubscription.status !== 'canceled' && (
+          <RebalancePanel
+            label="Live rebalance"
+            portfolioSubscription={livePortfolioSubscription}
+            onSubscriptionChange={setLivePortfolioSubscription}
+          />
+        )}
         <DemoActivationPanel
           portfolio={portfolio}
           portfolioSubscription={portfolioSubscription}
@@ -352,6 +365,13 @@ export function PortfolioDetailPage() {
           onActivate={handleActivateDemo}
           onCancel={handleCancelDemo}
         />
+        {portfolioSubscription && portfolioSubscription.status !== 'canceled' && (
+          <RebalancePanel
+            label="Demo rebalance"
+            portfolioSubscription={portfolioSubscription}
+            onSubscriptionChange={setPortfolioSubscription}
+          />
+        )}
         <AllocationsList allocations={portfolio.current_version.allocations} />
         <BacktestPanel backtest={primaryBacktest} />
       </div>
@@ -862,6 +882,280 @@ function ConflictNotice({
       {conflicts
         .map((item) => item.trader_display_name ?? item.trader_address.slice(0, 10))
         .join(', ')}
+    </div>
+  )
+}
+
+function rebalanceActionLabel(action: string): string {
+  return action
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function RebalancePanel({
+  label,
+  portfolioSubscription,
+  onSubscriptionChange,
+}: {
+  label: string
+  portfolioSubscription: UserPortfolioSubscriptionDetail
+  onSubscriptionChange: (next: UserPortfolioSubscriptionDetail) => void
+}) {
+  const [preview, setPreview] = useState<PortfolioRebalancePreview | null>(null)
+  const [history, setHistory] = useState<PortfolioRebalanceEvent[]>([])
+  const [loading, setLoading] = useState(true)
+  const [settingsBusy, setSettingsBusy] = useState<string | null>(null)
+  const [applyBusy, setApplyBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const subscriptionId = portfolioSubscription.id
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const [previewResult, historyResult] = await Promise.allSettled([
+      previewPortfolioRebalance(subscriptionId),
+      fetchPortfolioRebalanceHistory(subscriptionId),
+    ])
+
+    if (previewResult.status === 'fulfilled') {
+      setPreview(previewResult.value)
+    } else {
+      const detail = (
+        previewResult.reason as { response?: { data?: { detail?: string } } }
+      )?.response?.data?.detail
+      setError(detail ?? 'Failed to load rebalance preview')
+    }
+
+    if (historyResult.status === 'fulfilled') {
+      setHistory(historyResult.value)
+    }
+    setLoading(false)
+  }, [subscriptionId])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  const handleSettingChange = useCallback(
+    async (
+      field: 'auto_rebalance' | 'close_removed_positions',
+      value: boolean,
+    ) => {
+      setSettingsBusy(field)
+      setError(null)
+      setNotice(null)
+      try {
+        const updated = await updatePortfolioSubscription(subscriptionId, {
+          [field]: value,
+        })
+        onSubscriptionChange(updated)
+        setPreview((current) =>
+          current == null ? current : { ...current, [field]: value },
+        )
+        setNotice('Settings saved')
+      } catch (err: unknown) {
+        const detail = (err as { response?: { data?: { detail?: string } } })
+          ?.response?.data?.detail
+        setError(detail ?? 'Failed to update rebalance settings')
+      } finally {
+        setSettingsBusy(null)
+      }
+    },
+    [onSubscriptionChange, subscriptionId],
+  )
+
+  const handleApply = useCallback(async () => {
+    setApplyBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await applyPortfolioRebalance(subscriptionId)
+      onSubscriptionChange(result.portfolio_subscription)
+      setPreview(result)
+      const nextHistory = await fetchPortfolioRebalanceHistory(subscriptionId)
+      setHistory(nextHistory)
+      setNotice(
+        result.event.status === 'completed'
+          ? 'Rebalance applied'
+          : `Rebalance ${result.event.status}`,
+      )
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail
+      setError(detail ?? 'Failed to apply rebalance')
+    } finally {
+      setApplyBusy(false)
+    }
+  }, [onSubscriptionChange, subscriptionId])
+
+  const status = preview?.status ?? 'pending'
+  const canApply = preview?.can_apply ?? false
+  const autoRebalance =
+    preview?.auto_rebalance ?? portfolioSubscription.auto_rebalance
+  const closeRemovedPositions =
+    preview?.close_removed_positions ??
+    portfolioSubscription.close_removed_positions
+  const diff = preview?.diff ?? []
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-tg-text">{label}</h2>
+        <span
+          className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${
+            status === 'blocked'
+              ? 'bg-red-500/10 text-red-500'
+              : status === 'pending'
+                ? 'bg-amber-500/10 text-amber-600'
+                : 'bg-green-500/10 text-green-500'
+          }`}
+        >
+          {status.replace('_', ' ')}
+        </span>
+      </div>
+
+      <div
+        className="rounded-lg px-3 py-3"
+        style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+      >
+        {loading ? (
+          <p className="text-xs text-tg-hint">Loading rebalance</p>
+        ) : (
+          <>
+            {preview && (
+              <div className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
+                <StatCell
+                  label="Current"
+                  value={`v${preview.from_version_no}`}
+                />
+                <StatCell label="Target" value={`v${preview.to_version_no}`} />
+              </div>
+            )}
+
+            <div className="mb-3 space-y-2 border-b border-gray-200 pb-3 dark:border-gray-700">
+              <label className="flex items-center justify-between gap-3 text-xs text-tg-text">
+                <span>Auto rebalance</span>
+                <input
+                  checked={autoRebalance}
+                  disabled={settingsBusy != null}
+                  type="checkbox"
+                  onChange={(event) => {
+                    void handleSettingChange(
+                      'auto_rebalance',
+                      event.target.checked,
+                    )
+                  }}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 text-xs text-tg-text">
+                <span>Close removed positions</span>
+                <input
+                  checked={closeRemovedPositions}
+                  disabled={settingsBusy != null}
+                  type="checkbox"
+                  onChange={(event) => {
+                    void handleSettingChange(
+                      'close_removed_positions',
+                      event.target.checked,
+                    )
+                  }}
+                />
+              </label>
+            </div>
+
+            <div className="divide-y divide-gray-100 dark:divide-gray-800">
+              {diff.map((item, index) => (
+                <RebalanceDiffLine item={item} key={`${item.action}-${index}`} />
+              ))}
+            </div>
+
+            {preview?.blocker && (
+              <div className="mt-3 rounded-md border border-red-300 px-2 py-2 text-xs leading-snug text-red-500">
+                {preview.blocker}
+              </div>
+            )}
+
+            <button
+              className="mt-3 w-full rounded-md bg-tg-button px-3 py-2 text-xs font-semibold text-tg-button-text disabled:opacity-50"
+              disabled={!canApply || applyBusy}
+              onClick={() => {
+                void handleApply()
+              }}
+            >
+              {applyBusy ? 'Applying' : 'Apply rebalance'}
+            </button>
+
+            {history.length > 0 && (
+              <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-700">
+                <div className="mb-1 text-[10px] font-semibold uppercase text-tg-hint">
+                  History
+                </div>
+                <div className="space-y-1">
+                  {history.slice(0, 4).map((event) => (
+                    <div
+                      className="flex items-center justify-between gap-3 text-xs"
+                      key={event.id}
+                    >
+                      <span className="min-w-0 truncate text-tg-text">
+                        {event.event_type.replace('_', ' ')} · {event.status}
+                      </span>
+                      <span className="shrink-0 text-tg-hint">
+                        {dateText(event.executed_at ?? event.created_at)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {notice && <p className="mt-3 text-xs text-green-500">{notice}</p>}
+        {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+      </div>
+    </section>
+  )
+}
+
+function RebalanceDiffLine({
+  item,
+}: {
+  item: PortfolioRebalancePreview['diff'][number]
+}) {
+  const name =
+    item.trader_display_name ??
+    (item.trader_address ? item.trader_address.slice(0, 10) : 'Portfolio')
+  const target =
+    item.to_weight_pct == null
+      ? null
+      : `${item.to_weight_pct.toFixed(3)}% · ${money(item.to_allocation_usd)}`
+  const source =
+    item.from_weight_pct == null
+      ? null
+      : `${item.from_weight_pct.toFixed(3)}% · ${money(item.from_allocation_usd)}`
+
+  return (
+    <div className="py-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-semibold text-tg-text">{name}</div>
+          <div className="text-[10px] font-semibold uppercase text-tg-hint">
+            {rebalanceActionLabel(item.action)}
+          </div>
+        </div>
+        <div className="shrink-0 text-right text-[10px] text-tg-hint">
+          {source && <div>{source}</div>}
+          {target && <div className="text-tg-text">{target}</div>}
+        </div>
+      </div>
+      <p className="mt-1 text-xs leading-snug text-tg-hint">{item.message}</p>
+      {item.changed_fields.length > 0 && (
+        <div className="mt-1 text-[10px] text-tg-hint">
+          {item.changed_fields.join(', ')}
+        </div>
+      )}
     </div>
   )
 }

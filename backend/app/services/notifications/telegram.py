@@ -44,3 +44,19 @@ def format_portfolio_stop_loss_hit(loss_pct: float, threshold_pct: float) -> str
         f"Account lost {abs(loss_pct):.1f}% (threshold: {threshold_pct:.0f}%).\n"
         f"All subscriptions deactivated and positions closed."
     )
+
+
+def format_model_portfolio_rebalance_completed(
+    *,
+    portfolio_name: str,
+    from_version_no: int,
+    to_version_no: int,
+    added_count: int,
+    removed_count: int,
+    changed_count: int,
+) -> str:
+    return (
+        f"<b>{portfolio_name} rebalance applied</b>\n"
+        f"v{from_version_no} -> v{to_version_no}\n"
+        f"Added: {added_count}, removed: {removed_count}, changed: {changed_count}."
+    )

@@ -5,9 +5,13 @@ import type {
   PortfolioBillingCheckoutResponse,
   PortfolioBillingStatus,
   PortfolioBacktest,
+  PortfolioRebalanceApplyResponse,
+  PortfolioRebalanceEvent,
+  PortfolioRebalancePreview,
   UserPortfolioActivationResponse,
   UserPortfolioSubscriptionCreate,
   UserPortfolioSubscriptionDetail,
+  UserPortfolioSubscriptionUpdate,
 } from '../types'
 import { http } from './http'
 
@@ -93,6 +97,44 @@ export async function cancelPortfolioSubscription(
 ): Promise<UserPortfolioSubscriptionDetail> {
   const res = await http.delete<UserPortfolioSubscriptionDetail>(
     `/portfolio-subscriptions/${id}`,
+  )
+  return res.data
+}
+
+export async function updatePortfolioSubscription(
+  id: number,
+  body: UserPortfolioSubscriptionUpdate,
+): Promise<UserPortfolioSubscriptionDetail> {
+  const res = await http.patch<UserPortfolioSubscriptionDetail>(
+    `/portfolio-subscriptions/${id}`,
+    body,
+  )
+  return res.data
+}
+
+export async function previewPortfolioRebalance(
+  id: number,
+): Promise<PortfolioRebalancePreview> {
+  const res = await http.post<PortfolioRebalancePreview>(
+    `/portfolio-subscriptions/${id}/preview-rebalance`,
+  )
+  return res.data
+}
+
+export async function applyPortfolioRebalance(
+  id: number,
+): Promise<PortfolioRebalanceApplyResponse> {
+  const res = await http.post<PortfolioRebalanceApplyResponse>(
+    `/portfolio-subscriptions/${id}/apply-rebalance`,
+  )
+  return res.data
+}
+
+export async function fetchPortfolioRebalanceHistory(
+  id: number,
+): Promise<PortfolioRebalanceEvent[]> {
+  const res = await http.get<PortfolioRebalanceEvent[]>(
+    `/portfolio-subscriptions/${id}/rebalance-history`,
   )
   return res.data
 }

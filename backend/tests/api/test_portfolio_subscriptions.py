@@ -18,6 +18,7 @@ from app.models.portfolio import (
     ModelPortfolio,
     ModelPortfolioAllocation,
     ModelPortfolioVersion,
+    PortfolioRebalanceEvent,
     UserPortfolioItem,
     UserPortfolioSubscription,
 )
@@ -59,6 +60,13 @@ class SeededPortfolio:
     version_id: int
     slug: str
     trader_ids: list[int]
+
+
+@dataclass(frozen=True)
+class RebalanceTarget:
+    version_id: int
+    added_trader_id: int
+    removed_trader_id: int
 
 
 def _make_init_data(user_id: int, username: str = "portfolioactivation") -> str:
@@ -158,6 +166,70 @@ async def _seed_published_portfolio(db_session) -> SeededPortfolio:
         version_id=version.id,
         slug=slug,
         trader_ids=[trader.id for trader in traders],
+    )
+
+
+async def _publish_rebalance_target_version(
+    db_session,
+    seed: SeededPortfolio,
+) -> RebalanceTarget:
+    index = next(_counter)
+    now = datetime(2026, 7, 2, 13, 0, 0)
+    current_version = await db_session.get(ModelPortfolioVersion, seed.version_id)
+    assert current_version is not None
+    current_version.status = "retired"
+    current_version.valid_to = now
+
+    version = ModelPortfolioVersion(
+        portfolio_id=seed.portfolio_id,
+        version_no=2,
+        status="published",
+        valid_from=now,
+        approved_at=now,
+        approval_note="Approved rebalance target for API test.",
+        summary_json={
+            "trader_count": 3,
+            "target_weight_sum_pct": 100.0,
+        },
+    )
+    db_session.add(version)
+    await db_session.flush()
+
+    added_trader = Trader(
+        hl_address=f"0xrb{index:04x}{0:034x}",
+        display_name=f"Rebalance Added Trader {index}",
+        is_active=True,
+        has_perp_activity=True,
+    )
+    db_session.add(added_trader)
+    await db_session.flush()
+
+    allocations = [
+        (seed.trader_ids[0], Decimal("60.000"), Decimal("80.00")),
+        (seed.trader_ids[1], Decimal("20.000"), Decimal("100.00")),
+        (added_trader.id, Decimal("20.000"), Decimal("100.00")),
+    ]
+    for offset, (trader_id, weight, copy_ratio) in enumerate(allocations):
+        db_session.add(
+            ModelPortfolioAllocation(
+                version_id=version.id,
+                trader_id=trader_id,
+                target_weight_pct=weight,
+                copy_ratio_pct=copy_ratio,
+                max_leverage=Decimal("8.00"),
+                stop_loss_pct=Decimal("20.00"),
+                sizing_mode="fixed_ratio",
+                reason_code="rebalance_test",
+                reason_text="Selected by rebalance API test target version.",
+                score_snapshot={"portfolio_score": 90 - offset},
+                constraint_snapshot={"selection_rank": offset + 1},
+            )
+        )
+    await db_session.commit()
+    return RebalanceTarget(
+        version_id=version.id,
+        added_trader_id=added_trader.id,
+        removed_trader_id=seed.trader_ids[2],
     )
 
 
@@ -397,6 +469,179 @@ class TestDemoPortfolioActivation:
         items = list(items_result.scalars().all())
         assert len(items) == 3
         assert all(item.status == "removed" for item in items)
+
+
+class TestPortfolioRebalance:
+    async def test_preview_rebalance_shows_diff_for_pending_manual_apply(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, _ = await _auth_user(client, user_id=91201)
+        activation = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_activation_body(seed),
+            headers=headers,
+        )
+        assert activation.status_code == 201
+        portfolio_subscription_id = activation.json()["id"]
+        target = await _publish_rebalance_target_version(db_session, seed)
+
+        response = await client.post(
+            f"/api/portfolio-subscriptions/{portfolio_subscription_id}"
+            "/preview-rebalance",
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "pending"
+        assert body["can_apply"] is True
+        assert body["auto_rebalance"] is False
+        assert body["from_version_id"] == seed.version_id
+        assert body["to_version_id"] == target.version_id
+        actions = {item["action"] for item in body["diff"]}
+        assert {
+            "add_trader",
+            "remove_trader",
+            "change_weight",
+            "change_risk_settings",
+        } <= actions
+
+    async def test_apply_rebalance_is_idempotent_and_manual_subscription_untouched(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91202)
+        manual = Subscription(
+            user_id=user_id,
+            trader_id=seed.trader_ids[2],
+            max_allocation_usd=Decimal("100.00"),
+            copy_ratio_pct=Decimal("100.00"),
+            stop_loss_pct=Decimal("20.00"),
+            max_leverage=Decimal("8.00"),
+            is_active=True,
+            is_demo=True,
+            source_type="manual",
+            managed_by_portfolio=False,
+        )
+        db_session.add(manual)
+        await db_session.commit()
+
+        activation = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_activation_body(seed),
+            headers=headers,
+        )
+        assert activation.status_code == 201
+        portfolio_subscription_id = activation.json()["id"]
+        await _publish_rebalance_target_version(db_session, seed)
+
+        first = await client.post(
+            f"/api/portfolio-subscriptions/{portfolio_subscription_id}"
+            "/apply-rebalance",
+            headers=headers,
+        )
+        second = await client.post(
+            f"/api/portfolio-subscriptions/{portfolio_subscription_id}"
+            "/apply-rebalance",
+            headers=headers,
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        first_body = first.json()
+        second_body = second.json()
+        assert first_body["event"]["status"] == "completed"
+        assert second_body["event"]["id"] == first_body["event"]["id"]
+        assert second_body["event"]["status"] == "completed"
+        assert first_body["portfolio_subscription"]["active_version_no"] == 2
+
+        subscriptions_result = await db_session.execute(
+            select(Subscription).where(
+                Subscription.source_id == portfolio_subscription_id,
+                Subscription.source_type == "model_portfolio",
+            )
+        )
+        generated = list(subscriptions_result.scalars().all())
+        assert len(generated) == 4
+        active_generated = [
+            subscription for subscription in generated if subscription.is_active
+        ]
+        assert len(active_generated) == 3
+        removed_generated = [
+            subscription
+            for subscription in generated
+            if subscription.trader_id == seed.trader_ids[2]
+        ]
+        assert len(removed_generated) == 1
+        assert removed_generated[0].is_active is False
+
+        manual_result = await db_session.execute(
+            select(Subscription).where(Subscription.id == manual.id)
+        )
+        manual_after_apply = manual_result.scalar_one()
+        assert manual_after_apply.is_active is True
+        assert manual_after_apply.source_type == "manual"
+        assert manual_after_apply.managed_by_portfolio is False
+
+        event_result = await db_session.execute(
+            select(PortfolioRebalanceEvent).where(
+                PortfolioRebalanceEvent.user_portfolio_subscription_id
+                == portfolio_subscription_id
+            )
+        )
+        assert len(list(event_result.scalars().all())) == 1
+
+    async def test_live_past_due_rebalance_is_skipped(self, client, db_session) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, user_id = await _auth_user(client, user_id=91203)
+        paid_holder = await _seed_paid_holder(db_session, seed, user_id)
+        await _make_user_live_ready(db_session, user_id)
+        activation = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+        assert activation.status_code == 201
+        paid_holder.status = "past_due"
+        await db_session.commit()
+        await _publish_rebalance_target_version(db_session, seed)
+
+        response = await client.post(
+            f"/api/portfolio-subscriptions/{paid_holder.id}/apply-rebalance",
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "blocked"
+        assert body["can_apply"] is False
+        assert body["event"]["status"] == "skipped"
+        assert "past_due" in body["event"]["error_msg"]
+        assert body["portfolio_subscription"]["active_version_no"] == 1
+        assert any(item["action"] == "blocked_by_payment" for item in body["diff"])
+
+    async def test_update_rebalance_preferences(self, client, db_session) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, _ = await _auth_user(client, user_id=91204)
+        activation = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_activation_body(seed),
+            headers=headers,
+        )
+        assert activation.status_code == 201
+        portfolio_subscription_id = activation.json()["id"]
+
+        response = await client.patch(
+            f"/api/portfolio-subscriptions/{portfolio_subscription_id}",
+            json={"auto_rebalance": True, "close_removed_positions": True},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["auto_rebalance"] is True
+        assert body["close_removed_positions"] is True
 
 
 class TestLivePortfolioActivation:

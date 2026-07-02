@@ -1300,6 +1300,32 @@ Frontend:
 - past_due user пропускается;
 - auto_rebalance=false показывает pending update.
 
+Реализовано в Phase 7:
+
+- добавлен backend rebalance service `app/services/portfolio/rebalance.py`;
+- добавлены endpoints:
+  - `PATCH /api/portfolio-subscriptions/{id}` для `auto_rebalance` и `close_removed_positions`;
+  - `POST /api/portfolio-subscriptions/{id}/preview-rebalance`;
+  - `POST /api/portfolio-subscriptions/{id}/apply-rebalance`;
+  - `GET /api/portfolio-subscriptions/{id}/rebalance-history`;
+- diff показывает `add_trader`, `remove_trader`, `change_weight`, `change_risk_settings`, `no_change` и blocking actions;
+- apply использует deterministic idempotency key `user_portfolio_subscription_id/from_version_id/to_version_id`;
+- повторный apply уже примененной версии возвращает последний completed event и не создает дублирующие generated subscriptions/events;
+- removed trader отключает только generated subscription с `source_type='model_portfolio'`, `source_id=user_portfolio_subscriptions.id`, `managed_by_portfolio=true`;
+- manual subscriptions остаются вне rebalance mutations;
+- live rebalance проверяет billing через Phase 5 helper, wallet/agent readiness, manual live conflicts и portfolio risk;
+- `past_due`/`paused`/`canceled` live billing status приводит к skipped rebalance event без изменения active version;
+- scheduler job `apply_due_user_rebalances` запускается каждые 300 секунд и применяет только due subscriptions с `auto_rebalance=true`;
+- Telegram notification отправляется после completed rebalance;
+- frontend detail page получил Rebalance panels для demo/live, diff UI, toggles и history;
+- добавлены API tests для preview diff, idempotent apply, manual untouched, past_due skipped и settings update.
+
+Миграции после Phase 7:
+
+- новых миграций нет;
+- используется уже существующая таблица `portfolio_rebalance_events` из Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py`;
+- обязательное предварительное условие: Phase 1 migration уже применена на сервере.
+
 ### Phase 8 — AI explanations и отчеты
 
 Цель: добавить понятные объяснения без black box.
@@ -1901,6 +1927,88 @@ curl -fsS -X POST "$PUBLIC_URL/api/portfolio-subscriptions" \
 Миграции, которые нужно выполнить на сервере после Phase 6:
 
 - новых миграций нет;
+- обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.
+
+### Phase 7 deployment checklist
+
+Phase 7 не добавляет новых миграций. Перед включением rebalance engine на сервере должна быть применена Phase 1 migration, должен существовать seed-шаблон `Balanced`, у него должна быть текущая `published` версия с allocations, и Phase 5 billing gate должен быть настроен для live users или должен быть включен beta override для внутреннего тестового Telegram ID.
+
+1. Задеплоить backend + frontend код Phase 7 через обычный release path:
+
+```bash
+git pull --ff-only
+make deploy
+```
+
+`make deploy` выполняет `uv run alembic upgrade head`; для Phase 7 это должно быть no-op, если Phase 1 migration уже применена.
+
+2. Проверить миграционное состояние, seed и published-версию:
+
+```bash
+cd backend
+uv run alembic current
+uv run python -m scripts.seed_model_portfolios --check
+```
+
+Если published-версии Balanced еще нет, сначала выполнить Phase 3 manual publish/backtest checklist. Rebalance preview/apply нельзя проверять против draft-версии.
+
+3. Проверить health и новые rebalance endpoints на внутреннем тестовом пользователе:
+
+```bash
+curl -fsS "$PUBLIC_URL/api/health"
+curl -fsS -H "Authorization: Bearer <user_jwt>" \
+  "$PUBLIC_URL/api/portfolio-subscriptions?is_demo=true&active_only=true"
+curl -fsS -X POST -H "Authorization: Bearer <user_jwt>" \
+  "$PUBLIC_URL/api/portfolio-subscriptions/<portfolio_subscription_id>/preview-rebalance"
+curl -fsS -H "Authorization: Bearer <user_jwt>" \
+  "$PUBLIC_URL/api/portfolio-subscriptions/<portfolio_subscription_id>/rebalance-history"
+```
+
+Ожидаемый результат без новой published-версии: preview возвращает `status='up_to_date'` и `diff[0].action='no_change'`. Если уже опубликована новая версия Balanced, preview должен вернуть `status='pending'`, `can_apply=true` и diff с add/remove/change actions.
+
+4. Проверить settings update:
+
+```bash
+curl -fsS -X PATCH "$PUBLIC_URL/api/portfolio-subscriptions/<portfolio_subscription_id>" \
+  -H "Authorization: Bearer <user_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"auto_rebalance":false,"close_removed_positions":false}'
+```
+
+Ожидаемый результат: поля `auto_rebalance` и `close_removed_positions` сохраняются, existing generated subscriptions не меняются.
+
+5. Если есть безопасная тестовая portfolio subscription на старой версии и опубликована новая версия Balanced, проверить apply:
+
+```bash
+curl -fsS -X POST "$PUBLIC_URL/api/portfolio-subscriptions/<portfolio_subscription_id>/apply-rebalance" \
+  -H "Authorization: Bearer <user_jwt>"
+```
+
+Ожидаемый результат: `event.status='completed'`, `active_version_no` обновился до текущей published-версии, removed generated subscriptions inactive, manual subscriptions пользователя остались active. Повторный apply должен вернуть тот же completed event или `no_change`, без создания дублей.
+
+6. Проверить blocked live rebalance для `past_due`/`paused` пользователя только на тестовом аккаунте:
+
+```bash
+curl -fsS -X POST "$PUBLIC_URL/api/portfolio-subscriptions/<live_portfolio_subscription_id>/apply-rebalance" \
+  -H "Authorization: Bearer <past_due_user_jwt>"
+```
+
+Ожидаемый результат: `status='blocked'`, `event.status='skipped'`, `blocked_by_payment` в diff, active version не изменилась.
+
+7. Проверить scheduler после deploy:
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml logs backend --tail=200
+```
+
+Ожидаемый результат: scheduler registered job `apply_due_user_rebalances`; в логах нет постоянных ошибок `portfolio_auto_rebalance_failed`.
+
+8. Проверить UI в Telegram Mini App или браузере: на странице Balanced видны Rebalance panels для demo/live, diff, toggles `Auto rebalance`/`Close removed positions`, кнопка `Apply rebalance` и история.
+
+Миграции, которые нужно выполнить на сервере после Phase 7:
+
+- новых миграций нет;
+- `make deploy` все равно должен выполнить `alembic upgrade head` как no-op;
 - обязательное предварительное условие: Phase 1 migration `o1p2q3r4s5t6_add_model_portfolio_tables.py` уже применена.
 
 ---
