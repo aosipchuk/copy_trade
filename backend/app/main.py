@@ -23,9 +23,11 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.core.scheduler import scheduler, setup_scheduler
+    from app.services.notifications.telegram import configure_telegram_webhook
 
     setup_scheduler()
     scheduler.start()
+    await configure_telegram_webhook()
     logger.info(
         "app_startup", environment=settings.environment, hl_network=settings.hl_network
     )

@@ -4,6 +4,42 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+async def configure_telegram_webhook() -> None:
+    """Register the bot webhook and command menu when PUBLIC_URL is configured."""
+    if settings.environment == "test":
+        logger.info("telegram_webhook_skipped", reason="test environment")
+        return
+    if not settings.public_url:
+        logger.info("telegram_webhook_skipped", reason="PUBLIC_URL not set")
+        return
+    if not settings.telegram_webhook_secret:
+        logger.warning("telegram_webhook_skipped", reason="secret not set")
+        return
+
+    from aiogram import Bot
+    from aiogram.types import BotCommand
+
+    bot = Bot(token=settings.telegram_bot_token)
+    webhook_url = f"{settings.public_url.rstrip('/')}/api/telegram/webhook"
+    try:
+        await bot.set_webhook(
+            url=webhook_url,
+            secret_token=settings.telegram_webhook_secret,
+            allowed_updates=["message", "callback_query"],
+        )
+        await bot.set_my_commands(
+            [
+                BotCommand(command="start", description="Открыть меню"),
+                BotCommand(command="export", description="Excel выгрузки"),
+            ]
+        )
+        logger.info("telegram_webhook_configured", url=webhook_url)
+    except Exception as exc:
+        logger.warning("telegram_webhook_configure_failed", error=str(exc))
+    finally:
+        await bot.session.close()
+
+
 async def send_trade_notification(telegram_id: int, text: str) -> None:
     """Send a Telegram message to a user via Bot API."""
     if not settings.telegram_bot_token:

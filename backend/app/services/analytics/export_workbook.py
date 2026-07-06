@@ -2,15 +2,17 @@ import math
 import re
 import zipfile
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from io import BytesIO
+from typing import Literal
 from xml.sax.saxutils import escape
 
 from app.schemas.trader import PositionItem, TraderStatSchema
 from app.services.hyperliquid.info_client import USER_FILLS_BY_TIME_MAX_AVAILABLE
-from app.services.hyperliquid.models import Fill
+from app.services.hyperliquid.models import Fill, LeaderboardRow
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _XML_MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -61,8 +63,28 @@ class TradeOrder:
     raw_direction: str
 
 
+@dataclass(frozen=True)
+class TraderAllTimeMetricsExportRow:
+    address: str
+    trade_count: int | None
+    roi_pct: float | Decimal | None
+    pnl_usd: float | Decimal | None
+    active_trading_days: int | None
+    max_drawdown_pct: float | Decimal | None
+
+
 def xlsx_media_type() -> str:
     return _XLSX_MIME
+
+
+def hyperliquid_leaderboard_export_filename() -> str:
+    date = datetime.now(UTC).date().isoformat()
+    return f"hyperliquid_all_traders_{date}.xlsx"
+
+
+def trader_all_time_metrics_export_filename() -> str:
+    date = datetime.now(UTC).date().isoformat()
+    return f"traders_alltime_metrics_{date}.xlsx"
 
 
 def trader_export_filename(display_name: str | None, address: str) -> str:
@@ -72,6 +94,39 @@ def trader_export_filename(display_name: str | None, address: str) -> str:
         slug = address[:10]
     date = datetime.now(UTC).date().isoformat()
     return f"trader_{slug}_{date}.xlsx"
+
+
+def build_hyperliquid_leaderboard_export_workbook(
+    rows: Sequence[LeaderboardRow],
+) -> bytes:
+    widths = [46, 24, 18, 14, 16, 16, 14, 16, 16, 14, 16, 16, 14, 16, 16]
+    return _write_workbook(
+        [
+            _sheet(
+                "HL Leaderboard",
+                _hyperliquid_leaderboard_rows(rows),
+                widths=widths,
+                freeze_row=1,
+                auto_filter=True,
+            )
+        ]
+    )
+
+
+def build_trader_all_time_metrics_export_workbook(
+    rows: Sequence[TraderAllTimeMetricsExportRow],
+) -> bytes:
+    return _write_workbook(
+        [
+            _sheet(
+                "AllTime Metrics",
+                _trader_all_time_metric_rows(rows),
+                widths=[46, 12, 14, 16, 10, 14],
+                freeze_row=1,
+                auto_filter=True,
+            )
+        ]
+    )
 
 
 def build_trader_export_workbook(
@@ -123,6 +178,93 @@ def _cell(value: object, style: int = STYLE_DEFAULT) -> XlsxCell:
 
 def _is_perp_fill(fill: Fill) -> bool:
     return "Long" in fill.dir or "Short" in fill.dir
+
+
+def _perf_value(
+    row: LeaderboardRow,
+    period: str,
+    metric: Literal["pnl", "roi", "vlm"],
+) -> Decimal | None:
+    perf = row.get_perf(period)
+    if perf is None:
+        return None
+    if metric == "pnl":
+        return perf.pnl
+    if metric == "roi":
+        return perf.roi
+    return perf.vlm
+
+
+def _hyperliquid_leaderboard_rows(
+    leaderboard_rows: Sequence[LeaderboardRow],
+) -> list[list[object]]:
+    rows: list[list[object]] = [
+        [
+            _cell("Кошелек", STYLE_HEADER),
+            _cell("Имя", STYLE_HEADER),
+            _cell("Account Value", STYLE_HEADER),
+            _cell("Day ROI", STYLE_HEADER),
+            _cell("Day PNL", STYLE_HEADER),
+            _cell("Day Volume", STYLE_HEADER),
+            _cell("Week ROI", STYLE_HEADER),
+            _cell("Week PNL", STYLE_HEADER),
+            _cell("Week Volume", STYLE_HEADER),
+            _cell("Month ROI", STYLE_HEADER),
+            _cell("Month PNL", STYLE_HEADER),
+            _cell("Month Volume", STYLE_HEADER),
+            _cell("AllTime ROI", STYLE_HEADER),
+            _cell("AllTime PNL", STYLE_HEADER),
+            _cell("AllTime Volume", STYLE_HEADER),
+        ]
+    ]
+    for row in leaderboard_rows:
+        rows.append(
+            [
+                row.eth_address,
+                row.display_name,
+                _cell(row.account_value, STYLE_USD),
+                _cell(_perf_value(row, "day", "roi"), STYLE_NUMBER),
+                _cell(_perf_value(row, "day", "pnl"), STYLE_USD),
+                _cell(_perf_value(row, "day", "vlm"), STYLE_USD),
+                _cell(_perf_value(row, "week", "roi"), STYLE_NUMBER),
+                _cell(_perf_value(row, "week", "pnl"), STYLE_USD),
+                _cell(_perf_value(row, "week", "vlm"), STYLE_USD),
+                _cell(_perf_value(row, "month", "roi"), STYLE_NUMBER),
+                _cell(_perf_value(row, "month", "pnl"), STYLE_USD),
+                _cell(_perf_value(row, "month", "vlm"), STYLE_USD),
+                _cell(_perf_value(row, "allTime", "roi"), STYLE_NUMBER),
+                _cell(_perf_value(row, "allTime", "pnl"), STYLE_USD),
+                _cell(_perf_value(row, "allTime", "vlm"), STYLE_USD),
+            ]
+        )
+    return rows
+
+
+def _trader_all_time_metric_rows(
+    metric_rows: Sequence[TraderAllTimeMetricsExportRow],
+) -> list[list[object]]:
+    rows: list[list[object]] = [
+        [
+            _cell("Кошелек", STYLE_HEADER),
+            _cell("Сделки", STYLE_HEADER),
+            _cell("ROI", STYLE_HEADER),
+            _cell("PNL", STYLE_HEADER),
+            _cell("Act D", STYLE_HEADER),
+            _cell("Просадка", STYLE_HEADER),
+        ]
+    ]
+    for row in metric_rows:
+        rows.append(
+            [
+                row.address,
+                _cell(row.trade_count, STYLE_INTEGER),
+                _cell(row.roi_pct, STYLE_NUMBER),
+                _cell(row.pnl_usd, STYLE_USD),
+                _cell(row.active_trading_days, STYLE_INTEGER),
+                _cell(row.max_drawdown_pct, STYLE_NUMBER),
+            ]
+        )
+    return rows
 
 
 def _trade_orders_from_fills(fills: list[Fill]) -> list[TradeOrder]:

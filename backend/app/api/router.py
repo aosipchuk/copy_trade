@@ -8,6 +8,7 @@ from app.api import (
     portfolio_subscriptions,
     portfolios,
     subscriptions,
+    telegram,
     traders,
     wallet,
     ws_traders,
@@ -16,6 +17,7 @@ from app.api import (
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
+api_router.include_router(telegram.router)
 api_router.include_router(traders.export_router)
 api_router.include_router(traders.router)
 api_router.include_router(ws_traders.router)
