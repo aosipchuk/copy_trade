@@ -1,11 +1,30 @@
+import json
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _SECRET_KEY_DEFAULT = "change-me-min-32-chars-random-string"  # noqa: S105
 _AGENT_KEY_DEFAULT = "0" * 64
+
+
+def _parse_int_list_env(value: Any, env_name: str) -> list[int]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            parsed = json.loads(raw)
+            if not isinstance(parsed, list):
+                raise ValueError(f"{env_name} JSON value must be a list.")
+            return [int(item) for item in parsed]
+        return [int(item.strip()) for item in raw.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [int(item) for item in value]
+    raise ValueError(f"{env_name} must be a comma-separated list.")
 
 
 class Settings(BaseSettings):
@@ -30,7 +49,7 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
-    admin_telegram_ids: list[int] = []
+    admin_telegram_ids: Annotated[list[int], NoDecode] = []
 
     # Agent key encryption (32-byte hex)
     agent_encryption_key: str = _AGENT_KEY_DEFAULT
@@ -72,7 +91,7 @@ class Settings(BaseSettings):
     stripe_checkout_success_url: str = ""
     stripe_checkout_cancel_url: str = ""
     stripe_api_url: str = "https://api.stripe.com/v1"
-    model_portfolio_beta_override_telegram_ids: list[int] = []
+    model_portfolio_beta_override_telegram_ids: Annotated[list[int], NoDecode] = []
 
     # Model portfolio explanations. The default is deterministic templates.
     # openai_compatible is optional and falls back to templates on any error.
@@ -123,27 +142,15 @@ class Settings(BaseSettings):
     @field_validator("model_portfolio_beta_override_telegram_ids", mode="before")
     @classmethod
     def parse_beta_override_telegram_ids(cls, v: Any) -> list[int]:
-        if v is None or v == "":
-            return []
-        if isinstance(v, str):
-            return [int(item.strip()) for item in v.split(",") if item.strip()]
-        if isinstance(v, list):
-            return [int(item) for item in v]
-        raise ValueError(
-            "MODEL_PORTFOLIO_BETA_OVERRIDE_TELEGRAM_IDS must be a comma-separated "
-            "list of Telegram IDs."
+        return _parse_int_list_env(
+            v,
+            "MODEL_PORTFOLIO_BETA_OVERRIDE_TELEGRAM_IDS",
         )
 
     @field_validator("admin_telegram_ids", mode="before")
     @classmethod
     def parse_admin_telegram_ids(cls, v: Any) -> list[int]:
-        if v is None or v == "":
-            return []
-        if isinstance(v, str):
-            return [int(item.strip()) for item in v.split(",") if item.strip()]
-        if isinstance(v, list):
-            return [int(item) for item in v]
-        raise ValueError("ADMIN_TELEGRAM_IDS must be a comma-separated list.")
+        return _parse_int_list_env(v, "ADMIN_TELEGRAM_IDS")
 
     @model_validator(mode="after")
     def reject_weak_keys_in_production(self) -> "Settings":
