@@ -235,6 +235,11 @@ async def list_traders(
 
     if address:
         query = query.where(Trader.hl_address.ilike(f"%{address}%"))
+    else:
+        # Ranked discovery lists should not include rows that cannot be ranked by
+        # the selected metric. Address search still returns admin-imported
+        # traders with partial stats, for analysis/copy by wallet.
+        query = query.where(sort_col.is_not(None))
 
     # Quality preset: verified traders with solid track record
     if quality:

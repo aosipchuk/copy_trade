@@ -75,6 +75,33 @@ async def _seed_traders(db_session) -> list[int]:
     return ids
 
 
+async def _seed_null_roi_trader(db_session) -> str:
+    n = next(_trader_counter)
+    address = f"0x99{n:038x}"
+    result = await db_session.execute(
+        insert(Trader)
+        .values(
+            hl_address=address,
+            display_name=f"Partial-Trader-{n}",
+            is_active=True,
+            has_perp_activity=True,
+        )
+        .returning(Trader.id)
+    )
+    trader_id = result.scalar_one()
+    await db_session.execute(
+        insert(TraderStat).values(
+            trader_id=trader_id,
+            period="week",
+            pnl_usd=2500,
+            roi_pct=None,
+            volume_usd=75000,
+        )
+    )
+    await db_session.commit()
+    return address
+
+
 class TestTradersList:
     @pytest.mark.asyncio
     async def test_returns_200_with_items(self, client, db_session) -> None:
@@ -118,6 +145,32 @@ class TestTradersList:
         items = response.json()["items"]
         rois = [item["stats"][0]["roi_pct"] for item in items if item["stats"]]
         assert rois == sorted(rois, reverse=True)
+
+    @pytest.mark.asyncio
+    async def test_null_sort_metric_hidden_unless_address_search(
+        self, client, db_session
+    ) -> None:
+        address = await _seed_null_roi_trader(db_session)
+        headers = await _auth_header(client)
+
+        ranked_response = await client.get(
+            "/api/traders?sort=roi&period=week&limit=200",
+            headers=headers,
+        )
+        assert ranked_response.status_code == 200
+        ranked_addresses = {
+            item["hl_address"] for item in ranked_response.json()["items"]
+        }
+        assert address not in ranked_addresses
+
+        search_response = await client.get(
+            f"/api/traders?sort=roi&period=week&address={address}",
+            headers=headers,
+        )
+        assert search_response.status_code == 200
+        search_items = search_response.json()["items"]
+        assert [item["hl_address"] for item in search_items] == [address]
+        assert search_items[0]["stats"][0]["roi_pct"] is None
 
     @pytest.mark.asyncio
     async def test_limit_respected(self, client, db_session) -> None:
