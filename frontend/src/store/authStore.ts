@@ -1,17 +1,21 @@
 import { create } from 'zustand'
-import { authenticateWithTelegram } from '../api/auth'
+import { authenticateWithTelegram, fetchCurrentUser } from '../api/auth'
+import type { AuthUser } from '../types'
 
 interface AuthState {
   jwt: string | null
+  user: AuthUser | null
   loading: boolean
   error: string | null
   login: (initData: string) => Promise<void>
+  loadCurrentUser: () => Promise<void>
   setJwt: (jwt: string) => void
   logout: () => void
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   jwt: localStorage.getItem('jwt'),
+  user: null,
   loading: false,
   error: null,
 
@@ -27,13 +31,23 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
+  loadCurrentUser: async () => {
+    if (!localStorage.getItem('jwt')) return
+    try {
+      const user = await fetchCurrentUser()
+      set({ user })
+    } catch {
+      set({ user: null })
+    }
+  },
+
   setJwt: (jwt) => {
     localStorage.setItem('jwt', jwt)
-    set({ jwt })
+    set({ jwt, user: null })
   },
 
   logout: () => {
     localStorage.removeItem('jwt')
-    set({ jwt: null })
+    set({ jwt: null, user: null })
   },
 }))

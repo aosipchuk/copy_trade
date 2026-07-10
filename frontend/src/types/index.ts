@@ -194,6 +194,28 @@ export interface PortfolioRisk {
 export type Period = 'day' | 'week' | 'month' | 'allTime'
 export type SortKey = 'roi' | 'pnl' | 'volume'
 
+export interface AuthUser {
+  id: number
+  telegram_id: number
+  username: string | null
+  first_name: string | null
+  hl_address: string | null
+  is_admin: boolean
+}
+
+export type AdminTraderImportStatus =
+  | 'imported'
+  | 'refreshed'
+  | 'no_fills'
+  | 'no_perp_activity'
+
+export interface AdminTraderImportResponse {
+  status: AdminTraderImportStatus
+  message: string
+  trader: TraderDetail
+  has_perp_activity: boolean | null
+}
+
 export type RiskProfile = 'conservative' | 'balanced' | 'aggressive'
 export type ModelPortfolioStatus = 'draft' | 'active' | 'paused' | 'retired'
 export type PortfolioVersionStatus = 'draft' | 'published' | 'retired' | 'rejected'

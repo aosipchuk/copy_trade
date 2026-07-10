@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
+    admin_traders,
     auth,
     demo,
     health,
@@ -17,6 +18,7 @@ from app.api import (
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
+api_router.include_router(admin_traders.router)
 api_router.include_router(telegram.router)
 api_router.include_router(traders.export_router)
 api_router.include_router(traders.router)

@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
+import { importAdminTrader } from '../api/adminTraders'
 import { fetchTraders } from '../api/traders'
 import { listSubscriptions } from '../api/subscriptions'
 import { TraderCard } from '../components/TraderCard'
 import { FullPageSpinner, LoadingSpinner } from '../components/LoadingSpinner'
+import { useAuthStore } from '../store/authStore'
 import { useTradersFilterStore, DEFAULT_FILTERS } from '../store/tradersFilterStore'
-import type { Period, SortKey, TraderFilters, TraderListItem } from '../types'
+import type {
+  AdminTraderImportResponse,
+  Period,
+  SortKey,
+  TraderFilters,
+  TraderListItem,
+} from '../types'
 
 const PERIODS: { key: Period; label: string }[] = [
   { key: 'day', label: 'Day' },
@@ -46,9 +55,12 @@ function filtersActive(f: TraderFilters): number {
 }
 
 export function TradersPage() {
+  const navigate = useNavigate()
+  const { user } = useAuthStore()
   const { period, sort, filters, setPeriod, setSort, setFilters } = useTradersFilterStore()
   const [draftFilters, setDraftFilters] = useState<TraderFilters>(DEFAULT_FILTERS)
   const [showFilters, setShowFilters] = useState(false)
+  const [showAdminImport, setShowAdminImport] = useState(false)
   const [realSubIds, setRealSubIds] = useState<Set<number>>(new Set())
   const [demoSubIds, setDemoSubIds] = useState<Set<number>>(new Set())
   const [traders, setTraders] = useState<TraderListItem[]>([])
@@ -149,6 +161,13 @@ export function TradersPage() {
     setDraftFilters(DEFAULT_FILTERS)
   }
 
+  const handleAdminImportSuccess = (result: AdminTraderImportResponse) => {
+    if (result.status === 'imported' || result.status === 'refreshed') {
+      setShowAdminImport(false)
+      navigate(`/traders/${result.trader.id}`)
+    }
+  }
+
   const activeCount = filtersActive(filters)
   const displayedTraders = traders
 
@@ -212,32 +231,42 @@ export function TradersPage() {
 
       {/* Wallet address search */}
       <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-800">
-        <div className="relative">
-          <svg
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-tg-hint pointer-events-none"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            viewBox="0 0 24 24"
-          >
-            <circle cx={11} cy={11} r={8} />
-            <path d="m21 21-4.35-4.35" />
-          </svg>
-          <input
-            type="text"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Search by wallet address…"
-            className="w-full pl-8 pr-8 py-1.5 rounded-lg text-xs text-tg-text placeholder-tg-hint bg-gray-100 dark:bg-gray-800 border-none outline-none"
-          />
-          {searchInput && (
-            <button
-              onClick={() => setSearchInput('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-tg-hint hover:text-tg-text"
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1 min-w-0">
+            <svg
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-tg-hint pointer-events-none"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
+              <circle cx={11} cy={11} r={8} />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search by wallet address…"
+              className="w-full pl-8 pr-8 py-1.5 rounded-lg text-xs text-tg-text placeholder-tg-hint bg-gray-100 dark:bg-gray-800 border-none outline-none"
+            />
+            {searchInput && (
+              <button
+                onClick={() => setSearchInput('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-tg-hint hover:text-tg-text"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {user?.is_admin && (
+            <button
+              onClick={() => setShowAdminImport(true)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-tg-button text-tg-button transition-colors flex-shrink-0"
+            >
+              Import
             </button>
           )}
         </div>
@@ -449,6 +478,135 @@ export function TradersPage() {
         </div>,
         document.body,
       )}
+      {showAdminImport && (
+        <AdminTraderImportModal
+          onClose={() => setShowAdminImport(false)}
+          onImported={handleAdminImportSuccess}
+        />
+      )}
     </div>
   )
+}
+
+function AdminTraderImportModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void
+  onImported: (result: AdminTraderImportResponse) => void
+}) {
+  const [address, setAddress] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<AdminTraderImportResponse | null>(null)
+
+  const trimmedAddress = address.trim()
+  const canSubmit = trimmedAddress.length > 0 && !loading
+
+  const submit = async () => {
+    if (!canSubmit) return
+    setLoading(true)
+    setError(null)
+    setResult(null)
+    let importedResult: AdminTraderImportResponse | null = null
+    try {
+      const nextResult = await importAdminTrader(trimmedAddress)
+      setResult(nextResult)
+      if (nextResult.status === 'imported' || nextResult.status === 'refreshed') {
+        importedResult = nextResult
+      }
+    } catch (err: unknown) {
+      setError(importErrorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+    if (importedResult) {
+      onImported(importedResult)
+    }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end" onClick={onClose}>
+      <div
+        className="w-full rounded-t-2xl flex flex-col max-h-[85vh]"
+        style={{ background: 'var(--tg-theme-bg-color)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 flex-shrink-0">
+          <div>
+            <h2 className="text-base font-semibold text-tg-text">Import Trader</h2>
+            <p className="text-xs text-tg-hint mt-0.5">Admin analytics</p>
+          </div>
+          <button className="text-tg-hint text-xl" onClick={onClose}>x</button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-5 space-y-4 pb-3">
+          <div>
+            <label className="text-sm text-tg-text block mb-1">HL wallet</label>
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="0x..."
+              spellCheck={false}
+              autoCapitalize="none"
+              className="w-full px-3 py-2 rounded-lg border text-sm font-mono"
+              style={{
+                background: 'var(--tg-theme-secondary-bg-color, #f0f0f0)',
+                borderColor: 'var(--tg-theme-hint-color, #ccc)',
+                color: 'var(--tg-theme-text-color, #000)',
+              }}
+            />
+          </div>
+
+          {loading && (
+            <div className="flex items-center gap-2 text-sm text-tg-hint">
+              <LoadingSpinner />
+              <span>Importing</span>
+            </div>
+          )}
+
+          {error && <p className="text-sm text-red-500">{error}</p>}
+
+          {result && (result.status === 'no_fills' || result.status === 'no_perp_activity') && (
+            <div
+              className="rounded-xl px-3 py-3 text-sm"
+              style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+            >
+              <p className="font-medium text-tg-text">
+                {result.status === 'no_fills' ? 'No fills found' : 'No perp activity'}
+              </p>
+              <p className="text-xs text-tg-hint mt-1">{result.message}</p>
+              <p className="text-xs text-tg-hint mt-2 font-mono break-all">
+                {result.trader.hl_address}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div
+          className="flex-shrink-0 px-5 pt-2"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}
+        >
+          <button
+            onClick={submit}
+            disabled={!canSubmit}
+            className="w-full py-3 rounded-xl text-sm font-semibold text-tg-button-text disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ background: 'var(--tg-theme-button-color)' }}
+          >
+            Import
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+function importErrorMessage(err: unknown): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })
+    ?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (err instanceof Error) return err.message
+  return 'Failed to import trader'
 }

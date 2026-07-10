@@ -16,7 +16,7 @@ import { PortfolioDetailPage } from './pages/PortfolioDetailPage'
 const ONBOARDING_KEY = 'onboarding_done'
 
 export default function App() {
-  const { jwt, login, loading, error } = useAuthStore()
+  const { jwt, login, loadCurrentUser, loading, error } = useAuthStore()
   const [onboardingDone, setOnboardingDone] = useState(
     () => localStorage.getItem(ONBOARDING_KEY) === '1',
   )
@@ -50,6 +50,12 @@ export default function App() {
       }
     }
   }, [jwt, login])
+
+  useEffect(() => {
+    if (jwt) {
+      void loadCurrentUser()
+    }
+  }, [jwt, loadCurrentUser])
 
   if (loading) return <FullPageSpinner />
 

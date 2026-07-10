@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis_client import get_redis_client
 from app.core.security import JTI_REVOKED_PREFIX, decode_access_token
@@ -104,5 +105,17 @@ async def get_current_user(
     return await _user_from_access_token(credentials.credentials, db)
 
 
+async def require_admin_user(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    if current_user.telegram_id not in settings.admin_telegram_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
+AdminUser = Annotated[User, Depends(require_admin_user)]
 DBSession = Annotated[AsyncSession, Depends(get_db)]

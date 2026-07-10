@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
+    admin_telegram_ids: list[int] = []
 
     # Agent key encryption (32-byte hex)
     agent_encryption_key: str = _AGENT_KEY_DEFAULT
@@ -132,6 +133,17 @@ class Settings(BaseSettings):
             "MODEL_PORTFOLIO_BETA_OVERRIDE_TELEGRAM_IDS must be a comma-separated "
             "list of Telegram IDs."
         )
+
+    @field_validator("admin_telegram_ids", mode="before")
+    @classmethod
+    def parse_admin_telegram_ids(cls, v: Any) -> list[int]:
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            return [int(item.strip()) for item in v.split(",") if item.strip()]
+        if isinstance(v, list):
+            return [int(item) for item in v]
+        raise ValueError("ADMIN_TELEGRAM_IDS must be a comma-separated list.")
 
     @model_validator(mode="after")
     def reject_weak_keys_in_production(self) -> "Settings":

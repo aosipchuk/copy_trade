@@ -1,6 +1,7 @@
 import base64
 import json
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -102,6 +103,17 @@ class TraderSummaryResponse(BaseModel):
     equity_curve_week: list[EquityPoint]
     open_positions: list[PositionItem]
     recent_trades: list[ClosedTradeItem]
+
+
+class AdminTraderImportRequest(BaseModel):
+    hl_address: str
+
+
+class AdminTraderImportResponse(BaseModel):
+    status: Literal["imported", "refreshed", "no_fills", "no_perp_activity"]
+    message: str
+    trader: TraderDetail
+    has_perp_activity: bool | None
 
 
 def encode_cursor(sort_value: float | None, trader_id: int) -> str:

@@ -80,7 +80,9 @@ async def _seed_trader(db_session) -> int:
     n = next(_addr_counter)
     address = f"0xdemo{n:036x}"
     result = await db_session.execute(
-        insert(Trader).values(hl_address=address, is_active=True).returning(Trader.id)
+        insert(Trader)
+        .values(hl_address=address, is_active=True, has_perp_activity=True)
+        .returning(Trader.id)
     )
     trader_id = result.scalar_one()
     await db_session.execute(

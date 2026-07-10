@@ -710,15 +710,24 @@ class QualityMetrics:
         }
 
 
-async def compute_trader_quality_metrics(address: str) -> QualityMetrics | None:
+async def compute_trader_quality_metrics(
+    address: str, *, use_available_history: bool = False
+) -> QualityMetrics | None:
     """Compute quality metrics for a trader from their fill history.
 
-    Makes a single HTTP request to HL API.
+    The default path makes one ``userFills`` request for the scheduled refresh.
+    Manual admin imports can opt into ``userFillsByTime`` to analyze the history
+    currently available through HL.
     Returns None if no fills are available.
     """
     client = HyperliquidInfoClient(base_url=settings.hl_mainnet_api_url)
+    fills_coro = (
+        client.get_fills_by_time(address)
+        if use_available_history
+        else client.get_fills(address, limit=None)
+    )
     all_fills, avg_leverage = await asyncio.gather(
-        client.get_fills(address, limit=None),
+        fills_coro,
         asyncio.to_thread(_redis_avg_leverage, address),
     )
 

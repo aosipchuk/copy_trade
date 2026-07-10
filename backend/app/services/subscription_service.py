@@ -158,11 +158,15 @@ async def create_subscription(
     margin_summary: MarginSummary | None = None,
 ) -> SubscriptionResponse:
     trader_res = await db.execute(
-        select(Trader).where(Trader.id == data.trader_id, Trader.is_active.is_(True))
+        select(Trader).where(
+            Trader.id == data.trader_id,
+            Trader.is_active.is_(True),
+            Trader.has_perp_activity.is_(True),
+        )
     )
     trader = trader_res.scalar_one_or_none()
     if trader is None:
-        raise ValueError(f"Trader {data.trader_id} not found or inactive")
+        raise ValueError(f"Trader {data.trader_id} not found or not copyable")
 
     if not data.is_demo:
         if not user_hl_address:

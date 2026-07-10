@@ -18,3 +18,4 @@ class UserResponse(BaseModel):
     username: str | None
     first_name: str | None
     hl_address: str | None
+    is_admin: bool = False

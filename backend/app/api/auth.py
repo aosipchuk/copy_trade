@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DBSession, bearer_scheme
+from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.redis_client import get_redis_client
 from app.core.security import (
@@ -63,6 +64,7 @@ async def get_me(current_user: CurrentUser) -> UserResponse:
         username=current_user.username,
         first_name=current_user.first_name,
         hl_address=current_user.hl_address,
+        is_admin=current_user.telegram_id in settings.admin_telegram_ids,
     )
 
 
