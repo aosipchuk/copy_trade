@@ -25,9 +25,61 @@ import { fmt } from '../utils/format'
 
 type MyTradesTab = 'live' | 'demo'
 
+type RawTraderPosition = {
+  coin?: string
+  side?: string | null
+  size?: number | string
+  entry_px?: number | string | null
+  unrealized_pnl?: number | string
+  subscription_id?: number | null
+  szi?: number | string
+  entryPx?: number | string | null
+  unrealizedPnl?: number | string
+  abs_size?: number | string
+  leverage?: number | { value?: number | string } | null
+}
+
 function getMyTradesReturnTab(state: unknown): MyTradesTab | null {
   const tab = (state as { fromMyTradesTab?: unknown } | null)?.fromMyTradesTab
   return tab === 'demo' || tab === 'live' ? tab : null
+}
+
+function toNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+function normalizeTraderPosition(pos: RawTraderPosition): PositionItem | null {
+  if (!pos.coin) return null
+
+  const szi = toNumber(pos.szi)
+  const side = pos.side ?? (szi == null ? null : szi >= 0 ? 'long' : 'short')
+  const size = toNumber(pos.size) ?? toNumber(pos.abs_size) ?? Math.abs(szi ?? 0)
+  const leverage =
+    typeof pos.leverage === 'object' && pos.leverage !== null
+      ? toNumber(pos.leverage.value)
+      : toNumber(pos.leverage)
+
+  return {
+    coin: pos.coin,
+    side,
+    size,
+    entry_px: toNumber(pos.entry_px) ?? toNumber(pos.entryPx),
+    unrealized_pnl: toNumber(pos.unrealized_pnl) ?? toNumber(pos.unrealizedPnl) ?? 0,
+    leverage,
+    subscription_id: pos.subscription_id ?? null,
+  }
+}
+
+function normalizeTraderPositions(positions: RawTraderPosition[] | null): PositionItem[] | null {
+  if (!positions) return null
+  return positions
+    .map(normalizeTraderPosition)
+    .filter((pos): pos is PositionItem => pos !== null)
 }
 
 export function TraderDetailPage() {
@@ -74,8 +126,8 @@ export function TraderDetailPage() {
 
   useBackButton(navigateBack)
 
-  const wsPositions = useTraderPositionsWS<PositionItem[]>(traderId)
-  const livePositions = wsPositions ?? summary?.open_positions ?? []
+  const wsPositions = useTraderPositionsWS<RawTraderPosition[]>(traderId)
+  const livePositions = normalizeTraderPositions(wsPositions) ?? summary?.open_positions ?? []
 
   // Initial load via summary endpoint — replaces 4 separate requests
   const reload = useCallback(() => {
@@ -441,7 +493,7 @@ export function TraderDetailPage() {
                   <div>
                     <span className="text-sm font-medium text-tg-text">{pos.coin}</span>
                     <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded ${pos.side === 'long' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                      {pos.side.toUpperCase()}
+                      {(pos.side ?? 'short').toUpperCase()}
                     </span>
                   </div>
                   <div className="text-right">

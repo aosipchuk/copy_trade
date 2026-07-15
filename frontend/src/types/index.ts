@@ -76,12 +76,12 @@ export interface EquityPoint {
 
 export interface PositionItem {
   coin: string
-  side: string
+  side: string | null
   size: number
-  entry_px: number
+  entry_px: number | null
   unrealized_pnl: number
   leverage: number | null
-  subscription_id: number | null
+  subscription_id?: number | null
 }
 
 export interface ActivityItem {

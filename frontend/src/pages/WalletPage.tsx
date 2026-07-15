@@ -98,7 +98,7 @@ export function WalletPage() {
                 <div>
                   <span className="text-sm font-medium text-tg-text">{pos.coin}</span>
                   <span className={`ml-1.5 text-xs px-1.5 rounded ${pos.side === 'long' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                    {pos.side.toUpperCase()}
+                    {(pos.side ?? 'short').toUpperCase()}
                   </span>
                 </div>
                 <div className="text-right">
