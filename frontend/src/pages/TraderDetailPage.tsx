@@ -214,8 +214,16 @@ export function TraderDetailPage() {
       {/* Period stats grid */}
       {stat && (
         <div className="grid grid-cols-2 gap-px bg-gray-100 dark:bg-gray-800 mx-4 mt-4 rounded-xl overflow-hidden">
-          <StatCell label="ROI" value={fmt.pct(stat.roi_pct)} positive={stat.roi_pct >= 0} />
-          <StatCell label="PnL" value={fmt.usd(stat.pnl_usd)} positive={stat.pnl_usd >= 0} />
+          <StatCell
+            label="ROI"
+            value={fmt.pct(stat.roi_pct)}
+            positive={stat.roi_pct == null ? undefined : stat.roi_pct >= 0}
+          />
+          <StatCell
+            label="PnL"
+            value={fmt.usd(stat.pnl_usd)}
+            positive={stat.pnl_usd == null ? undefined : stat.pnl_usd >= 0}
+          />
           <StatCell label="Volume" value={fmt.compact(stat.volume_usd)} />
           <StatCell label="Positions" value={String(livePositions.length)} />
         </div>

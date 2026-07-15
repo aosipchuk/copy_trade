@@ -1,5 +1,6 @@
 export const fmt = {
-  usd(v: number): string {
+  usd(v: number | null | undefined): string {
+    if (v == null) return '-'
     const abs = Math.abs(v)
     const sign = v < 0 ? '-' : '+'
     if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`
@@ -7,23 +8,27 @@ export const fmt = {
     return `${sign}$${abs.toFixed(2)}`
   },
 
-  compact(v: number): string {
+  compact(v: number | null | undefined): string {
+    if (v == null) return '-'
     if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`
     if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`
     return `$${v.toFixed(0)}`
   },
 
-  qty(v: number): string {
+  qty(v: number | null | undefined): string {
+    if (v == null) return '-'
     if (v >= 1_000) return v.toLocaleString('en-US', { maximumFractionDigits: 0 })
     if (v >= 1) return v.toPrecision(4).replace(/\.?0+$/, '')
     return v.toPrecision(3)
   },
 
-  pct(v: number): string {
+  pct(v: number | null | undefined): string {
+    if (v == null) return '-'
     return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
   },
 
-  price(v: number): string {
+  price(v: number | null | undefined): string {
+    if (v == null) return '-'
     if (v >= 1_000) return v.toLocaleString('en-US', { maximumFractionDigits: 1 })
     if (v >= 1) return v.toFixed(4)
     return v.toFixed(6)

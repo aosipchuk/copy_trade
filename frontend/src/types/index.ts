@@ -1,8 +1,8 @@
 export interface TraderStats {
   period: string
-  pnl_usd: number
-  roi_pct: number
-  volume_usd: number
+  pnl_usd: number | null
+  roi_pct: number | null
+  volume_usd: number | null
   win_rate_pct: number | null
   max_drawdown_usd: number | null
   max_drawdown_pct: number | null

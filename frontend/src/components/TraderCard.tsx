@@ -38,10 +38,26 @@ function shortenAddress(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
 
-function primaryMetric(stat: TraderStats, sort: SortKey): { label: string; value: string; positive: boolean } {
-  if (sort === 'pnl') return { label: 'PnL', value: fmt.usd(stat.pnl_usd), positive: stat.pnl_usd >= 0 }
-  if (sort === 'volume') return { label: 'Vol', value: fmt.compact(stat.volume_usd), positive: true }
-  return { label: 'ROI', value: fmt.pct(stat.roi_pct), positive: stat.roi_pct >= 0 }
+function primaryMetric(stat: TraderStats, sort: SortKey): { label: string; value: string; positive?: boolean } {
+  if (sort === 'pnl') {
+    return {
+      label: 'PnL',
+      value: fmt.usd(stat.pnl_usd),
+      positive: stat.pnl_usd == null ? undefined : stat.pnl_usd >= 0,
+    }
+  }
+  if (sort === 'volume') {
+    return {
+      label: 'Vol',
+      value: fmt.compact(stat.volume_usd),
+      positive: stat.volume_usd == null ? undefined : true,
+    }
+  }
+  return {
+    label: 'ROI',
+    value: fmt.pct(stat.roi_pct),
+    positive: stat.roi_pct == null ? undefined : stat.roi_pct >= 0,
+  }
 }
 
 function secondaryMetrics(stat: TraderStats, sort: SortKey): string[] {
@@ -118,7 +134,15 @@ export function TraderCard({ trader, sort, isRealSubscribed = false, isDemoSubsc
           {stat && (() => {
             const primary = primaryMetric(stat, sort)
             return (
-              <span className={`text-sm font-semibold ml-2 flex-shrink-0 ${primary.positive ? 'text-green-500' : 'text-red-500'}`}>
+              <span
+                className={`text-sm font-semibold ml-2 flex-shrink-0 ${
+                  primary.positive === undefined
+                    ? 'text-tg-text'
+                    : primary.positive
+                      ? 'text-green-500'
+                      : 'text-red-500'
+                }`}
+              >
                 {primary.value}
               </span>
             )
