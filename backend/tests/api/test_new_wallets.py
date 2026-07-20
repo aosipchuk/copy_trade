@@ -8,16 +8,18 @@ from decimal import Decimal
 from urllib.parse import urlencode
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import delete, update
 
 from app.core.config import settings
 from app.models.new_wallet import (
     NewWalletCandidate,
     NewWalletFundingLink,
     UserNewWalletItem,
+    UserNewWalletSubscription,
 )
 from app.models.signal import Signal
 from app.models.subscription import Subscription
+from app.models.trade import UserTrade
 from app.models.trader import Trader
 from app.services.portfolio.subscription_lifecycle import (
     executable_subscription_targets_for_signal,
@@ -26,6 +28,22 @@ from app.services.portfolio.subscription_lifecycle import (
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 _addr_counter: itertools.count = itertools.count(1)
+
+
+@pytest.fixture(autouse=True)
+async def _clean_new_wallet_test_tables(db_session) -> None:
+    for model in (
+        UserTrade,
+        Signal,
+        UserNewWalletItem,
+        UserNewWalletSubscription,
+        NewWalletFundingLink,
+        NewWalletCandidate,
+        Subscription,
+        Trader,
+    ):
+        await db_session.execute(delete(model))
+    await db_session.commit()
 
 
 def _make_init_data(user_id: int, username: str = "newwallet") -> str:

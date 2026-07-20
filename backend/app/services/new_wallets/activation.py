@@ -265,6 +265,7 @@ async def cancel_user_new_wallet_subscription(
             else:
                 live_to_close.append(child.id)
     await db.flush()
+    await db.refresh(parent)
 
     if close_positions and live_to_close:
         from app.tasks.execution_tasks import close_subscription_positions_async
