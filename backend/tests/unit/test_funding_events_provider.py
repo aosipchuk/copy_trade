@@ -15,7 +15,7 @@ pytestmark = pytest.mark.asyncio
 @respx.mock
 async def test_http_provider_parses_hypurrscan_usdc_transfers() -> None:
     source = "0x" + "11" * 20
-    target = "0x" + "22" * 20
+    target = "0x" + "44" * 20
     other = "0x" + "33" * 20
     route = respx.get("https://api.hypurrscan.io/transfers").mock(
         return_value=Response(
