@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
   activateNewWalletSubscription,
@@ -277,12 +278,16 @@ function ActivationModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-end bg-black/30">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end bg-black/30" onClick={onClose}>
       <form
         onSubmit={submit}
         className="flex max-h-[88vh] w-full flex-col overflow-hidden rounded-t-2xl"
-        style={{ background: 'var(--tg-theme-bg-color)' }}
+        style={{
+          background: 'var(--tg-theme-bg-color)',
+          maxHeight: '88dvh',
+        }}
+        onClick={(event) => event.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between px-4 pb-3 pt-4">
           <h2 className="text-base font-semibold text-tg-text">Activate</h2>
@@ -291,7 +296,7 @@ function ActivationModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 pb-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
           <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
             {(['demo', 'live'] as const).map((value) => (
               <button
@@ -390,7 +395,8 @@ function ActivationModal({
           </button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
