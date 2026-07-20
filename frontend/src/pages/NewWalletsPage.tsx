@@ -281,108 +281,114 @@ function ActivationModal({
     <div className="fixed inset-0 z-[100] flex items-end bg-black/30">
       <form
         onSubmit={submit}
-        className="max-h-[88vh] w-full overflow-y-auto rounded-t-2xl px-4 pb-6 pt-4"
+        className="flex max-h-[88vh] w-full flex-col overflow-hidden rounded-t-2xl"
         style={{ background: 'var(--tg-theme-bg-color)' }}
       >
-        <div className="mb-4 flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between px-4 pb-3 pt-4">
           <h2 className="text-base font-semibold text-tg-text">Activate</h2>
           <button type="button" onClick={onClose} className="text-sm text-tg-hint">
             Close
           </button>
         </div>
 
-        <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
-          {(['demo', 'live'] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setMode(value)}
-              className={`rounded-md py-2 text-sm font-medium ${
-                mode === value ? 'bg-tg-button text-tg-button-text' : 'text-tg-hint'
-              }`}
-            >
-              {value === 'demo' ? 'Demo' : 'Live'}
-            </button>
-          ))}
-        </div>
+        <div className="flex-1 overflow-y-auto px-4 pb-3">
+          <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+            {(['demo', 'live'] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setMode(value)}
+                className={`rounded-md py-2 text-sm font-medium ${
+                  mode === value ? 'bg-tg-button text-tg-button-text' : 'text-tg-hint'
+                }`}
+              >
+                {value === 'demo' ? 'Demo' : 'Live'}
+              </button>
+            ))}
+          </div>
 
-        <div className="space-y-3">
-          <NumberField
-            label="Total allocation"
-            value={form.totalAllocationUsd}
-            onChange={(v) =>
-              setForm((f) => ({ ...f, totalAllocationUsd: v }))
-            }
-          />
-          <NumberField
-            label="Max wallets"
-            value={form.maxActiveWallets}
-            onChange={(v) =>
-              setForm((f) => ({
-                ...f,
-                maxActiveWallets: Math.min(
-                  summary.settings.max_active_per_user,
-                  Math.max(1, Math.round(v)),
-                ),
-              }))
-            }
-          />
-          <NumberField
-            label="Max per wallet"
-            value={form.maxPerWalletUsd}
-            onChange={(v) => setForm((f) => ({ ...f, maxPerWalletUsd: v }))}
-          />
-          <NumberField
-            label="Copy ratio %"
-            value={form.copyRatioPct}
-            onChange={(v) => setForm((f) => ({ ...f, copyRatioPct: v }))}
-          />
-          <NumberField
-            label="Stop loss %"
-            value={form.stopLossPct}
-            onChange={(v) => setForm((f) => ({ ...f, stopLossPct: v }))}
-          />
-          <NumberField
-            label="Max leverage"
-            value={form.maxLeverage}
-            onChange={(v) => setForm((f) => ({ ...f, maxLeverage: v }))}
-          />
-        </div>
-
-        <div className="mt-4 rounded-lg border border-gray-200 px-3 py-2 text-xs text-tg-hint dark:border-gray-700">
-          {summary.settings.subscription_ttl_days} days per wallet · estimated{' '}
-          {money(estimatedPerWallet)} each · open copied positions close on expiry.
-        </div>
-
-        {mode === 'live' && (
-          <label className="mt-4 flex items-start gap-3 text-xs text-tg-hint">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={form.riskDisclosureAccepted}
-              onChange={(e) =>
+          <div className="space-y-3">
+            <NumberField
+              label="Total allocation"
+              value={form.totalAllocationUsd}
+              onChange={(v) =>
+                setForm((f) => ({ ...f, totalAllocationUsd: v }))
+              }
+            />
+            <NumberField
+              label="Max wallets"
+              value={form.maxActiveWallets}
+              onChange={(v) =>
                 setForm((f) => ({
                   ...f,
-                  riskDisclosureAccepted: e.target.checked,
+                  maxActiveWallets: Math.min(
+                    summary.settings.max_active_per_user,
+                    Math.max(1, Math.round(v)),
+                  ),
                 }))
               }
             />
-            <span>
-              Live strategy opens real HyperLiquid orders. Each generated wallet
-              subscription expires after 5 days and copied positions are closed.
-            </span>
-          </label>
-        )}
+            <NumberField
+              label="Max per wallet"
+              value={form.maxPerWalletUsd}
+              onChange={(v) => setForm((f) => ({ ...f, maxPerWalletUsd: v }))}
+            />
+            <NumberField
+              label="Copy ratio %"
+              value={form.copyRatioPct}
+              onChange={(v) => setForm((f) => ({ ...f, copyRatioPct: v }))}
+            />
+            <NumberField
+              label="Stop loss %"
+              value={form.stopLossPct}
+              onChange={(v) => setForm((f) => ({ ...f, stopLossPct: v }))}
+            />
+            <NumberField
+              label="Max leverage"
+              value={form.maxLeverage}
+              onChange={(v) => setForm((f) => ({ ...f, maxLeverage: v }))}
+            />
+          </div>
 
-        {error && <div className="mt-3 text-xs text-red-500">{error}</div>}
+          <div className="mt-4 rounded-lg border border-gray-200 px-3 py-2 text-xs text-tg-hint dark:border-gray-700">
+            {summary.settings.subscription_ttl_days} days per wallet · estimated{' '}
+            {money(estimatedPerWallet)} each · open copied positions close on expiry.
+          </div>
 
-        <button
-          type="submit"
-          disabled={busy || (mode === 'live' && !form.riskDisclosureAccepted)}
-          className="mt-5 w-full rounded-lg bg-tg-button py-3 text-sm font-semibold text-tg-button-text disabled:opacity-50"
+          {mode === 'live' && (
+            <label className="mt-4 flex items-start gap-3 text-xs text-tg-hint">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={form.riskDisclosureAccepted}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    riskDisclosureAccepted: e.target.checked,
+                  }))
+                }
+              />
+              <span>
+                Live strategy opens real HyperLiquid orders. Each generated wallet
+                subscription expires after 5 days and copied positions are closed.
+              </span>
+            </label>
+          )}
+        </div>
+
+        <div
+          className="shrink-0 px-4 pt-2"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}
         >
-          {busy ? 'Activating…' : 'Activate'}
-        </button>
+          {error && <div className="mb-2 text-xs text-red-500">{error}</div>}
+          <button
+            type="submit"
+            disabled={busy || (mode === 'live' && !form.riskDisclosureAccepted)}
+            className="w-full rounded-xl bg-tg-button py-3 text-sm font-semibold text-tg-button-text disabled:opacity-50"
+          >
+            {busy ? 'Activating…' : 'Activate'}
+          </button>
+        </div>
       </form>
     </div>
   )
