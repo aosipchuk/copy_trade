@@ -127,7 +127,8 @@ class HttpFundingEventProvider(FundingEventProvider):
             response.raise_for_status()
             payload = response.json()
 
-        return _parse_provider_payload(payload)
+        batch = _parse_provider_payload(payload)
+        return _filter_batch_since(batch, start_time=start_time, limit=limit)
 
     async def latest_incoming_for_address(
         self,
@@ -161,6 +162,11 @@ class HttpFundingEventProvider(FundingEventProvider):
             and (before_time is None or event.event_time <= before_time)
         ]
         if not candidates:
+            if _is_hypurrscan_url(self._url):
+                return await LedgerFundingEventProvider().latest_incoming_for_address(
+                    address,
+                    before_time=before_time,
+                )
             return None
         return max(candidates, key=lambda event: event.event_time)
 
@@ -202,18 +208,14 @@ class LedgerFundingEventProvider(FundingEventProvider):
         incoming: list[FundingEvent] = []
         for update in updates:
             delta = update.delta
-            source = delta.source_address
+            source = _ledger_source_for_target(delta, address)
+            if source is None and delta.type.lower() in _LEDGER_TRANSFER_TYPES:
+                continue
             amount = delta.amount_usdc
             if amount is not None and amount <= 0:
                 continue
             event_type = delta.type
-            if event_type.lower() not in {
-                "deposit",
-                "transfer",
-                "internaltransfer",
-                "accountclasstransfer",
-                "spottransfer",
-            }:
+            if event_type.lower() not in _LEDGER_FUNDING_TYPES:
                 continue
             raw = update.model_dump(mode="json", by_alias=True)
             incoming.append(
@@ -237,7 +239,7 @@ class LedgerFundingEventProvider(FundingEventProvider):
 
 def _parse_provider_payload(payload: Any) -> FundingEventBatch:
     if isinstance(payload, list):
-        return FundingEventBatch(events=[_parse_event(item) for item in payload])
+        return FundingEventBatch(events=_parse_events(payload))
     if not isinstance(payload, dict):
         raise FundingEventProviderError(
             "Funding provider response must be a JSON object"
@@ -248,14 +250,25 @@ def _parse_provider_payload(payload: Any) -> FundingEventBatch:
         raise FundingEventProviderError("Funding provider events must be a JSON list")
     cursor = payload.get("next_cursor") or payload.get("nextCursor")
     return FundingEventBatch(
-        events=[_parse_event(item) for item in raw_events],
+        events=_parse_events(raw_events),
         next_cursor=str(cursor) if cursor else None,
     )
 
 
-def _parse_event(item: Any) -> FundingEvent:
+def _parse_events(items: list[Any]) -> list[FundingEvent]:
+    events: list[FundingEvent] = []
+    for item in items:
+        event = _parse_event(item)
+        if event is not None:
+            events.append(event)
+    return events
+
+
+def _parse_event(item: Any) -> FundingEvent | None:
     if not isinstance(item, dict):
         raise FundingEventProviderError("Funding event must be a JSON object")
+    if "action" in item:
+        return _parse_hypurrscan_event(item)
     raw = dict(item)
     normalized = {
         "targetAddress": _first_present(item, "target_address", "targetAddress"),
@@ -268,6 +281,112 @@ def _parse_event(item: Any) -> FundingEvent:
         "rawEvent": raw,
     }
     return FundingEvent.model_validate(normalized)
+
+
+_HYPURRSCAN_TRANSFER_TYPES = {"spotsend", "sendasset", "usdsend"}
+_LEDGER_TRANSFER_TYPES = {
+    "send",
+    "spotsend",
+    "spottransfer",
+    "internaltransfer",
+    "subaccounttransfer",
+}
+_LEDGER_FUNDING_TYPES = _LEDGER_TRANSFER_TYPES | {"deposit", "transfer"}
+
+
+def _parse_hypurrscan_event(item: dict[str, Any]) -> FundingEvent | None:
+    if item.get("error") is not None:
+        return None
+    action = item.get("action")
+    if not isinstance(action, dict):
+        return None
+
+    event_type = str(action.get("type") or "").lower()
+    if event_type not in _HYPURRSCAN_TRANSFER_TYPES:
+        return None
+
+    token = action.get("token")
+    if not _is_usdc_token(token, event_type=event_type):
+        return None
+
+    source = item.get("user")
+    target = action.get("destination")
+    amount = action.get("amount") or action.get("usd")
+    if not source or not target or amount is None:
+        return None
+
+    try:
+        source_address = normalize_hl_address(str(source))
+        target_address = normalize_hl_address(str(target))
+    except ValueError:
+        return None
+    if source_address == target_address:
+        return None
+
+    return FundingEvent.model_validate(
+        {
+            "targetAddress": target_address,
+            "sourceAddress": source_address,
+            "amountUsdc": amount,
+            "txHash": item.get("hash"),
+            "eventTime": item.get("time"),
+            "eventType": action.get("type") or "hypurrscan_transfer",
+            "rawEvent": {
+                "provider": "hypurrscan",
+                **item,
+            },
+        }
+    )
+
+
+def _is_usdc_token(token: Any, *, event_type: str) -> bool:
+    if event_type == "usdsend":
+        return True
+    if token is None:
+        return False
+    token_name = str(token).upper()
+    return token_name == "USDC" or token_name.startswith("USDC:")
+
+
+def _filter_batch_since(
+    batch: FundingEventBatch,
+    *,
+    start_time: datetime,
+    limit: int,
+) -> FundingEventBatch:
+    events = sorted(
+        (event for event in batch.events if event.event_time >= start_time),
+        key=lambda event: event.event_time,
+    )
+    if limit > 0:
+        events = events[:limit]
+    return FundingEventBatch(events=events, next_cursor=batch.next_cursor)
+
+
+def _ledger_source_for_target(delta: Any, target_address: str) -> str | None:
+    event_type = str(delta.type or "").lower()
+    if event_type not in _LEDGER_TRANSFER_TYPES:
+        return delta.source_address
+
+    destination = (
+        delta.destination
+        or delta.to_address
+        or delta.to_user
+        or getattr(delta, "dest_user", None)
+    )
+    if destination:
+        try:
+            if normalize_hl_address(str(destination)) != normalize_hl_address(
+                target_address
+            ):
+                return None
+        except ValueError:
+            return None
+    return delta.source_address
+
+
+def _is_hypurrscan_url(url: str) -> bool:
+    return "hypurrscan.io" in url.lower()
 
 
 def _first_present(item: dict[str, Any], *keys: str) -> Any:

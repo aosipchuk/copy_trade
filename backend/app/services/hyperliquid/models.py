@@ -101,7 +101,9 @@ class LedgerDelta(BaseModel):
     type: str
     usdc: Decimal | None = None
     amount: Decimal | None = None
+    usdc_value: Decimal | None = Field(None, alias="usdcValue")
     token: str | None = None
+    user: str | None = None
     from_address: str | None = Field(None, alias="from")
     from_user: str | None = Field(None, alias="fromUser")
     source: str | None = None
@@ -115,12 +117,15 @@ class LedgerDelta(BaseModel):
     def amount_usdc(self) -> Decimal | None:
         if self.usdc is not None:
             return self.usdc
+        if self.usdc_value is not None:
+            return self.usdc_value
         return self.amount
 
     @property
     def source_address(self) -> str | None:
         return (
             self.from_address
+            or self.user
             or self.from_user
             or self.source
             or self.source_user

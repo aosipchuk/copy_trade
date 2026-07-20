@@ -56,6 +56,20 @@ Accepted response shapes:
 
 or a bare JSON array of the same event objects.
 
+## HypurrScan Feed Adapter
+
+For initial shadow rollout, `NEW_WALLET_FUNDING_EVENTS_URL` may point to:
+
+```dotenv
+NEW_WALLET_FUNDING_EVENTS_URL=https://api.hypurrscan.io/transfers
+```
+
+The adapter accepts successful HypurrScan `spotSend`, `sendAsset`, and `usdSend`
+USDC transfers and normalizes them as `source_address -> target_address` funding
+events. Failed transactions, non-USDC transfers, system transfers, and bridge
+validator vote events are ignored. Chain traversal for already-known addresses
+still uses `userNonFundingLedgerUpdates`.
+
 ## Ledger Adapter
 
 `LedgerFundingEventProvider` uses `userNonFundingLedgerUpdates` for known-address backfill and chain traversal. It intentionally raises provider-unavailable for global scans because public Info API has no global feed.
