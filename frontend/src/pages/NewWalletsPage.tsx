@@ -47,13 +47,30 @@ type SourceGroup = {
   firstIndex: number
 }
 
+type SourceListItem =
+  | {
+      kind: 'shared'
+      group: SourceGroup
+      sortBalance: number
+      firstIndex: number
+    }
+  | {
+      kind: 'single'
+      candidate: NewWalletCandidate
+      sortBalance: number
+      firstIndex: number
+    }
+
 type SourceGrouping = {
-  shared: SourceGroup[]
-  singles: NewWalletCandidate[]
+  rows: SourceListItem[]
 }
 
 function primarySource(candidate: NewWalletCandidate): string | null {
   return candidate.links[0]?.funded_by_address ?? null
+}
+
+function balanceValue(candidate: NewWalletCandidate): number {
+  return candidate.chain_total_balance_usd ?? -1
 }
 
 function groupBySource(items: NewWalletCandidate[]): SourceGrouping {
@@ -81,11 +98,19 @@ function groupBySource(items: NewWalletCandidate[]): SourceGrouping {
     })
   })
 
-  const shared: SourceGroup[] = []
+  const rows: SourceListItem[] = []
 
   grouped.forEach((group) => {
     if (group.candidates.length > 1) {
-      shared.push(group)
+      group.candidates.sort((a, b) => balanceValue(b) - balanceValue(a))
+      const topCandidate = group.candidates[0]
+      if (!topCandidate) return
+      rows.push({
+        kind: 'shared',
+        group,
+        sortBalance: balanceValue(topCandidate),
+        firstIndex: group.firstIndex,
+      })
       return
     }
 
@@ -98,15 +123,22 @@ function groupBySource(items: NewWalletCandidate[]): SourceGrouping {
     }
   })
 
-  shared.sort(
+  singleEntries.forEach((entry) => {
+    rows.push({
+      kind: 'single',
+      candidate: entry.candidate,
+      sortBalance: balanceValue(entry.candidate),
+      firstIndex: entry.index,
+    })
+  })
+
+  rows.sort(
     (a, b) =>
-      b.candidates.length - a.candidates.length || a.firstIndex - b.firstIndex,
+      b.sortBalance - a.sortBalance || a.firstIndex - b.firstIndex,
   )
-  singleEntries.sort((a, b) => a.index - b.index)
 
   return {
-    shared,
-    singles: singleEntries.map((entry) => entry.candidate),
+    rows,
   }
 }
 
@@ -209,22 +241,20 @@ export function NewWalletsPage() {
         </div>
       ) : (
         <div className="space-y-4 px-4">
-          {sourceGrouping.shared.map((group) => (
-            <SourceGroupSection key={group.source} group={group} />
-          ))}
+          {sourceGrouping.rows.map((row) => {
+            if (row.kind === 'shared') {
+              return (
+                <SourceGroupSection key={row.group.source} group={row.group} />
+              )
+            }
 
-          {sourceGrouping.singles.length > 0 && (
-            <section className="space-y-3">
-              {sourceGrouping.shared.length > 0 && (
-                <div className="px-1 text-[10px] font-semibold uppercase text-tg-hint">
-                  Other Sources
-                </div>
-              )}
-              {sourceGrouping.singles.map((candidate) => (
-                <CandidateCard key={candidate.id} candidate={candidate} />
-              ))}
-            </section>
-          )}
+            return (
+              <CandidateCard
+                key={row.candidate.id}
+                candidate={row.candidate}
+              />
+            )
+          })}
         </div>
       )}
 
