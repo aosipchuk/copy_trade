@@ -41,6 +41,75 @@ function ttlText(value: string | null): string {
   return `${Math.ceil(hours / 24)}d`
 }
 
+type SourceGroup = {
+  source: string
+  candidates: NewWalletCandidate[]
+  firstIndex: number
+}
+
+type SourceGrouping = {
+  shared: SourceGroup[]
+  singles: NewWalletCandidate[]
+}
+
+function primarySource(candidate: NewWalletCandidate): string | null {
+  return candidate.links[0]?.funded_by_address ?? null
+}
+
+function groupBySource(items: NewWalletCandidate[]): SourceGrouping {
+  const grouped = new Map<string, SourceGroup>()
+  const singleEntries: Array<{ candidate: NewWalletCandidate; index: number }> = []
+
+  items.forEach((candidate, index) => {
+    const source = primarySource(candidate)
+    if (!source) {
+      singleEntries.push({ candidate, index })
+      return
+    }
+
+    const key = source.toLowerCase()
+    const existing = grouped.get(key)
+    if (existing) {
+      existing.candidates.push(candidate)
+      return
+    }
+
+    grouped.set(key, {
+      source,
+      candidates: [candidate],
+      firstIndex: index,
+    })
+  })
+
+  const shared: SourceGroup[] = []
+
+  grouped.forEach((group) => {
+    if (group.candidates.length > 1) {
+      shared.push(group)
+      return
+    }
+
+    const candidate = group.candidates[0]
+    if (candidate) {
+      singleEntries.push({
+        candidate,
+        index: group.firstIndex,
+      })
+    }
+  })
+
+  shared.sort(
+    (a, b) =>
+      b.candidates.length - a.candidates.length || a.firstIndex - b.firstIndex,
+  )
+  singleEntries.sort((a, b) => a.index - b.index)
+
+  return {
+    shared,
+    singles: singleEntries.map((entry) => entry.candidate),
+  }
+}
+
 export function NewWalletsPage() {
   const [summary, setSummary] = useState<NewWalletSummary | null>(null)
   const [items, setItems] = useState<NewWalletCandidate[]>([])
@@ -72,6 +141,7 @@ export function NewWalletsPage() {
   const active = summary?.active_subscription ?? null
   const qualifiedCount = summary?.counts_by_status.qualified ?? 0
   const subscribedCount = summary?.counts_by_status.subscribed ?? 0
+  const sourceGrouping = useMemo(() => groupBySource(items), [items])
 
   if (loading) return <FullPageSpinner />
 
@@ -138,10 +208,23 @@ export function NewWalletsPage() {
           No qualified wallets
         </div>
       ) : (
-        <div className="space-y-3 px-4">
-          {items.map((candidate) => (
-            <CandidateCard key={candidate.id} candidate={candidate} />
+        <div className="space-y-4 px-4">
+          {sourceGrouping.shared.map((group) => (
+            <SourceGroupSection key={group.source} group={group} />
           ))}
+
+          {sourceGrouping.singles.length > 0 && (
+            <section className="space-y-3">
+              {sourceGrouping.shared.length > 0 && (
+                <div className="px-1 text-[10px] font-semibold uppercase text-tg-hint">
+                  Other Sources
+                </div>
+              )}
+              {sourceGrouping.singles.map((candidate) => (
+                <CandidateCard key={candidate.id} candidate={candidate} />
+              ))}
+            </section>
+          )}
         </div>
       )}
 
@@ -162,14 +245,58 @@ export function NewWalletsPage() {
   )
 }
 
-function CandidateCard({ candidate }: { candidate: NewWalletCandidate }) {
+function SourceGroupSection({ group }: { group: SourceGroup }) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between gap-3 px-1">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase text-tg-hint">
+            Shared Source
+          </div>
+          <div className="truncate font-mono text-xs font-semibold text-tg-text">
+            {shortAddress(group.source)}
+          </div>
+        </div>
+        <div className="shrink-0 rounded-full border border-tg-button px-2 py-0.5 text-[10px] font-semibold text-tg-button">
+          {group.candidates.length} wallets
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {group.candidates.map((candidate) => (
+          <CandidateCard
+            key={candidate.id}
+            candidate={candidate}
+            sharedSourceCount={group.candidates.length}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function CandidateCard({
+  candidate,
+  sharedSourceCount = 0,
+}: {
+  candidate: NewWalletCandidate
+  sharedSourceCount?: number
+}) {
   const copied = candidate.user_item_status === 'active'
   const firstLink = candidate.links[0]
+  const hasSharedSource = sharedSourceCount > 1
 
   return (
     <div
-      className="rounded-xl px-4 py-3"
-      style={{ background: 'var(--tg-theme-secondary-bg-color)' }}
+      className={`rounded-xl border px-4 py-3 ${
+        hasSharedSource ? 'border-tg-button' : 'border-transparent'
+      }`}
+      style={{
+        background: 'var(--tg-theme-secondary-bg-color)',
+        boxShadow: hasSharedSource
+          ? 'inset 3px 0 0 var(--tg-theme-button-color)'
+          : undefined,
+      }}
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
