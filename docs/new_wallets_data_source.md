@@ -67,8 +67,11 @@ NEW_WALLET_FUNDING_EVENTS_URL=https://api.hypurrscan.io/transfers
 The adapter accepts successful HypurrScan `spotSend`, `sendAsset`, and `usdSend`
 USDC transfers and normalizes them as `source_address -> target_address` funding
 events. Failed transactions, non-USDC transfers, system transfers, and bridge
-validator vote events are ignored. Chain traversal for already-known addresses
-still uses `userNonFundingLedgerUpdates`.
+validator vote events are ignored. Known reserved HyperLiquid addresses such as
+`0x2000000000000000000000000000000000000000` and
+`0x2222222222222222222222222222222222222222` are also ignored as source or
+target addresses. Chain traversal for already-known addresses still uses
+`userNonFundingLedgerUpdates`.
 
 ## Ledger Adapter
 

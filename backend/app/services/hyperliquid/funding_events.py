@@ -320,7 +320,11 @@ def _parse_hypurrscan_event(item: dict[str, Any]) -> FundingEvent | None:
         target_address = normalize_hl_address(str(target))
     except ValueError:
         return None
-    if source_address == target_address:
+    if (
+        source_address == target_address
+        or _is_reserved_hl_address(source_address)
+        or _is_reserved_hl_address(target_address)
+    ):
         return None
 
     return FundingEvent.model_validate(
@@ -366,7 +370,7 @@ def _filter_batch_since(
 def _ledger_source_for_target(delta: Any, target_address: str) -> str | None:
     event_type = str(delta.type or "").lower()
     if event_type not in _LEDGER_TRANSFER_TYPES:
-        return delta.source_address
+        return _non_reserved_source(delta.source_address)
 
     destination = (
         delta.destination
@@ -382,11 +386,33 @@ def _ledger_source_for_target(delta: Any, target_address: str) -> str | None:
                 return None
         except ValueError:
             return None
-    return delta.source_address
+    return _non_reserved_source(delta.source_address)
+
+
+def _non_reserved_source(source: str | None) -> str | None:
+    if source is None:
+        return None
+    try:
+        if _is_reserved_hl_address(source):
+            return None
+    except ValueError:
+        return source
+    return source
 
 
 def _is_hypurrscan_url(url: str) -> bool:
     return "hypurrscan.io" in url.lower()
+
+
+_RESERVED_HL_ADDRESSES = {
+    "0x0000000000000000000000000000000000000000",
+    "0x2000000000000000000000000000000000000000",
+    "0x2222222222222222222222222222222222222222",
+}
+
+
+def _is_reserved_hl_address(address: str) -> bool:
+    return normalize_hl_address(address) in _RESERVED_HL_ADDRESSES
 
 
 def _first_present(item: dict[str, Any], *keys: str) -> Any:

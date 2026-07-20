@@ -81,6 +81,54 @@ async def test_http_provider_parses_hypurrscan_usdc_transfers() -> None:
 
 
 @respx.mock
+async def test_http_provider_skips_reserved_hyperliquid_addresses() -> None:
+    user = "0x" + "11" * 20
+    reserved = "0x2000000000000000000000000000000000000000"
+    respx.get("https://api.hypurrscan.io/transfers").mock(
+        return_value=Response(
+            200,
+            json=[
+                {
+                    "time": 1_784_570_410_000,
+                    "user": user,
+                    "action": {
+                        "type": "sendAsset",
+                        "destination": reserved,
+                        "token": "USDC",
+                        "amount": "1000",
+                    },
+                    "hash": "0xreservedtarget",
+                    "error": None,
+                },
+                {
+                    "time": 1_784_570_420_000,
+                    "user": reserved,
+                    "action": {
+                        "type": "sendAsset",
+                        "destination": user,
+                        "token": "USDC",
+                        "amount": "1000",
+                    },
+                    "hash": "0xreservedsource",
+                    "error": None,
+                },
+            ],
+        )
+    )
+
+    provider = HttpFundingEventProvider("https://api.hypurrscan.io/transfers")
+    batch = await provider.fetch_events_since(
+        start_time=datetime.fromtimestamp(1_784_570_405, tz=UTC).replace(
+            tzinfo=None
+        ),
+        cursor=None,
+        limit=10,
+    )
+
+    assert batch.events == []
+
+
+@respx.mock
 async def test_ledger_provider_uses_incoming_transfer_source() -> None:
     target = "0x" + "aa" * 20
     source = "0x" + "bb" * 20
