@@ -89,7 +89,7 @@ export function NewWalletsPage() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold text-tg-text">
-              Новые кошельки
+              New Wallets
             </h1>
             <p className="mt-1 text-xs text-tg-hint">
               {qualifiedCount + subscribedCount} ready · threshold{' '}

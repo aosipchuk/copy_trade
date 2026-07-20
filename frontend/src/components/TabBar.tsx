@@ -3,7 +3,7 @@ import { NavLink } from 'react-router-dom'
 const tabs = [
   { to: '/', label: 'Traders', icon: '📊' },
   { to: '/portfolios', label: 'Portfolios', icon: '▦' },
-  { to: '/new-wallets', label: 'Новые', icon: 'N' },
+  { to: '/new-wallets', label: 'New', icon: 'N' },
   { to: '/my-trades', label: 'My Trades', icon: '📋' },
   { to: '/wallet', label: 'Wallet', icon: '💼' },
 ]
