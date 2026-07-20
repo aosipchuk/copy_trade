@@ -128,12 +128,14 @@ export interface Subscription {
   sizing_mode: SizingMode
   max_per_coin_usd: number | null
   allowed_coins: string[] | null
-  source_type: 'manual' | 'model_portfolio'
+  source_type: 'manual' | 'model_portfolio' | 'new_wallet'
   source_id: number | null
   source_version_id: number | null
   managed_by_portfolio: boolean
   is_active: boolean
   is_demo: boolean
+  expires_at: string | null
+  ended_reason: string | null
   created_at: string
   realized_pnl: number
   unrealized_pnl: number
@@ -617,4 +619,124 @@ export interface DemoClosedPositionItem {
   realized_pnl: number
   opened_at: string
   closed_at: string
+}
+
+export type NewWalletCandidateStatus =
+  | 'pending'
+  | 'qualified'
+  | 'rejected'
+  | 'subscribed'
+  | 'expired'
+  | 'disabled'
+export type UserNewWalletSubscriptionStatus = 'active' | 'paused' | 'canceled'
+export type UserNewWalletItemStatus =
+  | 'active'
+  | 'expired'
+  | 'failed'
+  | 'removed'
+
+export interface NewWalletFundingLink {
+  id: number
+  depth: number
+  wallet_address: string
+  funded_by_address: string | null
+  amount_usdc: number | null
+  event_time: string | null
+  tx_hash: string | null
+  balance_usd: number | null
+  balance_source: string | null
+}
+
+export interface NewWalletCandidate {
+  id: number
+  trader_id: number | null
+  hl_address: string
+  status: NewWalletCandidateStatus
+  detected_at: string
+  funded_at: string | null
+  qualified_at: string | null
+  last_checked_at: string | null
+  chain_depth: number | null
+  chain_total_balance_usd: number | null
+  threshold_usd_snapshot: number | null
+  reject_reason: string | null
+  first_seen_tx_hash: string | null
+  links: NewWalletFundingLink[]
+  user_item_status: UserNewWalletItemStatus | null
+  user_child_subscription_id: number | null
+  user_child_expires_at: string | null
+}
+
+export interface NewWalletCandidateListResponse {
+  items: NewWalletCandidate[]
+  next_cursor: string | null
+}
+
+export interface NewWalletSettingsSnapshot {
+  discovery_enabled: boolean
+  auto_attach_enabled: boolean
+  funding_provider_configured: boolean
+  chain_balance_threshold_usd: number
+  max_chain_depth: number
+  subscription_ttl_days: number
+  min_incoming_amount_usd: number
+  max_active_per_user: number
+  default_max_per_wallet_usd: number
+}
+
+export interface UserNewWalletItem {
+  id: number
+  candidate_id: number
+  subscription_id: number
+  trader_id: number
+  target_allocation_usd: number
+  status: UserNewWalletItemStatus
+  created_at: string
+  expires_at: string
+  ended_at: string | null
+  error_msg: string | null
+  realized_pnl: number
+  unrealized_pnl: number
+  trade_count: number
+  candidate: NewWalletCandidate | null
+}
+
+export interface UserNewWalletSubscription {
+  id: number
+  user_id: number
+  status: UserNewWalletSubscriptionStatus
+  is_demo: boolean
+  total_allocation_usd: number
+  max_active_wallets: number
+  max_per_wallet_usd: number
+  copy_ratio_pct: number
+  stop_loss_pct: number
+  max_leverage: number
+  sizing_mode: SizingMode
+  allowed_coins: string[] | null
+  close_positions_on_expire: boolean
+  created_at: string
+  updated_at: string
+  canceled_at: string | null
+  items: UserNewWalletItem[]
+}
+
+export interface NewWalletSummary {
+  counts_by_status: Record<string, number>
+  active_subscription: UserNewWalletSubscription | null
+  settings: NewWalletSettingsSnapshot
+}
+
+export interface NewWalletSubscriptionCreate {
+  is_demo: boolean
+  total_allocation_usd: number
+  max_active_wallets: number
+  max_per_wallet_usd: number
+  copy_ratio_pct: number
+  stop_loss_pct: number
+  max_leverage: number
+  sizing_mode: SizingMode
+  allowed_coins?: string[] | null
+  close_positions_on_expire: boolean
+  risk_disclosure_accepted: boolean
 }

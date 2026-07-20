@@ -19,7 +19,7 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
     __table_args__ = (
         CheckConstraint(
-            "source_type IN ('manual', 'model_portfolio')",
+            "source_type IN ('manual', 'model_portfolio', 'new_wallet')",
             name="ck_subscriptions_source_type",
         ),
     )
@@ -50,6 +50,8 @@ class Subscription(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column()
+    ended_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     user: Mapped["User"] = relationship(  # type: ignore[name-defined]
@@ -62,5 +64,8 @@ class Subscription(Base):
         back_populates="subscription", lazy="noload"
     )
     portfolio_item: Mapped["UserPortfolioItem | None"] = relationship(  # type: ignore[name-defined]
+        back_populates="subscription", lazy="noload"
+    )
+    new_wallet_item: Mapped["UserNewWalletItem | None"] = relationship(  # type: ignore[name-defined]
         back_populates="subscription", lazy="noload"
     )

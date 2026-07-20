@@ -48,6 +48,8 @@ class SubscriptionResponse(BaseModel):
     managed_by_portfolio: bool
     is_active: bool
     is_demo: bool
+    expires_at: datetime | None = None
+    ended_reason: str | None = None
     created_at: datetime
     realized_pnl: float
     unrealized_pnl: float = 0.0

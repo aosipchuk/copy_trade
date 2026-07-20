@@ -78,6 +78,24 @@ class Settings(BaseSettings):
     hydromancer_api_key: str = ""
     hydromancer_api_url: str = "https://api.hydromancer.xyz"
 
+    # New HyperLiquid wallet discovery. Disabled by default until a production
+    # funding-event provider is configured and validated.
+    new_wallet_discovery_enabled: bool = False
+    new_wallet_auto_attach_enabled: bool = False
+    new_wallet_funding_events_url: str = ""
+    new_wallet_funding_events_api_key: str = ""
+    new_wallet_chain_balance_threshold_usd: float = 15_000.0
+    new_wallet_max_chain_depth: int = 3
+    new_wallet_subscription_ttl_days: int = 5
+    new_wallet_scan_interval_seconds: int = 30
+    new_wallet_discovery_lookback_hours: int = 24
+    new_wallet_min_incoming_amount_usd: float = 100.0
+    new_wallet_max_active_per_user: int = 20
+    new_wallet_default_max_per_wallet_usd: float = 100.0
+    new_wallet_max_candidates_per_run: int = 100
+    new_wallet_max_attach_per_run: int = 100
+    new_wallet_provider_timeout_seconds: float = 20.0
+
     # Builder Code (monetization)
     builder_address: str = ""  # 0x... our wallet for receiving fees
     builder_fee_rate: int = 50  # tenth-bps: 50 = 0.05%, 100 = 0.1%

@@ -1,3 +1,9 @@
+from app.models.new_wallet import (
+    NewWalletCandidate,
+    NewWalletFundingLink,
+    UserNewWalletItem,
+    UserNewWalletSubscription,
+)
 from app.models.portfolio import (
     ModelPortfolio,
     ModelPortfolioAllocation,
@@ -22,6 +28,10 @@ __all__ = [
     "Signal",
     "Subscription",
     "UserTrade",
+    "NewWalletCandidate",
+    "NewWalletFundingLink",
+    "UserNewWalletSubscription",
+    "UserNewWalletItem",
     "ModelPortfolio",
     "ModelPortfolioVersion",
     "ModelPortfolioAllocation",

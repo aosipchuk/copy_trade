@@ -12,13 +12,17 @@ from tenacity import (
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.hyperliquid.models import (
+    AccountEquitySnapshot,
     ClearinghouseState,
     Fill,
     LeaderboardResponse,
     LeaderboardRow,
     MarginSummary,
     Meta,
+    NonFundingLedgerUpdate,
     Position,
+    SpotBalance,
+    SpotClearinghouseState,
 )
 from app.services.hyperliquid.rate_limiter import (
     hl_priority_low,
@@ -33,6 +37,8 @@ _TIMEOUT = httpx.Timeout(30.0)
 _MAX_RETRY_AFTER_SEC = 30.0  # cap how long we honor a server-advised back-off
 _USER_FILLS_BY_TIME_PAGE_LIMIT = 2_000
 USER_FILLS_BY_TIME_MAX_AVAILABLE = 10_000
+_USER_NON_FUNDING_LEDGER_PAGE_LIMIT = 2_000
+USER_NON_FUNDING_LEDGER_MAX_AVAILABLE = 10_000
 
 
 def _parse_retry_after(value: str | None) -> float | None:
@@ -145,6 +151,44 @@ class HyperliquidInfoClient:
 
         return state.margin_summary
 
+    async def get_spot_balances(self, address: str) -> list[SpotBalance]:
+        """Fetch spot balances for a user address."""
+        data = await self._post({"type": "spotClearinghouseState", "user": address})
+        state = SpotClearinghouseState.model_validate(data)
+        return state.balances
+
+    async def get_account_equity_usd(self, address: str) -> AccountEquitySnapshot:
+        """Return a conservative account-equity snapshot for discovery evidence."""
+        summary, spot_balances = await asyncio.gather(
+            self.get_account_summary(address),
+            self.get_spot_balances(address),
+        )
+        spot_usdc = sum(
+            (
+                balance.total
+                for balance in spot_balances
+                if balance.coin.upper() == "USDC"
+            ),
+            start=summary.account_value * 0,
+        )
+        if spot_usdc > summary.account_value:
+            balance = spot_usdc
+            source = "spot_usdc_total"
+        else:
+            balance = summary.account_value
+            source = "perp_account_value"
+        return AccountEquitySnapshot(
+            balance_usd=balance,
+            balance_source=source,
+            perp_account_value_usd=summary.account_value,
+            spot_usdc_total=spot_usdc,
+            evidence={
+                "perp_account_value_usd": str(summary.account_value),
+                "spot_usdc_total": str(spot_usdc),
+                "balance_source": source,
+            },
+        )
+
     async def get_all_mids(self) -> dict[str, str]:
         """Fetch current mid prices for all active markets."""
         data: dict[str, str] = await self._post({"type": "allMids"})
@@ -222,6 +266,65 @@ class HyperliquidInfoClient:
                 break
 
         return fills
+
+    async def get_non_funding_ledger_updates(
+        self,
+        address: str,
+        *,
+        start_time: int,
+        end_time: int | None = None,
+        max_updates: int = USER_NON_FUNDING_LEDGER_MAX_AVAILABLE,
+    ) -> list[NonFundingLedgerUpdate]:
+        """Fetch non-funding ledger updates available for a known user.
+
+        The endpoint is user-scoped, not a global funding-event feed. Pagination
+        advances by timestamp and dedupes same-time/hash records.
+        """
+        if max_updates <= 0:
+            return []
+
+        updates: list[NonFundingLedgerUpdate] = []
+        seen: set[tuple[int, str | None, str]] = set()
+        next_start_time = start_time
+
+        while len(updates) < max_updates:
+            payload: dict[str, Any] = {
+                "type": "userNonFundingLedgerUpdates",
+                "user": address,
+                "startTime": next_start_time,
+            }
+            if end_time is not None:
+                payload["endTime"] = end_time
+
+            data: list[Any] = await self._post(payload)
+            page = [NonFundingLedgerUpdate.model_validate(item) for item in data]
+            if not page:
+                break
+
+            page.sort(key=lambda item: item.time)
+            added_from_page = 0
+            for update in page:
+                key = (update.time, update.hash, update.delta.type)
+                if key in seen:
+                    continue
+                seen.add(key)
+                updates.append(update)
+                added_from_page += 1
+                if len(updates) >= max_updates:
+                    break
+
+            if (
+                len(page) < _USER_NON_FUNDING_LEDGER_PAGE_LIMIT
+                or added_from_page == 0
+            ):
+                break
+
+            last_time = page[-1].time
+            next_start_time = last_time + 1
+            if end_time is not None and next_start_time > end_time:
+                break
+
+        return updates
 
     async def get_meta(self) -> Meta:
         """Fetch market metadata: asset names, size decimals, max leverage."""

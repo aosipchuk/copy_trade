@@ -38,6 +38,9 @@ class Trader(Base):
     portfolio_items: Mapped[list["UserPortfolioItem"]] = relationship(  # type: ignore[name-defined]
         back_populates="trader", lazy="noload"
     )
+    new_wallet_candidates: Mapped[list["NewWalletCandidate"]] = relationship(
+        back_populates="trader", lazy="noload"
+    )
 
 
 class TraderStat(Base):

@@ -1,4 +1,3 @@
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -16,10 +15,10 @@ from app.services.analytics.metrics import (
     compute_trader_quality_metrics,
     get_trader_stats,
 )
+from app.services.hyperliquid.address import normalize_hl_address as _normalize_address
 
 logger = get_logger(__name__)
 
-_HL_ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _STAT_PERIODS: tuple[str, ...] = ("day", "week", "month", "allTime")
 
 ImportStatus = Literal["imported", "refreshed", "no_fills", "no_perp_activity"]
@@ -43,12 +42,12 @@ class AdminTraderImportResult:
 
 
 def normalize_hl_address(address: str) -> str:
-    normalized = address.strip().lower()
-    if not _HL_ADDRESS_RE.fullmatch(normalized):
+    try:
+        return _normalize_address(address)
+    except ValueError as exc:
         raise InvalidHLAddressError(
             "HL address must be a 42-character 0x-prefixed hex address."
-        )
-    return normalized
+        ) from exc
 
 
 async def import_hl_trader_for_analysis(

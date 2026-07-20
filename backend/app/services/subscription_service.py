@@ -138,6 +138,8 @@ async def _to_response(
         managed_by_portfolio=sub.managed_by_portfolio,
         is_active=sub.is_active,
         is_demo=sub.is_demo,
+        expires_at=sub.expires_at,
+        ended_reason=sub.ended_reason,
         created_at=sub.created_at,
         realized_pnl=realized_pnl,
         unrealized_pnl=unrealized_pnl,
@@ -156,14 +158,18 @@ async def create_subscription(
     source_version_id: int | None = None,
     managed_by_portfolio: bool = False,
     margin_summary: MarginSummary | None = None,
+    expires_at: datetime | None = None,
 ) -> SubscriptionResponse:
-    trader_res = await db.execute(
-        select(Trader).where(
-            Trader.id == data.trader_id,
-            Trader.is_active.is_(True),
-            Trader.has_perp_activity.is_(True),
-        )
+    trader_query = select(Trader).where(
+        Trader.id == data.trader_id,
+        Trader.is_active.is_(True),
     )
+    if source_type == "new_wallet":
+        trader_query = trader_query.where(Trader.has_perp_activity.is_not(False))
+    else:
+        trader_query = trader_query.where(Trader.has_perp_activity.is_(True))
+
+    trader_res = await db.execute(trader_query)
     trader = trader_res.scalar_one_or_none()
     if trader is None:
         raise ValueError(f"Trader {data.trader_id} not found or not copyable")
@@ -208,6 +214,7 @@ async def create_subscription(
         managed_by_portfolio=managed_by_portfolio,
         is_active=True,
         is_demo=data.is_demo,
+        expires_at=expires_at,
     )
     db.add(sub)
     await db.flush()

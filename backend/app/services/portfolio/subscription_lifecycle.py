@@ -6,6 +6,7 @@ from sqlalchemy import and_, exists, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.models.new_wallet import UserNewWalletItem, UserNewWalletSubscription
 from app.models.portfolio import UserPortfolioItem, UserPortfolioSubscription
 from app.models.signal import Signal
 from app.models.subscription import Subscription
@@ -26,11 +27,23 @@ def _now() -> datetime:
 
 def subscription_execution_allowed_clause() -> ColumnElement[bool]:
     """SQLAlchemy filter for subscriptions that may receive new copied signals."""
+    now = _now()
     portfolio_subscription_is_active = exists().where(
         UserPortfolioSubscription.id == Subscription.source_id,
         UserPortfolioSubscription.user_id == Subscription.user_id,
         UserPortfolioSubscription.is_demo == Subscription.is_demo,
         UserPortfolioSubscription.status.in_(PORTFOLIO_EXECUTION_STATUSES),
+    )
+    new_wallet_parent_is_active = exists().where(
+        UserNewWalletSubscription.id == Subscription.source_id,
+        UserNewWalletSubscription.user_id == Subscription.user_id,
+        UserNewWalletSubscription.is_demo == Subscription.is_demo,
+        UserNewWalletSubscription.status == "active",
+    )
+    new_wallet_item_is_active = exists().where(
+        UserNewWalletItem.subscription_id == Subscription.id,
+        UserNewWalletItem.user_new_wallet_subscription_id == Subscription.source_id,
+        UserNewWalletItem.status == "active",
     )
     return or_(
         and_(
@@ -42,6 +55,14 @@ def subscription_execution_allowed_clause() -> ColumnElement[bool]:
             Subscription.source_id.is_not(None),
             Subscription.managed_by_portfolio.is_(True),
             portfolio_subscription_is_active,
+        ),
+        and_(
+            Subscription.source_type == "new_wallet",
+            Subscription.source_id.is_not(None),
+            Subscription.expires_at.is_not(None),
+            Subscription.expires_at > now,
+            new_wallet_parent_is_active,
+            new_wallet_item_is_active,
         ),
     )
 

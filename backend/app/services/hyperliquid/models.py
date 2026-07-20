@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -90,6 +91,74 @@ class ClearinghouseState(BaseModel):
             for ap in self.asset_positions
             if ap.position.szi != Decimal("0")
         ]
+
+
+class LedgerDelta(BaseModel):
+    """Flexible model for userNonFundingLedgerUpdates delta payloads."""
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    type: str
+    usdc: Decimal | None = None
+    amount: Decimal | None = None
+    token: str | None = None
+    from_address: str | None = Field(None, alias="from")
+    from_user: str | None = Field(None, alias="fromUser")
+    source: str | None = None
+    source_user: str | None = Field(None, alias="sourceUser")
+    sender: str | None = None
+    to_address: str | None = Field(None, alias="to")
+    to_user: str | None = Field(None, alias="toUser")
+    destination: str | None = None
+
+    @property
+    def amount_usdc(self) -> Decimal | None:
+        if self.usdc is not None:
+            return self.usdc
+        return self.amount
+
+    @property
+    def source_address(self) -> str | None:
+        return (
+            self.from_address
+            or self.from_user
+            or self.source
+            or self.source_user
+            or self.sender
+        )
+
+
+class NonFundingLedgerUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    time: int
+    hash: str | None = None
+    delta: LedgerDelta
+
+
+class SpotBalance(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    coin: str
+    total: Decimal
+    hold: Decimal | None = None
+    entry_ntl: Decimal | None = Field(None, alias="entryNtl")
+
+
+class SpotClearinghouseState(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    balances: list[SpotBalance] = Field(default_factory=list)
+
+
+class AccountEquitySnapshot(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    balance_usd: Decimal
+    balance_source: str
+    perp_account_value_usd: Decimal
+    spot_usdc_total: Decimal
+    evidence: dict[str, Any]
 
 
 class Fill(BaseModel):

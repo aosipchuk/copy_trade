@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from pydantic import TypeAdapter
-from sqlalchemy import case, select, update
+from sqlalchemy import case, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import func
 
@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.database import get_db_session
 from app.core.logging import get_logger
 from app.core.redis_client import get_redis_client
+from app.models.new_wallet import NewWalletCandidate
 from app.models.subscription import Subscription
 from app.models.trader import Trader, TraderStat
 from app.services.hydromancer.client import HydromancerClient
@@ -137,12 +138,17 @@ async def refresh_leaderboard_async() -> int:
         subscribed_ids = select(Subscription.trader_id).where(
             Subscription.is_active == True  # noqa: E712
         )
+        new_wallet_candidate_ids = select(NewWalletCandidate.trader_id).where(
+            NewWalletCandidate.trader_id.is_not(None),
+            NewWalletCandidate.status.in_(("qualified", "subscribed")),
+        )
         deactivated = await db.execute(
             update(Trader)
             .where(
                 Trader.hl_address.not_in(active_addresses),
                 Trader.is_active == True,  # noqa: E712
                 Trader.id.not_in(subscribed_ids),
+                Trader.id.not_in(new_wallet_candidate_ids),
             )
             .values(is_active=False)
             .returning(Trader.id)
@@ -162,6 +168,10 @@ async def _get_tracked_addresses() -> list[str]:
             .where(
                 Subscription.is_active == True,  # noqa: E712
                 Trader.is_active == True,  # noqa: E712
+                or_(
+                    Subscription.expires_at.is_(None),
+                    Subscription.expires_at > _utcnow(),
+                ),
             )
             .distinct()
         )
@@ -188,7 +198,7 @@ async def _poll_trader_positions_async(trader_address: str) -> int:
     # Persist current snapshot
     redis_cli.setex(snap_key, _SNAPSHOT_TTL, _serialize_positions(curr_positions))
 
-    if not prev_positions:
+    if prev_raw is None:
         return 0  # first snapshot — no baseline to compare
 
     events: list[SignalEvent] = detect_changes(prev_positions, curr_positions)

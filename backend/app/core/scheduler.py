@@ -1,6 +1,7 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -20,6 +21,11 @@ def setup_scheduler() -> None:
         refresh_human_scores_async,
         refresh_leaderboard_async,
         track_active_traders_async,
+    )
+    from app.tasks.new_wallets import (
+        attach_qualified_new_wallets_async,
+        discover_new_wallets_async,
+        expire_new_wallet_subscriptions_async,
     )
     from app.tasks.portfolio_tasks import (
         apply_due_user_rebalances_async,
@@ -86,6 +92,27 @@ def setup_scheduler() -> None:
         generate_weekly_portfolio_reports_async,
         IntervalTrigger(seconds=86400),
         id="generate_weekly_portfolio_reports",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        discover_new_wallets_async,
+        IntervalTrigger(seconds=settings.new_wallet_scan_interval_seconds),
+        id="discover_new_wallets",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        attach_qualified_new_wallets_async,
+        IntervalTrigger(seconds=30),
+        id="attach_new_wallets",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        expire_new_wallet_subscriptions_async,
+        IntervalTrigger(seconds=60),
+        id="expire_new_wallet_subscriptions",
         replace_existing=True,
         max_instances=1,
     )

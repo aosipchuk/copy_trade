@@ -12,6 +12,8 @@ import { MyTradesPage } from './pages/MyTradesPage'
 import { WalletPage } from './pages/WalletPage'
 import { PortfoliosPage } from './pages/PortfoliosPage'
 import { PortfolioDetailPage } from './pages/PortfolioDetailPage'
+import { NewWalletsPage } from './pages/NewWalletsPage'
+import { NewWalletSubscriptionDetailPage } from './pages/NewWalletSubscriptionDetailPage'
 
 const ONBOARDING_KEY = 'onboarding_done'
 
@@ -95,6 +97,8 @@ export default function App() {
           <Route path="/traders/:id" element={<TraderDetailPage />} />
           <Route path="/portfolios" element={<PortfoliosPage />} />
           <Route path="/portfolios/:slug" element={<PortfolioDetailPage />} />
+          <Route path="/new-wallets" element={<NewWalletsPage />} />
+          <Route path="/new-wallet-subscriptions/:id" element={<NewWalletSubscriptionDetailPage />} />
           <Route path="/my-trades" element={<MyTradesPage />} />
           <Route path="/demo-subscriptions/:id" element={<DemoSubscriptionDetailPage />} />
           <Route path="/wallet" element={<WalletPage />} />

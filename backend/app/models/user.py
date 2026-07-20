@@ -30,6 +30,9 @@ class User(Base):
     portfolio_subscriptions: Mapped[list["UserPortfolioSubscription"]] = relationship(  # type: ignore[name-defined]
         back_populates="user", lazy="noload"
     )
+    new_wallet_subscriptions: Mapped[
+        list["UserNewWalletSubscription"]
+    ] = relationship(back_populates="user", lazy="noload")
 
 
 class UserAgent(Base):
