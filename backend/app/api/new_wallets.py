@@ -16,6 +16,7 @@ from app.models.subscription import Subscription
 from app.models.trade import UserTrade
 from app.schemas.new_wallet import (
     AdminNewWalletRescanRequest,
+    NewWalletCandidateAttachRequest,
     NewWalletCandidateListResponse,
     NewWalletCandidateResponse,
     NewWalletCandidateStatus,
@@ -29,6 +30,7 @@ from app.schemas.new_wallet import (
 from app.services.hyperliquid.address import normalize_hl_address
 from app.services.hyperliquid.funding_events import get_funding_event_provider
 from app.services.new_wallets.activation import (
+    attach_new_wallet_candidate_for_user,
     cancel_user_new_wallet_subscription,
     create_or_reactivate_new_wallet_subscription,
     get_user_new_wallet_subscription,
@@ -59,7 +61,11 @@ def _candidate_cursor(
     candidate: NewWalletCandidate,
     subscription_map: dict[int, Subscription],
 ) -> str:
-    rank = 1 if candidate.trader_id in subscription_map else 0
+    rank = (
+        1
+        if candidate.trader_id is not None and candidate.trader_id in subscription_map
+        else 0
+    )
     return f"{rank}:{candidate.id}"
 
 
@@ -204,6 +210,48 @@ async def list_subscriptions(
 ) -> list[UserNewWalletSubscriptionResponse]:
     parents = await list_user_new_wallet_subscriptions(db, user_id=current_user.id)
     return [await _subscription_response(db, parent) for parent in parents]
+
+
+@subscription_router.post(
+    "/candidates/{candidate_id}",
+    response_model=NewWalletCandidateResponse,
+)
+async def attach_candidate(
+    candidate_id: int,
+    body: NewWalletCandidateAttachRequest,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> NewWalletCandidateResponse:
+    try:
+        candidate = await attach_new_wallet_candidate_for_user(
+            db,
+            user=current_user,
+            candidate_id=candidate_id,
+            is_demo=body.is_demo,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    item_map = await _user_item_map(db, current_user.id, [candidate.id])
+    subscription_map = await _user_active_subscription_map(
+        db,
+        current_user.id,
+        [candidate.trader_id] if candidate.trader_id is not None else [],
+    )
+    return await _candidate_response(
+        db,
+        candidate,
+        item_map=item_map,
+        subscription_map=subscription_map,
+    )
 
 
 @subscription_router.get(

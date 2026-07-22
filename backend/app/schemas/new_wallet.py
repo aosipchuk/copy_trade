@@ -91,6 +91,10 @@ class NewWalletSubscriptionCreate(BaseModel):
     risk_disclosure_accepted: bool = False
 
 
+class NewWalletCandidateAttachRequest(BaseModel):
+    is_demo: bool = True
+
+
 class UserNewWalletItemResponse(BaseModel):
     id: int
     candidate_id: int

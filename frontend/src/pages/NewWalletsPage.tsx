@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import {
   activateNewWalletSubscription,
+  attachNewWalletCandidate,
   fetchNewWalletCandidates,
   fetchNewWalletSummary,
 } from '../api/newWallets'
@@ -176,6 +177,8 @@ export function NewWalletsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showActivate, setShowActivate] = useState(false)
+  const [attachBusy, setAttachBusy] = useState<Record<string, boolean>>({})
+  const [attachErrors, setAttachErrors] = useState<Record<number, string>>({})
 
   const load = () => {
     setLoading(true)
@@ -197,6 +200,43 @@ export function NewWalletsPage() {
   }
 
   useEffect(load, [])
+
+  const attachCandidate = async (
+    candidate: NewWalletCandidate,
+    isDemo: boolean,
+  ) => {
+    const key = `${candidate.id}:${isDemo ? 'demo' : 'live'}`
+    setAttachBusy((prev) => ({ ...prev, [key]: true }))
+    setAttachErrors((prev) => {
+      const next = { ...prev }
+      delete next[candidate.id]
+      return next
+    })
+    try {
+      const nextCandidate = await attachNewWalletCandidate(candidate.id, {
+        is_demo: isDemo,
+      })
+      setItems((prev) =>
+        prev.map((item) => (item.id === nextCandidate.id ? nextCandidate : item)),
+      )
+      fetchNewWalletSummary()
+        .then(setSummary)
+        .catch(() => undefined)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail
+      setAttachErrors((prev) => ({
+        ...prev,
+        [candidate.id]: detail ?? 'Subscribe failed',
+      }))
+    } finally {
+      setAttachBusy((prev) => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+    }
+  }
 
   const active = summary?.active_subscription ?? null
   const qualifiedCount = summary?.counts_by_status.qualified ?? 0
@@ -272,7 +312,13 @@ export function NewWalletsPage() {
           {sourceGrouping.rows.map((row) => {
             if (row.kind === 'shared') {
               return (
-                <SourceGroupSection key={row.group.source} group={row.group} />
+                <SourceGroupSection
+                  key={row.group.source}
+                  group={row.group}
+                  attachBusy={attachBusy}
+                  attachErrors={attachErrors}
+                  onAttach={attachCandidate}
+                />
               )
             }
 
@@ -280,6 +326,9 @@ export function NewWalletsPage() {
               <CandidateCard
                 key={row.candidate.id}
                 candidate={row.candidate}
+                attachBusy={attachBusy}
+                attachError={attachErrors[row.candidate.id] ?? null}
+                onAttach={attachCandidate}
               />
             )
           })}
@@ -303,7 +352,17 @@ export function NewWalletsPage() {
   )
 }
 
-function SourceGroupSection({ group }: { group: SourceGroup }) {
+function SourceGroupSection({
+  group,
+  attachBusy,
+  attachErrors,
+  onAttach,
+}: {
+  group: SourceGroup
+  attachBusy: Record<string, boolean>
+  attachErrors: Record<number, string>
+  onAttach: (candidate: NewWalletCandidate, isDemo: boolean) => void
+}) {
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between gap-3 px-1">
@@ -326,6 +385,9 @@ function SourceGroupSection({ group }: { group: SourceGroup }) {
             key={candidate.id}
             candidate={candidate}
             sharedSourceCount={group.candidates.length}
+            attachBusy={attachBusy}
+            attachError={attachErrors[candidate.id] ?? null}
+            onAttach={onAttach}
           />
         ))}
       </div>
@@ -336,14 +398,26 @@ function SourceGroupSection({ group }: { group: SourceGroup }) {
 function CandidateCard({
   candidate,
   sharedSourceCount = 0,
+  attachBusy,
+  attachError,
+  onAttach,
 }: {
   candidate: NewWalletCandidate
   sharedSourceCount?: number
+  attachBusy: Record<string, boolean>
+  attachError: string | null
+  onAttach: (candidate: NewWalletCandidate, isDemo: boolean) => void
 }) {
   const copied = candidate.user_item_status === 'active'
   const subscribed = copied || candidate.user_is_subscribed
   const firstLink = candidate.links[0]
   const hasSharedSource = sharedSourceCount > 1
+  const liveKey = `${candidate.id}:live`
+  const demoKey = `${candidate.id}:demo`
+  const liveBusy = attachBusy[liveKey] === true
+  const demoBusy = attachBusy[demoKey] === true
+  const isAttaching = liveBusy || demoBusy
+  const canAttach = !subscribed && candidate.trader_id !== null
 
   return (
     <div
@@ -394,6 +468,37 @@ function CandidateCard({
           value={copied ? ttlText(candidate.user_child_expires_at) : candidate.status}
         />
       </div>
+
+      {canAttach && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            disabled={isAttaching}
+            onClick={() => onAttach(candidate, false)}
+            className={
+              'h-9 rounded-lg bg-tg-button px-3 text-xs font-semibold ' +
+              'text-tg-button-text disabled:opacity-50'
+            }
+          >
+            {liveBusy ? 'Wait' : 'Subscribe'}
+          </button>
+          <button
+            type="button"
+            disabled={isAttaching}
+            onClick={() => onAttach(candidate, true)}
+            className={
+              'h-9 rounded-lg border border-tg-button px-3 text-xs ' +
+              'font-semibold text-tg-button disabled:opacity-50'
+            }
+          >
+            {demoBusy ? 'Wait' : 'Demo'}
+          </button>
+        </div>
+      )}
+
+      {attachError && (
+        <div className="mt-2 text-xs text-red-500">{attachError}</div>
+      )}
     </div>
   )
 }

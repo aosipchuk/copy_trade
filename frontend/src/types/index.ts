@@ -744,3 +744,7 @@ export interface NewWalletSubscriptionCreate {
   close_positions_on_expire: boolean
   risk_disclosure_accepted: boolean
 }
+
+export interface NewWalletCandidateAttachRequest {
+  is_demo: boolean
+}

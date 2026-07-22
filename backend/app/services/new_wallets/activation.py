@@ -19,6 +19,7 @@ from app.models.user import User, UserAgent
 from app.schemas.new_wallet import NewWalletSubscriptionCreate
 from app.schemas.subscription import SubscriptionCreate
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
+from app.services.hyperliquid.models import MarginSummary
 from app.services.subscription_service import create_subscription
 
 logger = get_logger(__name__)
@@ -127,50 +128,20 @@ async def attach_qualified_new_wallets_for_parent(
     attached = 0
     candidates = await _eligible_candidates(db, parent, limit=available_slots)
     for candidate in candidates:
-        if candidate.trader_id is None:
-            continue
-        target_allocation = _target_allocation(parent)
-        expires_at = utcnow() + timedelta(
-            days=settings.new_wallet_subscription_ttl_days
-        )
         try:
-            child = await create_subscription(
+            child_id = await _attach_candidate_to_parent(
                 db,
-                parent.user_id,
-                SubscriptionCreate(
-                    trader_id=candidate.trader_id,
-                    max_allocation_usd=float(target_allocation),
-                    copy_ratio_pct=float(parent.copy_ratio_pct),
-                    stop_loss_pct=float(parent.stop_loss_pct),
-                    max_leverage=float(parent.max_leverage),
-                    sizing_mode=parent.sizing_mode,  # type: ignore[arg-type]
-                    allowed_coins=parent.allowed_coins,
-                    is_demo=parent.is_demo,
-                ),
-                user_obj.hl_address,
-                source_type="new_wallet",
-                source_id=parent.id,
+                parent,
+                candidate,
+                user=user_obj,
                 margin_summary=margin_summary,
-                expires_at=expires_at,
             )
-            db.add(
-                UserNewWalletItem(
-                    user_new_wallet_subscription_id=parent.id,
-                    candidate_id=candidate.id,
-                    subscription_id=child.id,
-                    trader_id=candidate.trader_id,
-                    target_allocation_usd=float(target_allocation),
-                    status="active",
-                    expires_at=expires_at,
-                )
-            )
-            candidate.status = "subscribed"
             attached += 1
             logger.info(
                 "new_wallet_user_attached",
                 parent_id=parent.id,
                 candidate_id=candidate.id,
-                child_subscription_id=child.id,
+                child_subscription_id=child_id,
                 user_id=parent.user_id,
             )
         except Exception as exc:
@@ -182,6 +153,50 @@ async def attach_qualified_new_wallets_for_parent(
             )
     await db.flush()
     return attached
+
+
+async def attach_new_wallet_candidate_for_user(
+    db: AsyncSession,
+    *,
+    user: User,
+    candidate_id: int,
+    is_demo: bool,
+) -> NewWalletCandidate:
+    parent = await _active_parent_for_mode(db, user_id=user.id, is_demo=is_demo)
+    if parent is None:
+        mode = "demo" if is_demo else "live"
+        raise LookupError(f"Active {mode} New Wallet subscription not found")
+
+    candidate = await db.get(NewWalletCandidate, candidate_id)
+    if candidate is None:
+        raise LookupError("New wallet candidate not found")
+    await _ensure_candidate_attachable(db, parent, candidate)
+
+    if not parent.is_demo:
+        await _require_live_wallet_and_agent(db, user)
+        margin_summary = await HyperliquidInfoClient().get_account_summary(
+            user.hl_address or ""
+        )
+    else:
+        margin_summary = None
+
+    child_id = await _attach_candidate_to_parent(
+        db,
+        parent,
+        candidate,
+        user=user,
+        margin_summary=margin_summary,
+    )
+    logger.info(
+        "new_wallet_user_manual_attached",
+        parent_id=parent.id,
+        candidate_id=candidate.id,
+        child_subscription_id=child_id,
+        user_id=parent.user_id,
+    )
+    await db.flush()
+    await db.refresh(candidate)
+    return candidate
 
 
 async def attach_qualified_new_wallets(db: AsyncSession) -> int:
@@ -279,6 +294,107 @@ async def cancel_user_new_wallet_subscription(
             asyncio.create_task(close_subscription_positions_async(user_id, child_id))
 
     return parent
+
+
+async def _active_parent_for_mode(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    is_demo: bool,
+) -> UserNewWalletSubscription | None:
+    result = await db.execute(
+        select(UserNewWalletSubscription)
+        .where(
+            UserNewWalletSubscription.user_id == user_id,
+            UserNewWalletSubscription.is_demo.is_(is_demo),
+            UserNewWalletSubscription.status == "active",
+        )
+        .order_by(UserNewWalletSubscription.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _ensure_candidate_attachable(
+    db: AsyncSession,
+    parent: UserNewWalletSubscription,
+    candidate: NewWalletCandidate,
+) -> None:
+    if candidate.status not in ("qualified", "subscribed"):
+        raise ValueError("New wallet candidate is not attachable")
+    if candidate.trader_id is None:
+        raise ValueError("New wallet candidate has no trader")
+
+    item_result = await db.execute(
+        select(UserNewWalletItem.id)
+        .where(
+            UserNewWalletItem.user_new_wallet_subscription_id == parent.id,
+            UserNewWalletItem.candidate_id == candidate.id,
+            UserNewWalletItem.status == "active",
+        )
+        .limit(1)
+    )
+    if item_result.scalar_one_or_none() is not None:
+        raise ValueError("New wallet candidate is already attached")
+
+    subscription_result = await db.execute(
+        select(Subscription.id)
+        .where(
+            Subscription.user_id == parent.user_id,
+            Subscription.trader_id == candidate.trader_id,
+            Subscription.is_active.is_(True),
+        )
+        .limit(1)
+    )
+    if subscription_result.scalar_one_or_none() is not None:
+        raise ValueError("Trader is already subscribed")
+
+
+async def _attach_candidate_to_parent(
+    db: AsyncSession,
+    parent: UserNewWalletSubscription,
+    candidate: NewWalletCandidate,
+    *,
+    user: User,
+    margin_summary: MarginSummary | None,
+) -> int:
+    if candidate.trader_id is None:
+        raise ValueError("New wallet candidate has no trader")
+
+    target_allocation = _target_allocation(parent)
+    expires_at = utcnow() + timedelta(days=settings.new_wallet_subscription_ttl_days)
+    child = await create_subscription(
+        db,
+        parent.user_id,
+        SubscriptionCreate(
+            trader_id=candidate.trader_id,
+            max_allocation_usd=float(target_allocation),
+            copy_ratio_pct=float(parent.copy_ratio_pct),
+            stop_loss_pct=float(parent.stop_loss_pct),
+            max_leverage=float(parent.max_leverage),
+            sizing_mode=parent.sizing_mode,  # type: ignore[arg-type]
+            allowed_coins=parent.allowed_coins,
+            is_demo=parent.is_demo,
+        ),
+        user.hl_address,
+        source_type="new_wallet",
+        source_id=parent.id,
+        margin_summary=margin_summary,
+        expires_at=expires_at,
+    )
+    db.add(
+        UserNewWalletItem(
+            user_new_wallet_subscription_id=parent.id,
+            candidate_id=candidate.id,
+            subscription_id=child.id,
+            trader_id=candidate.trader_id,
+            target_allocation_usd=float(target_allocation),
+            status="active",
+            expires_at=expires_at,
+        )
+    )
+    candidate.status = "subscribed"
+    return child.id
 
 
 async def _require_live_wallet_and_agent(db: AsyncSession, user: User) -> None:

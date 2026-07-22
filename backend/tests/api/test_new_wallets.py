@@ -340,6 +340,103 @@ class TestNewWalletsAPI:
         ]
         assert active_subscription_ids == [existing.id]
 
+    async def test_manual_candidate_attach_requires_active_parent(
+        self, client, db_session
+    ) -> None:
+        candidate_id, _trader_id = await _seed_qualified_candidate(db_session)
+        headers, _user_id = await _auth(client, 82024)
+
+        response = await client.post(
+            f"/api/new-wallet-subscriptions/candidates/{candidate_id}",
+            headers=headers,
+            json={"is_demo": True},
+        )
+
+        assert response.status_code == 404
+        assert "Active demo" in response.json()["detail"]
+
+    async def test_manual_candidate_attach_ignores_parent_wallet_limit(
+        self, client, db_session, monkeypatch
+    ) -> None:
+        first_candidate_id, _first_trader_id = await _seed_qualified_candidate(
+            db_session
+        )
+        second_candidate_id, second_trader_id = await _seed_qualified_candidate(
+            db_session
+        )
+        await db_session.execute(
+            update(NewWalletCandidate)
+            .where(NewWalletCandidate.id == first_candidate_id)
+            .values(qualified_at=datetime(2026, 7, 20, 12, 0, 0))
+        )
+        await db_session.execute(
+            update(NewWalletCandidate)
+            .where(NewWalletCandidate.id == second_candidate_id)
+            .values(qualified_at=datetime(2026, 7, 20, 12, 2, 0))
+        )
+        await db_session.commit()
+        headers, user_id = await _auth(client, 82025)
+        monkeypatch.setattr(settings, "new_wallet_discovery_enabled", True)
+        monkeypatch.setattr(settings, "new_wallet_auto_attach_enabled", True)
+
+        created = await client.post(
+            "/api/new-wallet-subscriptions",
+            headers=headers,
+            json={
+                "is_demo": True,
+                "total_allocation_usd": 500,
+                "max_active_wallets": 1,
+                "max_per_wallet_usd": 75,
+                "copy_ratio_pct": 100,
+                "stop_loss_pct": 20,
+                "max_leverage": 10,
+                "sizing_mode": "fixed_ratio",
+                "close_positions_on_expire": True,
+            },
+        )
+        assert created.status_code == 201, created.text
+        parent_payload = created.json()
+        assert parent_payload["max_active_wallets"] == 1
+        assert [item["candidate_id"] for item in parent_payload["items"]] == [
+            first_candidate_id
+        ]
+
+        response = await client.post(
+            f"/api/new-wallet-subscriptions/candidates/{second_candidate_id}",
+            headers=headers,
+            json={"is_demo": True},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["id"] == second_candidate_id
+        assert body["trader_id"] == second_trader_id
+        assert body["user_is_subscribed"] is True
+        assert body["user_item_status"] == "active"
+        assert body["user_child_subscription_id"] is not None
+
+        items_result = await db_session.execute(
+            select(UserNewWalletItem).where(
+                UserNewWalletItem.user_new_wallet_subscription_id
+                == parent_payload["id"],
+                UserNewWalletItem.status == "active",
+            )
+        )
+        active_items = list(items_result.scalars().all())
+        assert {item.candidate_id for item in active_items} == {
+            first_candidate_id,
+            second_candidate_id,
+        }
+
+        child = await db_session.get(Subscription, body["user_child_subscription_id"])
+        assert child is not None
+        assert child.user_id == user_id
+        assert child.trader_id == second_trader_id
+        assert child.source_type == "new_wallet"
+        assert child.source_id == parent_payload["id"]
+        assert child.is_demo is True
+        assert child.max_allocation_usd == Decimal("75")
+
     async def test_live_activation_requires_wallet_and_agent(
         self, client, db_session, monkeypatch
     ) -> None:

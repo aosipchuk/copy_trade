@@ -1,4 +1,6 @@
 import type {
+  NewWalletCandidate,
+  NewWalletCandidateAttachRequest,
   NewWalletCandidateListResponse,
   NewWalletCandidateStatus,
   NewWalletSubscriptionCreate,
@@ -29,6 +31,17 @@ export async function activateNewWalletSubscription(
 ): Promise<UserNewWalletSubscription> {
   const res = await http.post<UserNewWalletSubscription>(
     '/new-wallet-subscriptions',
+    body,
+  )
+  return res.data
+}
+
+export async function attachNewWalletCandidate(
+  candidateId: number,
+  body: NewWalletCandidateAttachRequest,
+): Promise<NewWalletCandidate> {
+  const res = await http.post<NewWalletCandidate>(
+    `/new-wallet-subscriptions/candidates/${candidateId}`,
     body,
   )
   return res.data
