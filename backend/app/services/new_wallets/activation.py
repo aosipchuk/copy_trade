@@ -4,13 +4,14 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.new_wallet import (
     NewWalletCandidate,
+    NewWalletFundingLink,
     UserNewWalletItem,
     UserNewWalletSubscription,
 )
@@ -442,6 +443,16 @@ async def _eligible_candidates(
         )
         .exists()
     )
+    user_active_subscription_exists = (
+        select(Subscription.id)
+        .where(
+            Subscription.user_id == parent.user_id,
+            Subscription.is_active.is_(True),
+            Subscription.trader_id == NewWalletCandidate.trader_id,
+        )
+        .exists()
+    )
+    user_subscription_rank = case((user_active_subscription_exists, 1), else_=0)
     result = await db.execute(
         select(NewWalletCandidate)
         .where(
@@ -450,10 +461,92 @@ async def _eligible_candidates(
             NewWalletCandidate.id.not_in(already_attached),
             ~already_subscribed,
         )
-        .order_by(NewWalletCandidate.qualified_at.asc().nulls_last())
-        .limit(limit)
+        .order_by(user_subscription_rank.desc(), NewWalletCandidate.id.desc())
     )
-    return list(result.scalars().all())
+    candidates = list(result.scalars().all())
+    if not candidates:
+        return []
+
+    primary_sources = await _candidate_primary_sources(
+        db,
+        [candidate.id for candidate in candidates],
+    )
+    return _new_wallet_screen_order(candidates, primary_sources)[:limit]
+
+
+async def _candidate_primary_sources(
+    db: AsyncSession,
+    candidate_ids: list[int],
+) -> dict[int, str | None]:
+    result = await db.execute(
+        select(NewWalletFundingLink)
+        .where(NewWalletFundingLink.candidate_id.in_(candidate_ids))
+        .order_by(
+            NewWalletFundingLink.candidate_id.asc(),
+            NewWalletFundingLink.depth.asc(),
+            NewWalletFundingLink.id.asc(),
+        )
+    )
+    primary_sources: dict[int, str | None] = {}
+    for link in result.scalars().all():
+        primary_sources.setdefault(link.candidate_id, link.funded_by_address)
+    return primary_sources
+
+
+def _new_wallet_screen_order(
+    candidates: list[NewWalletCandidate],
+    primary_sources: dict[int, str | None],
+) -> list[NewWalletCandidate]:
+    grouped: dict[str, tuple[list[NewWalletCandidate], int]] = {}
+    single_entries: list[tuple[NewWalletCandidate, int]] = []
+
+    for index, candidate in enumerate(candidates):
+        source = primary_sources.get(candidate.id)
+        if not source:
+            single_entries.append((candidate, index))
+            continue
+
+        key = source.lower()
+        group = grouped.get(key)
+        if group is None:
+            group = ([], index)
+            grouped[key] = group
+        group[0].append(candidate)
+
+    rows: list[tuple[list[NewWalletCandidate], Decimal, int]] = []
+    for group_candidates, first_index in grouped.values():
+        if len(group_candidates) > 1:
+            sorted_group = sorted(
+                group_candidates,
+                key=_candidate_balance_value,
+                reverse=True,
+            )
+            rows.append(
+                (
+                    sorted_group,
+                    _candidate_balance_value(sorted_group[0]),
+                    first_index,
+                )
+            )
+            continue
+
+        candidate = group_candidates[0]
+        single_entries.append((candidate, first_index))
+
+    for candidate, first_index in single_entries:
+        rows.append(([candidate], _candidate_balance_value(candidate), first_index))
+
+    rows.sort(key=lambda row: (-row[1], row[2]))
+    ordered: list[NewWalletCandidate] = []
+    for row_candidates, _sort_balance, _first_index in rows:
+        ordered.extend(row_candidates)
+    return ordered
+
+
+def _candidate_balance_value(candidate: NewWalletCandidate) -> Decimal:
+    if candidate.chain_total_balance_usd is None:
+        return Decimal("-1")
+    return Decimal(str(candidate.chain_total_balance_usd))
 
 
 def _target_allocation(parent: UserNewWalletSubscription) -> Decimal:

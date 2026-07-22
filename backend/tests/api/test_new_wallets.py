@@ -71,7 +71,13 @@ async def _auth(client, user_id: int) -> tuple[dict[str, str], int]:
     return {"Authorization": f"Bearer {body['access_token']}"}, int(body["user_id"])
 
 
-async def _seed_qualified_candidate(db_session) -> tuple[int, int]:
+async def _seed_qualified_candidate(
+    db_session,
+    *,
+    balance_usd: Decimal = Decimal("16000"),
+    funded_by_address: str | None = None,
+    qualified_at: datetime | None = None,
+) -> tuple[int, int]:
     index = next(_addr_counter)
     address = f"0x{index:040x}"
     trader = Trader(
@@ -90,9 +96,9 @@ async def _seed_qualified_candidate(db_session) -> tuple[int, int]:
         status="qualified",
         detected_at=datetime(2026, 7, 20, 12, 0, 0),
         funded_at=datetime(2026, 7, 20, 12, 0, 0),
-        qualified_at=datetime(2026, 7, 20, 12, 1, 0),
+        qualified_at=qualified_at or datetime(2026, 7, 20, 12, 1, 0),
         chain_depth=1,
-        chain_total_balance_usd=Decimal("16000"),
+        chain_total_balance_usd=balance_usd,
         threshold_usd_snapshot=Decimal("15000"),
     )
     db_session.add(candidate)
@@ -102,11 +108,11 @@ async def _seed_qualified_candidate(db_session) -> tuple[int, int]:
             candidate_id=candidate.id,
             depth=1,
             wallet_address=trader.hl_address,
-            funded_by_address="0x" + "11" * 20,
+            funded_by_address=funded_by_address or "0x" + "11" * 20,
             amount_usdc=Decimal("500"),
             event_time=datetime(2026, 7, 20, 12, 0, 0),
             tx_hash="0xtest",
-            balance_usd=Decimal("16000"),
+            balance_usd=balance_usd,
             balance_source="test",
         )
     )
@@ -346,6 +352,71 @@ class TestNewWalletsAPI:
         ]
         assert active_subscription_ids == [existing.id]
 
+    async def test_activation_auto_attach_uses_new_wallet_screen_order(
+        self, client, db_session, monkeypatch
+    ) -> None:
+        old_low_candidate_id, _old_low_trader_id = await _seed_qualified_candidate(
+            db_session,
+            balance_usd=Decimal("10"),
+            funded_by_address="0x" + "aa" * 20,
+            qualified_at=datetime(2026, 7, 20, 11, 0, 0),
+        )
+        shared_source = "0x" + "bb" * 20
+        shared_top_candidate_id, _shared_top_trader_id = (
+            await _seed_qualified_candidate(
+                db_session,
+                balance_usd=Decimal("1000"),
+                funded_by_address=shared_source,
+                qualified_at=datetime(2026, 7, 20, 12, 10, 0),
+            )
+        )
+        shared_second_candidate_id, _shared_second_trader_id = (
+            await _seed_qualified_candidate(
+                db_session,
+                balance_usd=Decimal("900"),
+                funded_by_address=shared_source,
+                qualified_at=datetime(2026, 7, 20, 12, 20, 0),
+            )
+        )
+        single_high_candidate_id, _single_high_trader_id = (
+            await _seed_qualified_candidate(
+                db_session,
+                balance_usd=Decimal("950"),
+                funded_by_address="0x" + "cc" * 20,
+                qualified_at=datetime(2026, 7, 20, 12, 30, 0),
+            )
+        )
+        headers, _user_id = await _auth(client, 82027)
+        monkeypatch.setattr(settings, "new_wallet_discovery_enabled", True)
+        monkeypatch.setattr(settings, "new_wallet_auto_attach_enabled", True)
+
+        response = await client.post(
+            "/api/new-wallet-subscriptions",
+            headers=headers,
+            json={
+                "is_demo": True,
+                "total_allocation_usd": 500,
+                "max_active_wallets": 2,
+                "max_per_wallet_usd": 75,
+                "copy_ratio_pct": 100,
+                "stop_loss_pct": 20,
+                "max_leverage": 10,
+                "sizing_mode": "fixed_ratio",
+                "close_positions_on_expire": True,
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        item_candidate_ids = {
+            item["candidate_id"] for item in response.json()["items"]
+        }
+        assert item_candidate_ids == {
+            shared_top_candidate_id,
+            shared_second_candidate_id,
+        }
+        assert old_low_candidate_id not in item_candidate_ids
+        assert single_high_candidate_id not in item_candidate_ids
+
     async def test_manual_candidate_attach_requires_active_parent(
         self, client, db_session
     ) -> None:
@@ -365,10 +436,12 @@ class TestNewWalletsAPI:
         self, client, db_session, monkeypatch
     ) -> None:
         first_candidate_id, _first_trader_id = await _seed_qualified_candidate(
-            db_session
+            db_session,
+            balance_usd=Decimal("20000"),
         )
         second_candidate_id, second_trader_id = await _seed_qualified_candidate(
-            db_session
+            db_session,
+            balance_usd=Decimal("12000"),
         )
         await db_session.execute(
             update(NewWalletCandidate)
