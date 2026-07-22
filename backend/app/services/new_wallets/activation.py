@@ -343,6 +343,7 @@ async def _ensure_candidate_attachable(
             Subscription.user_id == parent.user_id,
             Subscription.trader_id == candidate.trader_id,
             Subscription.is_active.is_(True),
+            Subscription.is_demo.is_(parent.is_demo),
         )
         .limit(1)
     )
@@ -436,6 +437,7 @@ async def _eligible_candidates(
         .where(
             Subscription.user_id == parent.user_id,
             Subscription.is_active.is_(True),
+            Subscription.is_demo.is_(parent.is_demo),
             Subscription.trader_id == NewWalletCandidate.trader_id,
         )
         .exists()

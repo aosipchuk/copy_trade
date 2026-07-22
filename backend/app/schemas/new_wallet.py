@@ -51,6 +51,10 @@ class NewWalletCandidateResponse(BaseModel):
     user_child_expires_at: datetime | None = None
     user_is_subscribed: bool = False
     user_active_subscription_id: int | None = None
+    user_is_live_subscribed: bool = False
+    user_live_subscription_id: int | None = None
+    user_is_demo_subscribed: bool = False
+    user_demo_subscription_id: int | None = None
 
 
 class NewWalletCandidateListResponse(BaseModel):

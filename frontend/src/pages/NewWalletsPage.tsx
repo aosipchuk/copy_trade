@@ -409,7 +409,9 @@ function CandidateCard({
   onAttach: (candidate: NewWalletCandidate, isDemo: boolean) => void
 }) {
   const copied = candidate.user_item_status === 'active'
-  const subscribed = copied || candidate.user_is_subscribed
+  const liveSubscribed = candidate.user_is_live_subscribed
+  const demoSubscribed = candidate.user_is_demo_subscribed
+  const subscribed = copied || liveSubscribed || demoSubscribed
   const firstLink = candidate.links[0]
   const hasSharedSource = sharedSourceCount > 1
   const liveKey = `${candidate.id}:live`
@@ -417,7 +419,7 @@ function CandidateCard({
   const liveBusy = attachBusy[liveKey] === true
   const demoBusy = attachBusy[demoKey] === true
   const isAttaching = liveBusy || demoBusy
-  const canAttach = !subscribed && candidate.trader_id !== null
+  const canAttach = candidate.trader_id !== null
 
   return (
     <div
@@ -473,7 +475,7 @@ function CandidateCard({
         <div className="mt-3 grid grid-cols-2 gap-2">
           <button
             type="button"
-            disabled={isAttaching}
+            disabled={isAttaching || liveSubscribed}
             onClick={() => onAttach(candidate, false)}
             className={
               'h-9 rounded-lg bg-tg-button px-3 text-xs font-semibold ' +
@@ -484,7 +486,7 @@ function CandidateCard({
           </button>
           <button
             type="button"
-            disabled={isAttaching}
+            disabled={isAttaching || demoSubscribed}
             onClick={() => onAttach(candidate, true)}
             className={
               'h-9 rounded-lg border border-tg-button px-3 text-xs ' +

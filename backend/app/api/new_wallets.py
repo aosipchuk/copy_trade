@@ -45,6 +45,8 @@ subscription_router = APIRouter(
 )
 admin_router = APIRouter(prefix="/admin/new-wallets", tags=["admin-new-wallets"])
 
+ActiveSubscriptionMap = dict[int, dict[bool, Subscription]]
+
 
 def _parse_candidate_cursor(cursor: str) -> tuple[int | None, int]:
     if ":" not in cursor:
@@ -59,14 +61,36 @@ def _parse_candidate_cursor(cursor: str) -> tuple[int | None, int]:
 
 def _candidate_cursor(
     candidate: NewWalletCandidate,
-    subscription_map: dict[int, Subscription],
+    subscription_map: ActiveSubscriptionMap,
 ) -> str:
-    rank = (
-        1
-        if candidate.trader_id is not None and candidate.trader_id in subscription_map
-        else 0
-    )
+    rank = 1 if _any_active_subscription(subscription_map, candidate.trader_id) else 0
     return f"{rank}:{candidate.id}"
+
+
+def _any_active_subscription(
+    subscription_map: ActiveSubscriptionMap,
+    trader_id: int | None,
+) -> Subscription | None:
+    if trader_id is None:
+        return None
+    subscriptions = subscription_map.get(trader_id)
+    if subscriptions is None:
+        return None
+    return subscriptions.get(False) or subscriptions.get(True)
+
+
+def _active_subscription_for_mode(
+    subscription_map: ActiveSubscriptionMap | None,
+    trader_id: int | None,
+    *,
+    is_demo: bool,
+) -> Subscription | None:
+    if subscription_map is None or trader_id is None:
+        return None
+    subscriptions = subscription_map.get(trader_id)
+    if subscriptions is None:
+        return None
+    return subscriptions.get(is_demo)
 
 
 @router.get("/candidates", response_model=NewWalletCandidateListResponse)
@@ -333,7 +357,7 @@ async def _candidate_response(
     candidate: NewWalletCandidate,
     *,
     item_map: dict[int, UserNewWalletItem] | None = None,
-    subscription_map: dict[int, Subscription] | None = None,
+    subscription_map: ActiveSubscriptionMap | None = None,
 ) -> NewWalletCandidateResponse:
     links_result = await db.execute(
         select(NewWalletFundingLink)
@@ -359,11 +383,17 @@ async def _candidate_response(
         for link in links_result.scalars().all()
     ]
     item = item_map.get(candidate.id) if item_map else None
-    active_subscription = (
-        subscription_map.get(candidate.trader_id)
-        if subscription_map is not None and candidate.trader_id is not None
-        else None
+    live_subscription = _active_subscription_for_mode(
+        subscription_map,
+        candidate.trader_id,
+        is_demo=False,
     )
+    demo_subscription = _active_subscription_for_mode(
+        subscription_map,
+        candidate.trader_id,
+        is_demo=True,
+    )
+    active_subscription = live_subscription or demo_subscription
     return NewWalletCandidateResponse(
         id=candidate.id,
         trader_id=candidate.trader_id,
@@ -389,6 +419,14 @@ async def _candidate_response(
         user_is_subscribed=active_subscription is not None,
         user_active_subscription_id=active_subscription.id
         if active_subscription is not None
+        else None,
+        user_is_live_subscribed=live_subscription is not None,
+        user_live_subscription_id=live_subscription.id
+        if live_subscription is not None
+        else None,
+        user_is_demo_subscribed=demo_subscription is not None,
+        user_demo_subscription_id=demo_subscription.id
+        if demo_subscription is not None
         else None,
     )
 
@@ -504,7 +542,7 @@ async def _user_active_subscription_map(
     db: AsyncSession,
     user_id: int,
     trader_ids: list[int],
-) -> dict[int, Subscription]:
+) -> ActiveSubscriptionMap:
     if not trader_ids:
         return {}
     result = await db.execute(
@@ -516,9 +554,12 @@ async def _user_active_subscription_map(
         )
         .order_by(Subscription.created_at.desc())
     )
-    subscriptions: dict[int, Subscription] = {}
+    subscriptions: ActiveSubscriptionMap = {}
     for subscription in result.scalars().all():
-        subscriptions.setdefault(subscription.trader_id, subscription)
+        subscriptions.setdefault(subscription.trader_id, {}).setdefault(
+            subscription.is_demo,
+            subscription,
+        )
     return subscriptions
 
 

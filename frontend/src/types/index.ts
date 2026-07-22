@@ -667,6 +667,10 @@ export interface NewWalletCandidate {
   user_child_expires_at: string | null
   user_is_subscribed: boolean
   user_active_subscription_id: number | null
+  user_is_live_subscribed: boolean
+  user_live_subscription_id: number | null
+  user_is_demo_subscribed: boolean
+  user_demo_subscription_id: number | null
 }
 
 export interface NewWalletCandidateListResponse {
