@@ -12,6 +12,7 @@ from app.models.new_wallet import (
     UserNewWalletItem,
     UserNewWalletSubscription,
 )
+from app.models.subscription import Subscription
 from app.models.trade import UserTrade
 from app.schemas.new_wallet import (
     AdminNewWalletRescanRequest,
@@ -75,8 +76,18 @@ async def list_candidates(
     has_next = len(rows) > limit
     rows = rows[:limit]
     item_map = await _user_item_map(db, current_user.id, [row.id for row in rows])
+    subscription_map = await _user_active_subscription_map(
+        db,
+        current_user.id,
+        [row.trader_id for row in rows if row.trader_id is not None],
+    )
     items = [
-        await _candidate_response(db, candidate, item_map=item_map)
+        await _candidate_response(
+            db,
+            candidate,
+            item_map=item_map,
+            subscription_map=subscription_map,
+        )
         for candidate in rows
     ]
     return NewWalletCandidateListResponse(
@@ -221,6 +232,7 @@ async def _candidate_response(
     candidate: NewWalletCandidate,
     *,
     item_map: dict[int, UserNewWalletItem] | None = None,
+    subscription_map: dict[int, Subscription] | None = None,
 ) -> NewWalletCandidateResponse:
     links_result = await db.execute(
         select(NewWalletFundingLink)
@@ -246,6 +258,11 @@ async def _candidate_response(
         for link in links_result.scalars().all()
     ]
     item = item_map.get(candidate.id) if item_map else None
+    active_subscription = (
+        subscription_map.get(candidate.trader_id)
+        if subscription_map is not None and candidate.trader_id is not None
+        else None
+    )
     return NewWalletCandidateResponse(
         id=candidate.id,
         trader_id=candidate.trader_id,
@@ -268,6 +285,10 @@ async def _candidate_response(
         user_item_status=item.status if item else None,  # type: ignore[arg-type]
         user_child_subscription_id=item.subscription_id if item else None,
         user_child_expires_at=item.expires_at if item else None,
+        user_is_subscribed=active_subscription is not None,
+        user_active_subscription_id=active_subscription.id
+        if active_subscription is not None
+        else None,
     )
 
 
@@ -317,6 +338,7 @@ async def _subscription_response(
         is_demo=parent.is_demo,
         total_allocation_usd=float(parent.total_allocation_usd),
         max_active_wallets=parent.max_active_wallets,
+        subscribe_all_new=parent.subscribe_all_new,
         max_per_wallet_usd=float(parent.max_per_wallet_usd),
         copy_ratio_pct=float(parent.copy_ratio_pct),
         stop_loss_pct=float(parent.stop_loss_pct),
@@ -375,6 +397,28 @@ async def _user_item_map(
     for item in result.scalars().all():
         items.setdefault(item.candidate_id, item)
     return items
+
+
+async def _user_active_subscription_map(
+    db: AsyncSession,
+    user_id: int,
+    trader_ids: list[int],
+) -> dict[int, Subscription]:
+    if not trader_ids:
+        return {}
+    result = await db.execute(
+        select(Subscription)
+        .where(
+            Subscription.user_id == user_id,
+            Subscription.is_active.is_(True),
+            Subscription.trader_id.in_(trader_ids),
+        )
+        .order_by(Subscription.created_at.desc())
+    )
+    subscriptions: dict[int, Subscription] = {}
+    for subscription in result.scalars().all():
+        subscriptions.setdefault(subscription.trader_id, subscription)
+    return subscriptions
 
 
 def _settings_snapshot() -> NewWalletSettingsSnapshot:

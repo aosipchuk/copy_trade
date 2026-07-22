@@ -49,6 +49,8 @@ class NewWalletCandidateResponse(BaseModel):
     user_item_status: UserNewWalletItemStatus | None = None
     user_child_subscription_id: int | None = None
     user_child_expires_at: datetime | None = None
+    user_is_subscribed: bool = False
+    user_active_subscription_id: int | None = None
 
 
 class NewWalletCandidateListResponse(BaseModel):
@@ -78,6 +80,7 @@ class NewWalletSubscriptionCreate(BaseModel):
     is_demo: bool = True
     total_allocation_usd: float = Field(default=500, gt=10, le=100_000)
     max_active_wallets: int = Field(default=5, ge=1, le=50)
+    subscribe_all_new: bool = False
     max_per_wallet_usd: float = Field(default=100, gt=10, le=100_000)
     copy_ratio_pct: float = Field(default=100, ge=10, le=100)
     stop_loss_pct: float = Field(default=20, ge=5, le=50)
@@ -112,6 +115,7 @@ class UserNewWalletSubscriptionResponse(BaseModel):
     is_demo: bool
     total_allocation_usd: float
     max_active_wallets: int
+    subscribe_all_new: bool
     max_per_wallet_usd: float
     copy_ratio_pct: float
     stop_loss_pct: float

@@ -8,7 +8,7 @@ from decimal import Decimal
 from urllib.parse import urlencode
 
 import pytest
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 
 from app.core.config import settings
 from app.models.new_wallet import (
@@ -156,6 +156,139 @@ class TestNewWalletsAPI:
         assert child is not None
         assert child.source_type == "new_wallet"
         assert child.expires_at is not None
+
+    async def test_candidate_list_marks_existing_active_subscription(
+        self, client, db_session
+    ) -> None:
+        candidate_id, trader_id = await _seed_qualified_candidate(db_session)
+        headers, user_id = await _auth(client, 82020)
+        existing = Subscription(
+            user_id=user_id,
+            trader_id=trader_id,
+            max_allocation_usd=Decimal("125"),
+            copy_ratio_pct=Decimal("100"),
+            stop_loss_pct=Decimal("20"),
+            max_leverage=Decimal("10"),
+            sizing_mode="fixed_ratio",
+            source_type="manual",
+            is_active=True,
+            is_demo=True,
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        await db_session.refresh(existing)
+
+        response = await client.get("/api/new-wallets/candidates", headers=headers)
+
+        assert response.status_code == 200, response.text
+        item = next(
+            item for item in response.json()["items"] if item["id"] == candidate_id
+        )
+        assert item["user_is_subscribed"] is True
+        assert item["user_active_subscription_id"] == existing.id
+
+    async def test_subscribe_all_new_ignores_max_wallet_limit(
+        self, client, db_session, monkeypatch
+    ) -> None:
+        first_candidate_id, _first_trader_id = await _seed_qualified_candidate(
+            db_session
+        )
+        second_candidate_id, _second_trader_id = await _seed_qualified_candidate(
+            db_session
+        )
+        headers, _user_id = await _auth(client, 82021)
+        monkeypatch.setattr(settings, "new_wallet_discovery_enabled", True)
+        monkeypatch.setattr(settings, "new_wallet_auto_attach_enabled", True)
+
+        response = await client.post(
+            "/api/new-wallet-subscriptions",
+            headers=headers,
+            json={
+                "is_demo": True,
+                "total_allocation_usd": 500,
+                "max_active_wallets": 1,
+                "subscribe_all_new": True,
+                "max_per_wallet_usd": 75,
+                "copy_ratio_pct": 100,
+                "stop_loss_pct": 20,
+                "max_leverage": 10,
+                "sizing_mode": "fixed_ratio",
+                "close_positions_on_expire": True,
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        payload = response.json()
+        assert payload["subscribe_all_new"] is True
+        assert {item["candidate_id"] for item in payload["items"]} == {
+            first_candidate_id,
+            second_candidate_id,
+        }
+        assert {item["target_allocation_usd"] for item in payload["items"]} == {75.0}
+
+    async def test_subscribe_all_new_skips_existing_subscription_without_mutation(
+        self, client, db_session, monkeypatch
+    ) -> None:
+        existing_candidate_id, existing_trader_id = await _seed_qualified_candidate(
+            db_session
+        )
+        new_candidate_id, _new_trader_id = await _seed_qualified_candidate(db_session)
+        headers, user_id = await _auth(client, 82022)
+        existing = Subscription(
+            user_id=user_id,
+            trader_id=existing_trader_id,
+            max_allocation_usd=Decimal("321"),
+            copy_ratio_pct=Decimal("80"),
+            stop_loss_pct=Decimal("25"),
+            max_leverage=Decimal("7"),
+            sizing_mode="fixed_ratio",
+            source_type="manual",
+            is_active=True,
+            is_demo=True,
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        await db_session.refresh(existing)
+        monkeypatch.setattr(settings, "new_wallet_discovery_enabled", True)
+        monkeypatch.setattr(settings, "new_wallet_auto_attach_enabled", True)
+
+        response = await client.post(
+            "/api/new-wallet-subscriptions",
+            headers=headers,
+            json={
+                "is_demo": True,
+                "total_allocation_usd": 500,
+                "max_active_wallets": 1,
+                "subscribe_all_new": True,
+                "max_per_wallet_usd": 90,
+                "copy_ratio_pct": 100,
+                "stop_loss_pct": 20,
+                "max_leverage": 10,
+                "sizing_mode": "fixed_ratio",
+                "close_positions_on_expire": True,
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        item_candidate_ids = {item["candidate_id"] for item in response.json()["items"]}
+        assert existing_candidate_id not in item_candidate_ids
+        assert new_candidate_id in item_candidate_ids
+
+        await db_session.refresh(existing)
+        assert existing.is_active is True
+        assert existing.max_allocation_usd == Decimal("321")
+        assert existing.copy_ratio_pct == Decimal("80")
+        duplicate_result = await db_session.execute(
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.trader_id == existing_trader_id,
+                Subscription.is_active.is_(True),
+            )
+        )
+        active_subscription_ids = [
+            subscription.id for subscription in duplicate_result.scalars().all()
+        ]
+        assert active_subscription_ids == [existing.id]
 
     async def test_live_activation_requires_wallet_and_agent(
         self, client, db_session, monkeypatch

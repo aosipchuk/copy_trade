@@ -41,6 +41,34 @@ function ttlText(value: string | null): string {
   return `${Math.ceil(hours / 24)}d`
 }
 
+function CheckBadge() {
+  return (
+    <span
+      className={
+        'inline-flex h-4 w-4 shrink-0 items-center justify-center ' +
+        'rounded-full bg-tg-button text-tg-button-text'
+      }
+      aria-label="Subscribed"
+      title="Subscribed"
+    >
+      <svg
+        className="h-3 w-3"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M5 13l4 4L19 7"
+        />
+      </svg>
+    </span>
+  )
+}
+
 type SourceGroup = {
   source: string
   candidates: NewWalletCandidate[]
@@ -313,6 +341,7 @@ function CandidateCard({
   sharedSourceCount?: number
 }) {
   const copied = candidate.user_item_status === 'active'
+  const subscribed = copied || candidate.user_is_subscribed
   const firstLink = candidate.links[0]
   const hasSharedSource = sharedSourceCount > 1
 
@@ -330,8 +359,11 @@ function CandidateCard({
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="font-mono text-sm font-semibold text-tg-text">
-            {shortAddress(candidate.hl_address)}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div className="truncate font-mono text-sm font-semibold text-tg-text">
+              {shortAddress(candidate.hl_address)}
+            </div>
+            {subscribed && <CheckBadge />}
           </div>
           <div className="mt-1 text-xs text-tg-hint">
             funded {dateText(candidate.funded_at)}
@@ -389,6 +421,7 @@ function ActivationModal({
     totalAllocationUsd: 500,
     maxActiveWallets: 5,
     maxPerWalletUsd: summary.settings.default_max_per_wallet_usd,
+    subscribeAllNew: false,
     copyRatioPct: 100,
     stopLossPct: 20,
     maxLeverage: 10,
@@ -399,11 +432,18 @@ function ActivationModal({
 
   const estimatedPerWallet = useMemo(
     () =>
-      Math.min(
-        form.maxPerWalletUsd,
-        form.totalAllocationUsd / Math.max(1, form.maxActiveWallets),
-      ),
-    [form.maxActiveWallets, form.maxPerWalletUsd, form.totalAllocationUsd],
+      form.subscribeAllNew
+        ? form.maxPerWalletUsd
+        : Math.min(
+            form.maxPerWalletUsd,
+            form.totalAllocationUsd / Math.max(1, form.maxActiveWallets),
+          ),
+    [
+      form.maxActiveWallets,
+      form.maxPerWalletUsd,
+      form.subscribeAllNew,
+      form.totalAllocationUsd,
+    ],
   )
 
   const submit = async (event: FormEvent) => {
@@ -414,6 +454,7 @@ function ActivationModal({
       is_demo: mode === 'demo',
       total_allocation_usd: form.totalAllocationUsd,
       max_active_wallets: form.maxActiveWallets,
+      subscribe_all_new: form.subscribeAllNew,
       max_per_wallet_usd: form.maxPerWalletUsd,
       copy_ratio_pct: form.copyRatioPct,
       stop_loss_pct: form.stopLossPct,
@@ -480,6 +521,7 @@ function ActivationModal({
             <NumberField
               label="Max wallets"
               value={form.maxActiveWallets}
+              disabled={form.subscribeAllNew}
               onChange={(v) =>
                 setForm((f) => ({
                   ...f,
@@ -490,6 +532,24 @@ function ActivationModal({
                 }))
               }
             />
+            <label
+              className={
+                'flex items-center justify-between gap-3 rounded-lg border ' +
+                'border-gray-200 px-3 py-2 dark:border-gray-700'
+              }
+            >
+              <span className="text-sm font-medium text-tg-text">All new wallets</span>
+              <input
+                type="checkbox"
+                checked={form.subscribeAllNew}
+                onChange={(event) =>
+                  setForm((f) => ({
+                    ...f,
+                    subscribeAllNew: event.target.checked,
+                  }))
+                }
+              />
+            </label>
             <NumberField
               label="Max per wallet"
               value={form.maxPerWalletUsd}
@@ -561,10 +621,12 @@ function NumberField({
   label,
   value,
   onChange,
+  disabled = false,
 }: {
   label: string
   value: number
   onChange: (value: number) => void
+  disabled?: boolean
 }) {
   return (
     <label className="block">
@@ -572,8 +634,12 @@ function NumberField({
       <input
         type="number"
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 text-sm text-tg-text outline-none dark:border-gray-700"
+        className={
+          'w-full rounded-lg border border-gray-200 bg-transparent px-3 py-2 ' +
+          'text-sm text-tg-text outline-none disabled:opacity-50 dark:border-gray-700'
+        }
       />
     </label>
   )

@@ -665,6 +665,8 @@ export interface NewWalletCandidate {
   user_item_status: UserNewWalletItemStatus | null
   user_child_subscription_id: number | null
   user_child_expires_at: string | null
+  user_is_subscribed: boolean
+  user_active_subscription_id: number | null
 }
 
 export interface NewWalletCandidateListResponse {
@@ -708,6 +710,7 @@ export interface UserNewWalletSubscription {
   is_demo: boolean
   total_allocation_usd: number
   max_active_wallets: number
+  subscribe_all_new: boolean
   max_per_wallet_usd: number
   copy_ratio_pct: number
   stop_loss_pct: number
@@ -731,6 +734,7 @@ export interface NewWalletSubscriptionCreate {
   is_demo: boolean
   total_allocation_usd: number
   max_active_wallets: number
+  subscribe_all_new: boolean
   max_per_wallet_usd: number
   copy_ratio_pct: number
   stop_loss_pct: number

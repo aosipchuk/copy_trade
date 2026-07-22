@@ -59,6 +59,7 @@ async def create_or_reactivate_new_wallet_subscription(
             is_demo=data.is_demo,
             total_allocation_usd=data.total_allocation_usd,
             max_active_wallets=data.max_active_wallets,
+            subscribe_all_new=data.subscribe_all_new,
             max_per_wallet_usd=data.max_per_wallet_usd,
             copy_ratio_pct=data.copy_ratio_pct,
             stop_loss_pct=data.stop_loss_pct,
@@ -72,6 +73,7 @@ async def create_or_reactivate_new_wallet_subscription(
         parent.status = "active"
         parent.total_allocation_usd = data.total_allocation_usd
         parent.max_active_wallets = data.max_active_wallets
+        parent.subscribe_all_new = data.subscribe_all_new
         parent.max_per_wallet_usd = data.max_per_wallet_usd
         parent.copy_ratio_pct = data.copy_ratio_pct
         parent.stop_loss_pct = data.stop_loss_pct
@@ -107,7 +109,10 @@ async def attach_qualified_new_wallets_for_parent(
         return 0
 
     active_count = await _active_item_count(db, parent.id)
-    available_slots = max(0, int(parent.max_active_wallets) - active_count)
+    if parent.subscribe_all_new:
+        available_slots = settings.new_wallet_max_attach_per_run
+    else:
+        available_slots = max(0, int(parent.max_active_wallets) - active_count)
     if available_slots <= 0:
         return 0
 
@@ -120,7 +125,7 @@ async def attach_qualified_new_wallets_for_parent(
         margin_summary = None
 
     attached = 0
-    candidates = await _eligible_candidates(db, parent.id, limit=available_slots)
+    candidates = await _eligible_candidates(db, parent, limit=available_slots)
     for candidate in candidates:
         if candidate.trader_id is None:
             continue
@@ -302,13 +307,22 @@ async def _active_item_count(db: AsyncSession, parent_id: int) -> int:
 
 async def _eligible_candidates(
     db: AsyncSession,
-    parent_id: int,
+    parent: UserNewWalletSubscription,
     *,
     limit: int,
 ) -> list[NewWalletCandidate]:
     already_attached = select(UserNewWalletItem.candidate_id).where(
-        UserNewWalletItem.user_new_wallet_subscription_id == parent_id,
+        UserNewWalletItem.user_new_wallet_subscription_id == parent.id,
         UserNewWalletItem.status.in_(("active", "expired", "removed")),
+    )
+    already_subscribed = (
+        select(Subscription.id)
+        .where(
+            Subscription.user_id == parent.user_id,
+            Subscription.is_active.is_(True),
+            Subscription.trader_id == NewWalletCandidate.trader_id,
+        )
+        .exists()
     )
     result = await db.execute(
         select(NewWalletCandidate)
@@ -316,6 +330,7 @@ async def _eligible_candidates(
             NewWalletCandidate.status.in_(("qualified", "subscribed")),
             NewWalletCandidate.trader_id.is_not(None),
             NewWalletCandidate.id.not_in(already_attached),
+            ~already_subscribed,
         )
         .order_by(NewWalletCandidate.qualified_at.asc().nulls_last())
         .limit(limit)
@@ -324,6 +339,8 @@ async def _eligible_candidates(
 
 
 def _target_allocation(parent: UserNewWalletSubscription) -> Decimal:
+    if parent.subscribe_all_new:
+        return Decimal(str(parent.max_per_wallet_usd))
     per_slot = Decimal(str(parent.total_allocation_usd)) / Decimal(
         str(parent.max_active_wallets)
     )

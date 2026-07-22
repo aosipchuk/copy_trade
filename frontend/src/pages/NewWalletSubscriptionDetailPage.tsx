@@ -88,6 +88,7 @@ export function NewWalletSubscriptionDetailPage() {
             </h1>
             <p className="mt-1 text-xs text-tg-hint">
               {subscription.is_demo ? 'Demo' : 'Live'} · {subscription.status}
+              {subscription.subscribe_all_new ? ' · All new' : ''}
             </p>
           </div>
           {subscription.status === 'active' && (

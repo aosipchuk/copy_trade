@@ -119,6 +119,9 @@ class UserNewWalletSubscription(Base):
     )
     total_allocation_usd: Mapped[float] = mapped_column(Numeric(20, 2), nullable=False)
     max_active_wallets: Mapped[int] = mapped_column(Integer, nullable=False)
+    subscribe_all_new: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     max_per_wallet_usd: Mapped[float] = mapped_column(Numeric(20, 2), nullable=False)
     copy_ratio_pct: Mapped[float] = mapped_column(
         Numeric(5, 2), default=100, server_default="100", nullable=False
