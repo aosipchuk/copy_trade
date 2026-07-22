@@ -187,6 +187,56 @@ class TestNewWalletsAPI:
         assert item["user_is_subscribed"] is True
         assert item["user_active_subscription_id"] == existing.id
 
+    async def test_candidate_list_prioritizes_existing_active_subscription(
+        self, client, db_session
+    ) -> None:
+        subscribed_candidate_id, subscribed_trader_id = (
+            await _seed_qualified_candidate(db_session)
+        )
+        newer_candidate_id, _newer_trader_id = await _seed_qualified_candidate(
+            db_session
+        )
+        headers, user_id = await _auth(client, 82023)
+        existing = Subscription(
+            user_id=user_id,
+            trader_id=subscribed_trader_id,
+            max_allocation_usd=Decimal("125"),
+            copy_ratio_pct=Decimal("100"),
+            stop_loss_pct=Decimal("20"),
+            max_leverage=Decimal("10"),
+            sizing_mode="fixed_ratio",
+            source_type="manual",
+            is_active=True,
+            is_demo=True,
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        await db_session.refresh(existing)
+
+        response = await client.get(
+            "/api/new-wallets/candidates",
+            headers=headers,
+            params={"limit": 1},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert [item["id"] for item in body["items"]] == [subscribed_candidate_id]
+        assert body["items"][0]["user_is_subscribed"] is True
+        assert body["items"][0]["user_active_subscription_id"] == existing.id
+        assert body["next_cursor"] is not None
+
+        next_response = await client.get(
+            "/api/new-wallets/candidates",
+            headers=headers,
+            params={"limit": 1, "cursor": body["next_cursor"]},
+        )
+
+        assert next_response.status_code == 200, next_response.text
+        assert [item["id"] for item in next_response.json()["items"]] == [
+            newer_candidate_id
+        ]
+
     async def test_subscribe_all_new_ignores_max_wallet_limit(
         self, client, db_session, monkeypatch
     ) -> None:

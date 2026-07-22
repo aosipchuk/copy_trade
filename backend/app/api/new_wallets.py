@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AdminUser, CurrentUser, DBSession
@@ -44,6 +44,25 @@ subscription_router = APIRouter(
 admin_router = APIRouter(prefix="/admin/new-wallets", tags=["admin-new-wallets"])
 
 
+def _parse_candidate_cursor(cursor: str) -> tuple[int | None, int]:
+    if ":" not in cursor:
+        return None, int(cursor)
+
+    raw_rank, raw_id = cursor.split(":", 1)
+    rank = int(raw_rank)
+    if rank not in (0, 1):
+        raise ValueError("Invalid cursor rank")
+    return rank, int(raw_id)
+
+
+def _candidate_cursor(
+    candidate: NewWalletCandidate,
+    subscription_map: dict[int, Subscription],
+) -> str:
+    rank = 1 if candidate.trader_id in subscription_map else 0
+    return f"{rank}:{candidate.id}"
+
+
 @router.get("/candidates", response_model=NewWalletCandidateListResponse)
 async def list_candidates(
     current_user: CurrentUser,
@@ -55,21 +74,53 @@ async def list_candidates(
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = None,
 ) -> NewWalletCandidateListResponse:
+    user_active_subscription_exists = (
+        select(Subscription.id)
+        .where(
+            Subscription.user_id == current_user.id,
+            Subscription.is_active.is_(True),
+            Subscription.trader_id == NewWalletCandidate.trader_id,
+        )
+        .exists()
+    )
+    user_subscription_rank = case((user_active_subscription_exists, 1), else_=0)
     query = (
         select(NewWalletCandidate)
-        .order_by(NewWalletCandidate.id.desc())
+        .order_by(
+            user_subscription_rank.desc(),
+            NewWalletCandidate.id.desc(),
+        )
         .limit(limit + 1)
     )
     if status_filter is not None:
         query = query.where(NewWalletCandidate.status == status_filter)
     if cursor:
         try:
-            query = query.where(NewWalletCandidate.id < int(cursor))
+            cursor_rank, cursor_id = _parse_candidate_cursor(cursor)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid cursor",
             ) from exc
+        if cursor_rank is None:
+            query = query.where(NewWalletCandidate.id < cursor_id)
+        elif cursor_rank == 1:
+            query = query.where(
+                or_(
+                    user_subscription_rank < 1,
+                    and_(
+                        user_subscription_rank == 1,
+                        NewWalletCandidate.id < cursor_id,
+                    ),
+                )
+            )
+        else:
+            query = query.where(
+                and_(
+                    user_subscription_rank == 0,
+                    NewWalletCandidate.id < cursor_id,
+                )
+            )
 
     result = await db.execute(query)
     rows = list(result.scalars().all())
@@ -92,7 +143,9 @@ async def list_candidates(
     ]
     return NewWalletCandidateListResponse(
         items=items,
-        next_cursor=str(rows[-1].id) if has_next and rows else None,
+        next_cursor=(
+            _candidate_cursor(rows[-1], subscription_map) if has_next and rows else None
+        ),
     )
 
 
