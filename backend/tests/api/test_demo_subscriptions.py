@@ -272,6 +272,32 @@ class TestListDemoSubscriptions:
         assert "unrealized_pnl" in sub
         assert "trade_count" in sub
 
+    @pytest.mark.asyncio
+    async def test_list_skips_mids_fetch_without_open_positions(
+        self, client, db_session
+    ) -> None:
+        """Listing new demo subscriptions should not wait on market prices."""
+        trader_id = await _seed_trader(db_session)
+        headers = await _get_auth_header(client, user_id=80014)
+
+        create_r = await client.post(
+            "/api/subscriptions", json=_demo_body(trader_id), headers=headers
+        )
+        assert create_r.status_code == 201
+
+        with patch.object(
+            HyperliquidInfoClient,
+            "get_all_mids",
+            AsyncMock(return_value={}),
+        ) as mids_mock:
+            list_r = await client.get(
+                "/api/subscriptions?is_demo=true", headers=headers
+            )
+
+        assert list_r.status_code == 200
+        assert len(list_r.json()) == 1
+        mids_mock.assert_not_awaited()
+
 
 class TestDemoPortfolio:
     @pytest.mark.asyncio

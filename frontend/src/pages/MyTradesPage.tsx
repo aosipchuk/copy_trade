@@ -93,10 +93,12 @@ function LiveTab() {
   const [loading, setLoading] = useState(true)
   const [editId, setEditId] = useState<number | null>(null)
   const [unsubscribeId, setUnsubscribeId] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
 
   const reload = () => {
     setLoading(true)
+    setError(null)
     Promise.all([
       listSubscriptions(false),
       fetchWalletPositions().catch(() => [] as PositionItem[]),
@@ -104,6 +106,9 @@ function LiveTab() {
       .then(([s, p]) => {
         setSubs(s)
         setPositions(p)
+      })
+      .catch(() => {
+        setError('Failed to load live subscriptions')
       })
       .finally(() => setLoading(false))
   }
@@ -124,6 +129,10 @@ function LiveTab() {
   }
 
   if (loading) return <FullPageSpinner />
+
+  if (error) {
+    return <LoadErrorState message={error} onRetry={reload} />
+  }
 
   if (subs.length === 0) {
     return (
@@ -181,14 +190,19 @@ function DemoTab() {
   const [loading, setLoading] = useState(true)
   const [unsubscribeId, setUnsubscribeId] = useState<number | null>(null)
   const [resetOpen, setResetOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
 
   const reload = () => {
     setLoading(true)
+    setError(null)
     Promise.all([listSubscriptions(true), fetchDemoPortfolio()])
       .then(([s, p]) => {
         setSubs(s)
         setPortfolio(p)
+      })
+      .catch(() => {
+        setError('Failed to load demo subscriptions')
       })
       .finally(() => setLoading(false))
   }
@@ -209,6 +223,10 @@ function DemoTab() {
   }
 
   if (loading) return <FullPageSpinner />
+
+  if (error) {
+    return <LoadErrorState message={error} onRetry={reload} />
+  }
 
   const showPortfolio = portfolio !== null && (subs.length > 0 || hasDemoStats(portfolio))
 
@@ -285,6 +303,27 @@ function DemoTab() {
           onConfirm={handleReset}
         />
       )}
+    </div>
+  )
+}
+
+function LoadErrorState({
+  message,
+  onRetry,
+}: {
+  message: string
+  onRetry: () => void
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-4 px-6 text-center mt-16">
+      <p className="text-tg-hint">{message}</p>
+      <button
+        className="px-5 py-2.5 rounded-xl text-sm font-semibold text-tg-button-text"
+        style={{ background: 'var(--tg-theme-button-color)' }}
+        onClick={onRetry}
+      >
+        Retry
+      </button>
     </div>
   )
 }

@@ -1,14 +1,17 @@
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
+from app.models.portfolio import UserPortfolioSubscription
 from app.models.subscription import Subscription
 from app.models.trade import UserTrade
 from app.models.trader import Trader
+from app.models.user import User
 from app.schemas.subscription import (
     SubscriptionCreate,
     SubscriptionResponse,
@@ -17,9 +20,64 @@ from app.schemas.subscription import (
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import MarginSummary
 from app.services.portfolio.access import user_can_view_subscription_trader_identity
+from app.services.portfolio.billing import (
+    PAID_BILLING_STATUSES,
+    user_has_beta_override,
+)
 from app.services.risk_manager import check_portfolio_risk
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class _SubscriptionTradeStats:
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    trade_count: int = 0
+
+
+_DEFAULT_TRADE_STATS = _SubscriptionTradeStats()
+_TraderIdentity = tuple[str | None, str | None]
+
+
+def _response_from_parts(
+    sub: Subscription,
+    stats: _SubscriptionTradeStats,
+    trader_identity: _TraderIdentity | None,
+    *,
+    include_trader_identity: bool = True,
+) -> SubscriptionResponse:
+    trader_address, trader_name = trader_identity or (None, None)
+
+    return SubscriptionResponse(
+        id=sub.id,
+        trader_id=sub.trader_id if include_trader_identity else None,
+        trader_address=trader_address if include_trader_identity else None,
+        trader_name=trader_name if include_trader_identity else None,
+        max_allocation_usd=float(sub.max_allocation_usd),
+        copy_ratio_pct=float(sub.copy_ratio_pct),
+        stop_loss_pct=float(sub.stop_loss_pct),
+        max_leverage=float(sub.max_leverage),
+        sizing_mode=sub.sizing_mode,
+        max_per_coin_usd=(
+            float(sub.max_per_coin_usd) if sub.max_per_coin_usd is not None else None
+        ),
+        allowed_coins=(
+            list(sub.allowed_coins) if sub.allowed_coins is not None else None
+        ),
+        source_type=sub.source_type,
+        source_id=sub.source_id,
+        source_version_id=sub.source_version_id,
+        managed_by_portfolio=sub.managed_by_portfolio,
+        is_active=sub.is_active,
+        is_demo=sub.is_demo,
+        expires_at=sub.expires_at,
+        ended_reason=sub.ended_reason,
+        created_at=sub.created_at,
+        realized_pnl=stats.realized_pnl,
+        unrealized_pnl=stats.unrealized_pnl,
+        trade_count=stats.trade_count,
+    )
 
 
 async def _compute_demo_unrealized_pnl(
@@ -72,6 +130,218 @@ async def _compute_demo_unrealized_pnl(
     return total_unrealized
 
 
+async def _compute_demo_unrealized_pnl_by_subscription(
+    db: AsyncSession, subscription_ids: list[int]
+) -> dict[int, float]:
+    if not subscription_ids:
+        return {}
+
+    open_res = await db.execute(
+        select(UserTrade)
+        .where(
+            UserTrade.subscription_id.in_(subscription_ids),
+            UserTrade.trade_type == "open",
+            UserTrade.is_demo.is_(True),
+            UserTrade.status == "filled",
+        )
+        .order_by(UserTrade.executed_at.asc())
+    )
+    open_trades = open_res.scalars().all()
+    if not open_trades:
+        return {}
+
+    close_res = await db.execute(
+        select(
+            UserTrade.subscription_id,
+            UserTrade.coin,
+            func.max(UserTrade.executed_at),
+        )
+        .where(
+            UserTrade.subscription_id.in_(subscription_ids),
+            UserTrade.trade_type == "close",
+            UserTrade.is_demo.is_(True),
+        )
+        .group_by(UserTrade.subscription_id, UserTrade.coin)
+    )
+    last_close_by_sub_coin: dict[tuple[int, str | None], datetime] = {
+        (row[0], row[1]): row[2] for row in close_res.all()
+    }
+
+    latest_open_trades: list[UserTrade] = []
+    seen: set[tuple[int, str | None]] = set()
+    for trade in reversed(open_trades):
+        key = (trade.subscription_id, trade.coin)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        last_close = last_close_by_sub_coin.get(key)
+        if last_close is not None and last_close >= trade.executed_at:
+            continue
+
+        latest_open_trades.append(trade)
+
+    if not latest_open_trades:
+        return {}
+
+    try:
+        hl = HyperliquidInfoClient()
+        mids = await hl.get_all_mids()
+    except Exception as exc:
+        logger.warning("demo_mids_fetch_failed", error=str(exc))
+        return {}
+
+    total_by_sub_id: dict[int, float] = {}
+    for trade in latest_open_trades:
+        mid_str = mids.get(trade.coin or "")
+        if mid_str is None or trade.price is None or trade.size is None:
+            continue
+
+        direction = 1.0 if trade.side == "long" else -1.0
+        total_by_sub_id[trade.subscription_id] = total_by_sub_id.get(
+            trade.subscription_id,
+            0.0,
+        ) + (float(mid_str) - float(trade.price)) * float(trade.size) * direction
+
+    return total_by_sub_id
+
+
+async def _load_subscription_trade_stats(
+    db: AsyncSession,
+    subscription_ids: list[int],
+    *,
+    is_demo: bool,
+) -> dict[int, _SubscriptionTradeStats]:
+    if not subscription_ids:
+        return {}
+
+    stats_by_sub_id: dict[int, _SubscriptionTradeStats] = {
+        subscription_id: _DEFAULT_TRADE_STATS for subscription_id in subscription_ids
+    }
+
+    if is_demo:
+        pnl_result = await db.execute(
+            select(
+                UserTrade.subscription_id,
+                func.coalesce(func.sum(UserTrade.realized_pnl), Decimal("0")),
+                func.count(UserTrade.id),
+            )
+            .where(
+                UserTrade.subscription_id.in_(subscription_ids),
+                UserTrade.trade_type == "close",
+                UserTrade.status == "filled",
+                UserTrade.is_demo.is_(True),
+            )
+            .group_by(UserTrade.subscription_id)
+        )
+    else:
+        pnl_result = await db.execute(
+            select(
+                UserTrade.subscription_id,
+                func.coalesce(func.sum(UserTrade.price * UserTrade.size), Decimal("0")),
+                func.count(UserTrade.id),
+            )
+            .where(
+                UserTrade.subscription_id.in_(subscription_ids),
+                UserTrade.status == "filled",
+            )
+            .group_by(UserTrade.subscription_id)
+        )
+
+    for subscription_id, realized_pnl, trade_count in pnl_result.all():
+        stats_by_sub_id[subscription_id] = _SubscriptionTradeStats(
+            realized_pnl=float(realized_pnl) if realized_pnl else 0.0,
+            trade_count=int(trade_count),
+        )
+
+    if is_demo:
+        unrealized_by_sub_id = await _compute_demo_unrealized_pnl_by_subscription(
+            db,
+            subscription_ids,
+        )
+        for subscription_id, unrealized_pnl in unrealized_by_sub_id.items():
+            current = stats_by_sub_id.get(subscription_id, _DEFAULT_TRADE_STATS)
+            stats_by_sub_id[subscription_id] = _SubscriptionTradeStats(
+                realized_pnl=current.realized_pnl,
+                unrealized_pnl=unrealized_pnl,
+                trade_count=current.trade_count,
+            )
+
+    return stats_by_sub_id
+
+
+async def _load_subscription_trader_visibility(
+    db: AsyncSession,
+    user_id: int,
+    subscriptions: list[Subscription],
+) -> dict[int, bool]:
+    visibility_by_sub_id = {sub.id: True for sub in subscriptions}
+    gated_subscriptions = [
+        sub
+        for sub in subscriptions
+        if sub.source_type == "model_portfolio"
+        and sub.managed_by_portfolio
+        and sub.source_id is not None
+    ]
+    if not gated_subscriptions:
+        return visibility_by_sub_id
+
+    user = await db.get(User, user_id)
+    if user is not None and user_has_beta_override(user):
+        return visibility_by_sub_id
+
+    source_ids = sorted(
+        {sub.source_id for sub in gated_subscriptions if sub.source_id is not None}
+    )
+    source_result = await db.execute(
+        select(
+            UserPortfolioSubscription.id,
+            UserPortfolioSubscription.portfolio_id,
+            UserPortfolioSubscription.active_version_id,
+        ).where(
+            UserPortfolioSubscription.id.in_(source_ids),
+            UserPortfolioSubscription.user_id == user_id,
+        )
+    )
+    source_by_id: dict[int, tuple[int, int]] = {
+        row[0]: (row[1], row[2]) for row in source_result.all()
+    }
+
+    paid_portfolio_versions: set[tuple[int, int]] = set()
+    portfolio_versions = sorted(set(source_by_id.values()))
+    if portfolio_versions:
+        paid_result = await db.execute(
+            select(
+                UserPortfolioSubscription.portfolio_id,
+                UserPortfolioSubscription.active_version_id,
+            ).where(
+                UserPortfolioSubscription.user_id == user_id,
+                UserPortfolioSubscription.is_demo.is_(False),
+                UserPortfolioSubscription.status.in_(PAID_BILLING_STATUSES),
+                tuple_(
+                    UserPortfolioSubscription.portfolio_id,
+                    UserPortfolioSubscription.active_version_id,
+                ).in_(portfolio_versions),
+            )
+        )
+        paid_portfolio_versions = {
+            (row[0], row[1]) for row in paid_result.all()
+        }
+
+    for sub in gated_subscriptions:
+        source_id = sub.source_id
+        if source_id is None:
+            continue
+        portfolio_version = source_by_id.get(source_id)
+        visibility_by_sub_id[sub.id] = (
+            portfolio_version in paid_portfolio_versions
+            if portfolio_version is not None
+            else False
+        )
+
+    return visibility_by_sub_id
+
+
 async def _to_response(
     db: AsyncSession,
     sub: Subscription,
@@ -113,37 +383,17 @@ async def _to_response(
         select(Trader.hl_address, Trader.display_name).where(Trader.id == sub.trader_id)
     )
     trader_row = trader_res.one_or_none()
+    trader_identity = (trader_row[0], trader_row[1]) if trader_row else None
 
-    return SubscriptionResponse(
-        id=sub.id,
-        trader_id=sub.trader_id if include_trader_identity else None,
-        trader_address=(
-            trader_row[0] if trader_row and include_trader_identity else None
+    return _response_from_parts(
+        sub,
+        _SubscriptionTradeStats(
+            realized_pnl=realized_pnl,
+            unrealized_pnl=unrealized_pnl,
+            trade_count=trade_count,
         ),
-        trader_name=trader_row[1] if trader_row and include_trader_identity else None,
-        max_allocation_usd=float(sub.max_allocation_usd),
-        copy_ratio_pct=float(sub.copy_ratio_pct),
-        stop_loss_pct=float(sub.stop_loss_pct),
-        max_leverage=float(sub.max_leverage),
-        sizing_mode=sub.sizing_mode,
-        max_per_coin_usd=(
-            float(sub.max_per_coin_usd) if sub.max_per_coin_usd is not None else None
-        ),
-        allowed_coins=(
-            list(sub.allowed_coins) if sub.allowed_coins is not None else None
-        ),
-        source_type=sub.source_type,
-        source_id=sub.source_id,
-        source_version_id=sub.source_version_id,
-        managed_by_portfolio=sub.managed_by_portfolio,
-        is_active=sub.is_active,
-        is_demo=sub.is_demo,
-        expires_at=sub.expires_at,
-        ended_reason=sub.ended_reason,
-        created_at=sub.created_at,
-        realized_pnl=realized_pnl,
-        unrealized_pnl=unrealized_pnl,
-        trade_count=trade_count,
+        trader_identity,
+        include_trader_identity=include_trader_identity,
     )
 
 
@@ -225,38 +475,55 @@ async def list_subscriptions(
     db: AsyncSession, user_id: int, is_demo: bool = False
 ) -> list[SubscriptionResponse]:
     result = await db.execute(
-        select(Subscription).where(
+        select(Subscription)
+        .where(
             Subscription.user_id == user_id,
             Subscription.is_active.is_(True),
             Subscription.is_demo.is_(is_demo),
         )
+        .order_by(Subscription.created_at.desc(), Subscription.id.desc())
     )
     subs = result.scalars().all()
+    sub_ids = [sub.id for sub in subs]
 
-    mids: dict[str, str] | None = None
-    if is_demo and subs:
-        try:
-            hl = HyperliquidInfoClient()
-            mids = await hl.get_all_mids()
-        except Exception as exc:
-            logger.warning("demo_mids_fetch_failed", error=str(exc))
+    stats_by_sub_id = await _load_subscription_trade_stats(
+        db,
+        sub_ids,
+        is_demo=is_demo,
+    )
+    visible_identity_by_sub_id = await _load_subscription_trader_visibility(
+        db,
+        user_id,
+        subs,
+    )
 
-    responses: list[SubscriptionResponse] = []
-    for sub in subs:
-        include_trader_identity = await user_can_view_subscription_trader_identity(
-            db,
-            user_id,
-            sub,
-        )
-        responses.append(
-            await _to_response(
-                db,
-                sub,
-                mids,
-                include_trader_identity=include_trader_identity,
+    visible_trader_ids = sorted(
+        {
+            sub.trader_id
+            for sub in subs
+            if visible_identity_by_sub_id.get(sub.id, True)
+        }
+    )
+    trader_identity_by_id: dict[int, _TraderIdentity] = {}
+    if visible_trader_ids:
+        trader_result = await db.execute(
+            select(Trader.id, Trader.hl_address, Trader.display_name).where(
+                Trader.id.in_(visible_trader_ids)
             )
         )
-    return responses
+        trader_identity_by_id = {
+            row[0]: (row[1], row[2]) for row in trader_result.all()
+        }
+
+    return [
+        _response_from_parts(
+            sub,
+            stats_by_sub_id.get(sub.id, _DEFAULT_TRADE_STATS),
+            trader_identity_by_id.get(sub.trader_id),
+            include_trader_identity=visible_identity_by_sub_id.get(sub.id, True),
+        )
+        for sub in subs
+    ]
 
 
 async def update_subscription(
