@@ -215,9 +215,10 @@ async def _load_subscription_trade_stats(
     if not subscription_ids:
         return {}
 
-    stats_by_sub_id: dict[int, _SubscriptionTradeStats] = {
-        subscription_id: _DEFAULT_TRADE_STATS for subscription_id in subscription_ids
-    }
+    stats_by_sub_id: dict[int, _SubscriptionTradeStats] = dict.fromkeys(
+        subscription_ids,
+        _DEFAULT_TRADE_STATS,
+    )
 
     if is_demo:
         pnl_result = await db.execute(
