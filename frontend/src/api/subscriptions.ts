@@ -6,8 +6,21 @@ export async function createSubscription(data: SubscriptionCreate): Promise<Subs
   return res.data
 }
 
-export async function listSubscriptions(isDemo = false): Promise<Subscription[]> {
-  const res = await http.get<Subscription[]>('/subscriptions', { params: { is_demo: isDemo } })
+export async function listSubscriptions(
+  isDemo = false,
+  includeInactive = false,
+): Promise<Subscription[]> {
+  const res = await http.get<Subscription[]>('/subscriptions', {
+    params: {
+      is_demo: isDemo,
+      ...(includeInactive ? { include_inactive: true } : {}),
+    },
+  })
+  return res.data
+}
+
+export async function fetchSubscription(id: number): Promise<Subscription> {
+  const res = await http.get<Subscription>(`/subscriptions/${id}`)
   return res.data
 }
 

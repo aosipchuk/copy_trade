@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { fetchDemoClosedPositions, fetchDemoPortfolio } from '../api/demo'
-import { deleteSubscription, listSubscriptions } from '../api/subscriptions'
+import { deleteSubscription, fetchSubscription } from '../api/subscriptions'
 import { FullPageSpinner } from '../components/LoadingSpinner'
 import { useBackButton } from '../hooks/useTelegram'
 import type { DemoClosedPositionItem, DemoOpenPosition, Subscription } from '../types'
@@ -10,7 +10,10 @@ import { fmt } from '../utils/format'
 export function DemoSubscriptionDetailPage() {
   const { id } = useParams<{ id: string }>()
   const subscriptionId = Number(id)
+  const location = useLocation()
   const navigate = useNavigate()
+  const showStoppedDemo =
+    (location.state as { showStoppedDemo?: unknown } | null)?.showStoppedDemo === true
 
   const [sub, setSub] = useState<Subscription | null>(null)
   const [openPositions, setOpenPositions] = useState<DemoOpenPosition[]>([])
@@ -21,8 +24,11 @@ export function DemoSubscriptionDetailPage() {
   const [stopping, setStopping] = useState(false)
 
   const navigateBack = useCallback(() => {
-    navigate('/my-trades?tab=demo', { replace: true, state: { tab: 'demo' } })
-  }, [navigate])
+    navigate('/my-trades?tab=demo', {
+      replace: true,
+      state: { tab: 'demo', showStoppedDemo },
+    })
+  }, [navigate, showStoppedDemo])
 
   useBackButton(navigateBack)
 
@@ -30,13 +36,12 @@ export function DemoSubscriptionDetailPage() {
     setLoading(true)
     setLoadError(false)
     Promise.all([
-      listSubscriptions(true),
+      fetchSubscription(subscriptionId),
       fetchDemoPortfolio(),
       fetchDemoClosedPositions(subscriptionId),
     ])
-      .then(([subs, portfolio, cycles]) => {
-        const found = subs.find((s) => s.id === subscriptionId) ?? null
-        setSub(found)
+      .then(([subscription, portfolio, cycles]) => {
+        setSub(subscription)
         setOpenPositions(portfolio.open_positions.filter((p) => p.subscription_id === subscriptionId))
         setClosedPositions(cycles)
       })
@@ -85,8 +90,9 @@ export function DemoSubscriptionDetailPage() {
     ? `${addr.slice(0, 6)}…${addr.slice(-4)}`
     : sub.trader_name ?? (sub.trader_id == null ? 'Portfolio trader' : `Trader #${sub.trader_id}`)
 
-  const totalPnl = sub.realized_pnl + sub.unrealized_pnl
   const unrealizedPnl = openPositions.reduce((acc, p) => acc + p.unrealized_pnl, 0)
+  const totalPnl = sub.realized_pnl + unrealizedPnl
+  const isStopped = !sub.is_active
   const closedCount = closedPositions.length
   const winCount = closedPositions.filter((p) => p.realized_pnl > 0).length
   const winRate = closedCount > 0 ? (winCount / closedCount) * 100 : 0
@@ -99,12 +105,14 @@ export function DemoSubscriptionDetailPage() {
           <h1 className="text-base font-semibold text-tg-text">{traderLabel}</h1>
           <span
             className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
-            style={{ background: '#7c3aed', color: '#fff' }}
+            style={{ background: isStopped ? '#6b7280' : '#7c3aed', color: '#fff' }}
           >
-            DEMO
+            {isStopped ? 'STOPPED' : 'DEMO'}
           </span>
         </div>
-        <p className="text-xs text-tg-hint mt-0.5">Demo subscription</p>
+        <p className="text-xs text-tg-hint mt-0.5">
+          {isStopped ? 'Stopped demo subscription' : 'Demo subscription'}
+        </p>
       </div>
 
       {/* Summary card */}
@@ -227,16 +235,17 @@ export function DemoSubscriptionDetailPage() {
         </div>
       )}
 
-      {/* Stop Demo button */}
-      <div className="px-4 mt-4">
-        <button
-          className="w-full py-2.5 rounded-xl text-sm font-semibold border border-red-400 text-red-400 disabled:opacity-50"
-          onClick={handleStop}
-          disabled={stopping}
-        >
-          {stopping ? 'Stopping…' : 'Stop Demo'}
-        </button>
-      </div>
+      {!isStopped && (
+        <div className="px-4 mt-4">
+          <button
+            className="w-full py-2.5 rounded-xl text-sm font-semibold border border-red-400 text-red-400 disabled:opacity-50"
+            onClick={handleStop}
+            disabled={stopping}
+          >
+            {stopping ? 'Stopping…' : 'Stop Demo'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

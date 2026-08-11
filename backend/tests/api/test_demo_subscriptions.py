@@ -482,6 +482,24 @@ class TestDemoPortfolio:
         assert list_r.status_code == 200
         assert list_r.json() == []
 
+        history_r = await client.get(
+            "/api/subscriptions?is_demo=true&include_inactive=true",
+            headers=headers,
+        )
+        assert history_r.status_code == 200
+        assert len(history_r.json()) == 1
+        stopped_sub = history_r.json()[0]
+        assert stopped_sub["id"] == sub_id
+        assert stopped_sub["is_active"] is False
+        assert stopped_sub["realized_pnl"] == pytest.approx(42.0)
+
+        detail_r = await client.get(
+            f"/api/subscriptions/{sub_id}", headers=headers
+        )
+        assert detail_r.status_code == 200
+        assert detail_r.json()["is_active"] is False
+        assert detail_r.json()["realized_pnl"] == pytest.approx(42.0)
+
         portfolio_r = await client.get("/api/demo/portfolio", headers=headers)
         assert portfolio_r.status_code == 200
         data = portfolio_r.json()

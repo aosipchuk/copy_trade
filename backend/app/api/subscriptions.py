@@ -9,6 +9,7 @@ from app.schemas.subscription import (
 from app.services.subscription_service import (
     create_subscription,
     delete_subscription,
+    get_subscription,
     list_subscriptions,
     update_subscription,
 )
@@ -39,8 +40,28 @@ async def list_all(
     current_user: CurrentUser,
     db: DBSession,
     is_demo: bool = False,
+    include_inactive: bool = False,
 ) -> list[SubscriptionResponse]:
-    return await list_subscriptions(db, current_user.id, is_demo=is_demo)
+    return await list_subscriptions(
+        db,
+        current_user.id,
+        is_demo=is_demo,
+        include_inactive=include_inactive,
+    )
+
+
+@router.get("/{subscription_id}", response_model=SubscriptionResponse)
+async def get_one(
+    subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> SubscriptionResponse:
+    try:
+        return await get_subscription(db, current_user.id, subscription_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
 
 
 @router.patch("/{subscription_id}", response_model=SubscriptionResponse)

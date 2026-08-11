@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { fetchDemoPortfolio, resetDemoStats } from '../api/demo'
@@ -57,6 +57,10 @@ function getActiveTab(search: string, state: unknown): Tab {
   return getTabFromSearch(search) ?? getTabFromState(state) ?? 'live'
 }
 
+function getShowStoppedDemoFromState(state: unknown): boolean {
+  return (state as { showStoppedDemo?: unknown } | null)?.showStoppedDemo === true
+}
+
 function hasDemoStats(portfolio: DemoPortfolioResponse | null): boolean {
   if (!portfolio) return false
   return (
@@ -75,6 +79,9 @@ export function MyTradesPage() {
   const [profitSortDirections, setProfitSortDirections] = useState<
     Record<Tab, ProfitSortDirection>
   >({ live: 'desc', demo: 'desc' })
+  const [showStoppedDemo, setShowStoppedDemo] = useState(
+    getShowStoppedDemoFromState(location.state),
+  )
 
   useEffect(() => {
     setActiveTab(locationTab)
@@ -119,6 +126,8 @@ export function MyTradesPage() {
         <DemoTab
           sortDirection={profitSortDirections.demo}
           onToggleSort={() => toggleProfitSort('demo')}
+          showStopped={showStoppedDemo}
+          onShowStoppedChange={setShowStoppedDemo}
         />
       )}
     </div>
@@ -252,9 +261,13 @@ function LiveTab({
 function DemoTab({
   sortDirection,
   onToggleSort,
+  showStopped,
+  onShowStoppedChange,
 }: {
   sortDirection: ProfitSortDirection
   onToggleSort: () => void
+  showStopped: boolean
+  onShowStoppedChange: (showStopped: boolean) => void
 }) {
   const [subs, setSubs] = useState<Subscription[]>([])
   const [portfolio, setPortfolio] = useState<DemoPortfolioResponse | null>(null)
@@ -264,10 +277,10 @@ function DemoTab({
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
 
-  const reload = () => {
+  const reload = useCallback(() => {
     setLoading(true)
     setError(null)
-    Promise.all([listSubscriptions(true), fetchDemoPortfolio()])
+    Promise.all([listSubscriptions(true, showStopped), fetchDemoPortfolio()])
       .then(([s, p]) => {
         setSubs(s)
         setPortfolio(p)
@@ -276,9 +289,9 @@ function DemoTab({
         setError('Failed to load demo subscriptions')
       })
       .finally(() => setLoading(false))
-  }
+  }, [showStopped])
 
-  useEffect(reload, [])
+  useEffect(reload, [reload])
 
   const handleUnsubscribe = async () => {
     if (unsubscribeId === null) return
@@ -312,11 +325,27 @@ function DemoTab({
           />
         )}
 
+        <DemoListControls
+          showStopped={showStopped}
+          onShowStoppedChange={onShowStoppedChange}
+          sortDirection={sortDirection}
+          onToggleSort={onToggleSort}
+          hasSubscriptions={false}
+        />
+
         <div className="flex flex-col items-center justify-center gap-4 px-2 text-center mt-12">
           <p className="text-tg-hint">
-            {showPortfolio ? 'No active demo subscriptions' : 'No demo subscriptions yet'}
+            {showStopped
+              ? 'No demo subscriptions yet'
+              : showPortfolio
+                ? 'No active demo subscriptions'
+                : 'No demo subscriptions yet'}
           </p>
-          <p className="text-xs text-tg-hint">Go to a trader and tap "Try Demo"</p>
+          <p className="text-xs text-tg-hint">
+            {!showStopped && showPortfolio
+              ? 'Enable "Show stopped" to view demo history.'
+              : 'Go to a trader and tap "Try Demo"'}
+          </p>
           <button
             className="px-5 py-2.5 rounded-xl text-sm font-semibold text-tg-button-text"
             style={{ background: 'var(--tg-theme-button-color)' }}
@@ -337,6 +366,7 @@ function DemoTab({
   }
 
   const openPositions = portfolio?.open_positions ?? []
+  const activeSubCount = subs.filter((sub) => sub.is_active).length
   const unrealizedPnlBySubscription = getUnrealizedPnlBySubscription(openPositions)
   const sortedSubs = sortSubscriptionsByProfit(
     subs,
@@ -349,12 +379,18 @@ function DemoTab({
       {portfolio && (
         <DemoPortfolioCard
           portfolio={portfolio}
-          subCount={subs.length}
+          subCount={activeSubCount}
           onReset={() => setResetOpen(true)}
         />
       )}
 
-      <ProfitSortControl direction={sortDirection} onToggle={onToggleSort} />
+      <DemoListControls
+        showStopped={showStopped}
+        onShowStoppedChange={onShowStoppedChange}
+        sortDirection={sortDirection}
+        onToggleSort={onToggleSort}
+        hasSubscriptions
+      />
 
       {sortedSubs.map((sub) => {
         const subscriptionOpenPositions = openPositions.filter(
@@ -365,7 +401,9 @@ function DemoTab({
             key={sub.id}
             sub={sub}
             openPositions={subscriptionOpenPositions}
-            onDetail={() => navigate(`/demo-subscriptions/${sub.id}`, { state: { fromMyTradesTab: 'demo' } })}
+            onDetail={() => navigate(`/demo-subscriptions/${sub.id}`, {
+              state: { fromMyTradesTab: 'demo', showStoppedDemo: showStopped },
+            })}
             onUnsubscribe={() => setUnsubscribeId(sub.id)}
           />
         )
@@ -383,6 +421,38 @@ function DemoTab({
           onCancel={() => setResetOpen(false)}
           onConfirm={handleReset}
         />
+      )}
+    </div>
+  )
+}
+
+function DemoListControls({
+  showStopped,
+  onShowStoppedChange,
+  sortDirection,
+  onToggleSort,
+  hasSubscriptions,
+}: {
+  showStopped: boolean
+  onShowStoppedChange: (showStopped: boolean) => void
+  sortDirection: ProfitSortDirection
+  onToggleSort: () => void
+  hasSubscriptions: boolean
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+      <label className="flex cursor-pointer items-center gap-2 text-xs text-tg-hint">
+        <input
+          type="checkbox"
+          checked={showStopped}
+          className="h-4 w-4 accent-tg-button"
+          onChange={(event) => onShowStoppedChange(event.target.checked)}
+        />
+        <span>Show stopped</span>
+      </label>
+
+      {hasSubscriptions && (
+        <ProfitSortControl direction={sortDirection} onToggle={onToggleSort} />
       )}
     </div>
   )
@@ -575,9 +645,12 @@ function DemoSubscriptionCard({
 
   const unrealizedPnl = openPositions.reduce((acc, p) => acc + p.unrealized_pnl, 0)
   const totalPnl = sub.realized_pnl + unrealizedPnl
+  const isStopped = !sub.is_active
 
   return (
-    <div className="rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800">
+    <div
+      className={`rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800 ${isStopped ? 'opacity-60' : ''}`}
+    >
       <div className="px-3 py-3" style={{ background: 'var(--tg-theme-secondary-bg-color)' }}>
         <button className="w-full text-left active:opacity-70 transition-opacity" onClick={onDetail}>
           <div className="flex items-center justify-between mb-1">
@@ -585,9 +658,9 @@ function DemoSubscriptionCard({
               <span className="text-sm font-medium text-tg-text font-mono">{shortAddr}</span>
               <span
                 className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
-                style={{ background: '#7c3aed', color: '#fff' }}
+                style={{ background: isStopped ? '#6b7280' : '#7c3aed', color: '#fff' }}
               >
-                DEMO
+                {isStopped ? 'STOPPED' : 'DEMO'}
               </span>
             </div>
             <span className={`text-sm font-semibold ${totalPnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
@@ -609,17 +682,19 @@ function DemoSubscriptionCard({
 
         <div className="flex gap-2 mt-2">
           <button
-            className="flex-1 py-1.5 rounded-lg text-xs border border-tg-button text-tg-button"
+            className={`${isStopped ? 'w-full' : 'flex-1'} py-1.5 rounded-lg text-xs border border-tg-button text-tg-button`}
             onClick={onDetail}
           >
             Details
           </button>
-          <button
-            className="flex-1 py-1.5 rounded-lg text-xs border border-red-400 text-red-400"
-            onClick={onUnsubscribe}
-          >
-            Stop Demo
-          </button>
+          {!isStopped && (
+            <button
+              className="flex-1 py-1.5 rounded-lg text-xs border border-red-400 text-red-400"
+              onClick={onUnsubscribe}
+            >
+              Stop Demo
+            </button>
+          )}
         </div>
       </div>
     </div>

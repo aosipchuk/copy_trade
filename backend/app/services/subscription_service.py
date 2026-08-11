@@ -472,15 +472,21 @@ async def create_subscription(
 
 
 async def list_subscriptions(
-    db: AsyncSession, user_id: int, is_demo: bool = False
+    db: AsyncSession,
+    user_id: int,
+    is_demo: bool = False,
+    include_inactive: bool = False,
 ) -> list[SubscriptionResponse]:
+    filters = [
+        Subscription.user_id == user_id,
+        Subscription.is_demo.is_(is_demo),
+    ]
+    if not include_inactive:
+        filters.append(Subscription.is_active.is_(True))
+
     result = await db.execute(
         select(Subscription)
-        .where(
-            Subscription.user_id == user_id,
-            Subscription.is_active.is_(True),
-            Subscription.is_demo.is_(is_demo),
-        )
+        .where(*filters)
         .order_by(Subscription.created_at.desc(), Subscription.id.desc())
     )
     subs = result.scalars().all()
@@ -524,6 +530,23 @@ async def list_subscriptions(
         )
         for sub in subs
     ]
+
+
+async def get_subscription(
+    db: AsyncSession,
+    user_id: int,
+    subscription_id: int,
+) -> SubscriptionResponse:
+    sub = await _get_owned(db, user_id, subscription_id)
+    return await _to_response(
+        db,
+        sub,
+        include_trader_identity=await user_can_view_subscription_trader_identity(
+            db,
+            user_id,
+            sub,
+        ),
+    )
 
 
 async def update_subscription(
