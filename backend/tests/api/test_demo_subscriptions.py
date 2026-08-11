@@ -493,9 +493,7 @@ class TestDemoPortfolio:
         assert stopped_sub["is_active"] is False
         assert stopped_sub["realized_pnl"] == pytest.approx(42.0)
 
-        detail_r = await client.get(
-            f"/api/subscriptions/{sub_id}", headers=headers
-        )
+        detail_r = await client.get(f"/api/subscriptions/{sub_id}", headers=headers)
         assert detail_r.status_code == 200
         assert detail_r.json()["is_active"] is False
         assert detail_r.json()["realized_pnl"] == pytest.approx(42.0)
