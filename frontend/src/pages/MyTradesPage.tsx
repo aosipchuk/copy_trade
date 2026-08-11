@@ -10,6 +10,7 @@ import type { DemoOpenPosition, DemoPortfolioResponse, PositionItem, Subscriptio
 import { fmt } from '../utils/format'
 
 type Tab = 'live' | 'demo'
+type ProfitSortDirection = 'asc' | 'desc'
 
 type SubscriptionPosition = {
   subscription_id?: number | null
@@ -33,11 +34,12 @@ function getUnrealizedPnlBySubscription(
 function sortSubscriptionsByProfit(
   subscriptions: readonly Subscription[],
   unrealizedPnlBySubscription: ReadonlyMap<number, number>,
+  direction: ProfitSortDirection,
 ): Subscription[] {
   return [...subscriptions].sort((left, right) => {
     const leftProfit = left.realized_pnl + (unrealizedPnlBySubscription.get(left.id) ?? 0)
     const rightProfit = right.realized_pnl + (unrealizedPnlBySubscription.get(right.id) ?? 0)
-    return rightProfit - leftProfit
+    return direction === 'desc' ? rightProfit - leftProfit : leftProfit - rightProfit
   })
 }
 
@@ -70,6 +72,9 @@ export function MyTradesPage() {
   const navigate = useNavigate()
   const locationTab = getActiveTab(location.search, location.state)
   const [activeTab, setActiveTab] = useState<Tab>(locationTab)
+  const [profitSortDirections, setProfitSortDirections] = useState<
+    Record<Tab, ProfitSortDirection>
+  >({ live: 'desc', demo: 'desc' })
 
   useEffect(() => {
     setActiveTab(locationTab)
@@ -90,6 +95,13 @@ export function MyTradesPage() {
     )
   }
 
+  const toggleProfitSort = (tab: Tab) => {
+    setProfitSortDirections((current) => ({
+      ...current,
+      [tab]: current[tab] === 'desc' ? 'asc' : 'desc',
+    }))
+  }
+
   return (
     <div className="pb-20 h-full overflow-y-auto">
       {/* Tab bar */}
@@ -98,7 +110,17 @@ export function MyTradesPage() {
         <TabBtn active={activeTab === 'demo'} onClick={() => selectTab('demo')} label="Demo" />
       </div>
 
-      {activeTab === 'live' ? <LiveTab /> : <DemoTab />}
+      {activeTab === 'live' ? (
+        <LiveTab
+          sortDirection={profitSortDirections.live}
+          onToggleSort={() => toggleProfitSort('live')}
+        />
+      ) : (
+        <DemoTab
+          sortDirection={profitSortDirections.demo}
+          onToggleSort={() => toggleProfitSort('demo')}
+        />
+      )}
     </div>
   )
 }
@@ -117,7 +139,13 @@ function TabBtn({ active, onClick, label }: { active: boolean; onClick: () => vo
 
 /* ─────────────────────── Live tab ─────────────────────── */
 
-function LiveTab() {
+function LiveTab({
+  sortDirection,
+  onToggleSort,
+}: {
+  sortDirection: ProfitSortDirection
+  onToggleSort: () => void
+}) {
   const [subs, setSubs] = useState<Subscription[]>([])
   const [positions, setPositions] = useState<PositionItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -180,11 +208,17 @@ function LiveTab() {
   }
 
   const unrealizedPnlBySubscription = getUnrealizedPnlBySubscription(positions)
-  const sortedSubs = sortSubscriptionsByProfit(subs, unrealizedPnlBySubscription)
+  const sortedSubs = sortSubscriptionsByProfit(
+    subs,
+    unrealizedPnlBySubscription,
+    sortDirection,
+  )
 
   return (
     <div className="px-4 pt-4 space-y-3">
       <LivePortfolioCard subs={subs} positions={positions} />
+
+      <ProfitSortControl direction={sortDirection} onToggle={onToggleSort} />
 
       {sortedSubs.map((sub) => {
         const unrealizedPnl = unrealizedPnlBySubscription.get(sub.id) ?? 0
@@ -215,7 +249,13 @@ function LiveTab() {
 
 /* ─────────────────────── Demo tab ─────────────────────── */
 
-function DemoTab() {
+function DemoTab({
+  sortDirection,
+  onToggleSort,
+}: {
+  sortDirection: ProfitSortDirection
+  onToggleSort: () => void
+}) {
   const [subs, setSubs] = useState<Subscription[]>([])
   const [portfolio, setPortfolio] = useState<DemoPortfolioResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -298,7 +338,11 @@ function DemoTab() {
 
   const openPositions = portfolio?.open_positions ?? []
   const unrealizedPnlBySubscription = getUnrealizedPnlBySubscription(openPositions)
-  const sortedSubs = sortSubscriptionsByProfit(subs, unrealizedPnlBySubscription)
+  const sortedSubs = sortSubscriptionsByProfit(
+    subs,
+    unrealizedPnlBySubscription,
+    sortDirection,
+  )
 
   return (
     <div className="px-4 pt-4 space-y-3">
@@ -309,6 +353,8 @@ function DemoTab() {
           onReset={() => setResetOpen(true)}
         />
       )}
+
+      <ProfitSortControl direction={sortDirection} onToggle={onToggleSort} />
 
       {sortedSubs.map((sub) => {
         const subscriptionOpenPositions = openPositions.filter(
@@ -338,6 +384,32 @@ function DemoTab() {
           onConfirm={handleReset}
         />
       )}
+    </div>
+  )
+}
+
+function ProfitSortControl({
+  direction,
+  onToggle,
+}: {
+  direction: ProfitSortDirection
+  onToggle: () => void
+}) {
+  const isDescending = direction === 'desc'
+  const currentDirection = isDescending ? 'High to low' : 'Low to high'
+  const nextDirection = isDescending ? 'ascending' : 'descending'
+
+  return (
+    <div className="flex justify-end">
+      <button
+        type="button"
+        className="flex items-center gap-1.5 rounded-lg border border-tg-button px-2.5 py-1.5 text-xs font-medium text-tg-button"
+        aria-label={`Profit sorting: ${currentDirection}. Change to ${nextDirection}`}
+        onClick={onToggle}
+      >
+        <span>Profit: {currentDirection}</span>
+        <span aria-hidden="true">{isDescending ? '↓' : '↑'}</span>
+      </button>
     </div>
   )
 }
