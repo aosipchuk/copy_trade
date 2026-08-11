@@ -490,7 +490,7 @@ async def list_subscriptions(
         .where(*filters)
         .order_by(Subscription.created_at.desc(), Subscription.id.desc())
     )
-    subs = result.scalars().all()
+    subs = list(result.scalars().all())
     sub_ids = [sub.id for sub in subs]
 
     stats_by_sub_id = await _load_subscription_trade_stats(
