@@ -198,10 +198,13 @@ async def _compute_demo_unrealized_pnl_by_subscription(
             continue
 
         direction = 1.0 if trade.side == "long" else -1.0
-        total_by_sub_id[trade.subscription_id] = total_by_sub_id.get(
-            trade.subscription_id,
-            0.0,
-        ) + (float(mid_str) - float(trade.price)) * float(trade.size) * direction
+        total_by_sub_id[trade.subscription_id] = (
+            total_by_sub_id.get(
+                trade.subscription_id,
+                0.0,
+            )
+            + (float(mid_str) - float(trade.price)) * float(trade.size) * direction
+        )
 
     return total_by_sub_id
 
@@ -324,9 +327,7 @@ async def _load_subscription_trader_visibility(
                 ).in_(portfolio_versions),
             )
         )
-        paid_portfolio_versions = {
-            (row[0], row[1]) for row in paid_result.all()
-        }
+        paid_portfolio_versions = {(row[0], row[1]) for row in paid_result.all()}
 
     for sub in gated_subscriptions:
         source_id = sub.source_id
@@ -504,11 +505,7 @@ async def list_subscriptions(
     )
 
     visible_trader_ids = sorted(
-        {
-            sub.trader_id
-            for sub in subs
-            if visible_identity_by_sub_id.get(sub.id, True)
-        }
+        {sub.trader_id for sub in subs if visible_identity_by_sub_id.get(sub.id, True)}
     )
     trader_identity_by_id: dict[int, _TraderIdentity] = {}
     if visible_trader_ids:
