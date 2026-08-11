@@ -11,6 +11,36 @@ import { fmt } from '../utils/format'
 
 type Tab = 'live' | 'demo'
 
+type SubscriptionPosition = {
+  subscription_id?: number | null
+  unrealized_pnl: number
+}
+
+function getUnrealizedPnlBySubscription(
+  positions: readonly SubscriptionPosition[],
+): Map<number, number> {
+  return positions.reduce((pnlBySubscription, position) => {
+    if (position.subscription_id == null) return pnlBySubscription
+
+    pnlBySubscription.set(
+      position.subscription_id,
+      (pnlBySubscription.get(position.subscription_id) ?? 0) + position.unrealized_pnl,
+    )
+    return pnlBySubscription
+  }, new Map<number, number>())
+}
+
+function sortSubscriptionsByProfit(
+  subscriptions: readonly Subscription[],
+  unrealizedPnlBySubscription: ReadonlyMap<number, number>,
+): Subscription[] {
+  return [...subscriptions].sort((left, right) => {
+    const leftProfit = left.realized_pnl + (unrealizedPnlBySubscription.get(left.id) ?? 0)
+    const rightProfit = right.realized_pnl + (unrealizedPnlBySubscription.get(right.id) ?? 0)
+    return rightProfit - leftProfit
+  })
+}
+
 function getTabFromState(state: unknown): Tab | null {
   const tab = (state as { tab?: unknown } | null)?.tab
   return tab === 'demo' || tab === 'live' ? tab : null
@@ -149,14 +179,15 @@ function LiveTab() {
     )
   }
 
+  const unrealizedPnlBySubscription = getUnrealizedPnlBySubscription(positions)
+  const sortedSubs = sortSubscriptionsByProfit(subs, unrealizedPnlBySubscription)
+
   return (
     <div className="px-4 pt-4 space-y-3">
       <LivePortfolioCard subs={subs} positions={positions} />
 
-      {subs.map((sub) => {
-        const unrealizedPnl = positions
-          .filter((p) => p.subscription_id === sub.id)
-          .reduce((acc, p) => acc + p.unrealized_pnl, 0)
+      {sortedSubs.map((sub) => {
+        const unrealizedPnl = unrealizedPnlBySubscription.get(sub.id) ?? 0
         return (
           <SubscriptionCard
             key={sub.id}
@@ -265,6 +296,10 @@ function DemoTab() {
     )
   }
 
+  const openPositions = portfolio?.open_positions ?? []
+  const unrealizedPnlBySubscription = getUnrealizedPnlBySubscription(openPositions)
+  const sortedSubs = sortSubscriptionsByProfit(subs, unrealizedPnlBySubscription)
+
   return (
     <div className="px-4 pt-4 space-y-3">
       {portfolio && (
@@ -275,15 +310,15 @@ function DemoTab() {
         />
       )}
 
-      {subs.map((sub) => {
-        const openPositions = portfolio?.open_positions.filter(
+      {sortedSubs.map((sub) => {
+        const subscriptionOpenPositions = openPositions.filter(
           (p) => p.subscription_id === sub.id,
-        ) ?? []
+        )
         return (
           <DemoSubscriptionCard
             key={sub.id}
             sub={sub}
-            openPositions={openPositions}
+            openPositions={subscriptionOpenPositions}
             onDetail={() => navigate(`/demo-subscriptions/${sub.id}`, { state: { fromMyTradesTab: 'demo' } })}
             onUnsubscribe={() => setUnsubscribeId(sub.id)}
           />
