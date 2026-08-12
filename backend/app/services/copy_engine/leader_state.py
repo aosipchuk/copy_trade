@@ -23,7 +23,7 @@ def _as_position(state: TraderPositionState) -> Position:
         coin=state.coin,
         szi=size,
         entryPx=(Decimal(str(state.entry_price)) if state.entry_price else None),
-        unrealizedPnl=Decimal("0"),
+        unrealized_pnl=Decimal("0"),
         leverage=PositionLeverage(
             type="cross",
             value=max(1, int(state.leverage or 1)),
@@ -111,7 +111,7 @@ async def accept_leader_snapshot(
 
         if observed is not None:
             state.entry_price = observed.entry_px
-            state.leverage = observed.leverage.value
+            state.leverage = Decimal(observed.leverage.value)
         event = event_by_coin.get(coin)
         if is_baseline or event is not None:
             state.accepted_size = observed_size

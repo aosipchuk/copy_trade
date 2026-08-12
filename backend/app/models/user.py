@@ -1,10 +1,14 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, Boolean, ForeignKey, LargeBinary, Numeric, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.new_wallet import UserNewWalletSubscription
 
 
 class User(Base):
@@ -30,9 +34,9 @@ class User(Base):
     portfolio_subscriptions: Mapped[list["UserPortfolioSubscription"]] = relationship(  # type: ignore[name-defined]
         back_populates="user", lazy="noload"
     )
-    new_wallet_subscriptions: Mapped[
-        list["UserNewWalletSubscription"]
-    ] = relationship(back_populates="user", lazy="noload")
+    new_wallet_subscriptions: Mapped[list["UserNewWalletSubscription"]] = relationship(
+        back_populates="user", lazy="noload"
+    )
 
 
 class UserAgent(Base):

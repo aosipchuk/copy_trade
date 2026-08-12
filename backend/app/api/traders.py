@@ -337,7 +337,7 @@ async def list_traders(
         if last_stat is None:
             sort_val = None
         elif sort == "roi":
-            sort_val = last_stat.roi_percent
+            sort_val = last_stat.roi_pct
         elif sort == "pnl":
             sort_val = last_stat.pnl_usd
         else:

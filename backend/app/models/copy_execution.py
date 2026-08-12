@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -52,14 +53,14 @@ class TraderPositionState(Base):
     )
     dex: Mapped[str] = mapped_column(Text, nullable=False, default="")
     coin: Mapped[str] = mapped_column(Text, nullable=False)
-    observed_size: Mapped[float] = mapped_column(
+    observed_size: Mapped[Decimal] = mapped_column(
         Numeric(30, 12), nullable=False, default=0
     )
-    accepted_size: Mapped[float] = mapped_column(
+    accepted_size: Mapped[Decimal] = mapped_column(
         Numeric(30, 12), nullable=False, default=0
     )
-    entry_price: Mapped[float | None] = mapped_column(Numeric(30, 12))
-    leverage: Mapped[float | None] = mapped_column(Numeric(10, 4))
+    entry_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 12))
+    leverage: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
     snapshot_version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     observed_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
     accepted_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
@@ -119,16 +120,16 @@ class CopyPositionTarget(Base):
     )
     dex: Mapped[str] = mapped_column(Text, nullable=False, default="")
     coin: Mapped[str] = mapped_column(Text, nullable=False)
-    leader_size: Mapped[float] = mapped_column(Numeric(30, 12), nullable=False)
-    raw_target_size: Mapped[float] = mapped_column(Numeric(30, 12), nullable=False)
-    target_size: Mapped[float] = mapped_column(Numeric(30, 12), nullable=False)
-    confirmed_allocated_size: Mapped[float] = mapped_column(
+    leader_size: Mapped[Decimal] = mapped_column(Numeric(30, 12), nullable=False)
+    raw_target_size: Mapped[Decimal] = mapped_column(Numeric(30, 12), nullable=False)
+    target_size: Mapped[Decimal] = mapped_column(Numeric(30, 12), nullable=False)
+    confirmed_allocated_size: Mapped[Decimal] = mapped_column(
         Numeric(30, 12), nullable=False, default=0
     )
-    target_notional_usd: Mapped[float] = mapped_column(
+    target_notional_usd: Mapped[Decimal] = mapped_column(
         Numeric(30, 8), nullable=False, default=0
     )
-    price_snapshot: Mapped[float | None] = mapped_column(Numeric(30, 12))
+    price_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(30, 12))
     sizing_mode: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False)
     source_signal_id: Mapped[int | None] = mapped_column(
@@ -162,13 +163,13 @@ class CopyAccountPosition(Base):
     )
     dex: Mapped[str] = mapped_column(Text, nullable=False, default="")
     coin: Mapped[str] = mapped_column(Text, nullable=False)
-    aggregate_target_size: Mapped[float] = mapped_column(
+    aggregate_target_size: Mapped[Decimal] = mapped_column(
         Numeric(30, 12), nullable=False, default=0
     )
-    confirmed_actual_size: Mapped[float] = mapped_column(
+    confirmed_actual_size: Mapped[Decimal] = mapped_column(
         Numeric(30, 12), nullable=False, default=0
     )
-    pending_explained_delta: Mapped[float] = mapped_column(
+    pending_explained_delta: Mapped[Decimal] = mapped_column(
         Numeric(30, 12), nullable=False, default=0
     )
     target_version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -229,21 +230,21 @@ class CopyExecutionOrder(Base):
     cloid: Mapped[str] = mapped_column(Text, nullable=False)
     exchange_oid: Mapped[int | None] = mapped_column(BigInteger)
     aggregate_target_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    before_size: Mapped[float] = mapped_column(Numeric(30, 12), nullable=False)
-    target_size: Mapped[float] = mapped_column(Numeric(30, 12), nullable=False)
-    requested_delta: Mapped[float] = mapped_column(Numeric(30, 12), nullable=False)
+    before_size: Mapped[Decimal] = mapped_column(Numeric(30, 12), nullable=False)
+    target_size: Mapped[Decimal] = mapped_column(Numeric(30, 12), nullable=False)
+    requested_delta: Mapped[Decimal] = mapped_column(Numeric(30, 12), nullable=False)
     is_buy: Mapped[bool] = mapped_column(Boolean, nullable=False)
     reduce_only: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    rounded_size: Mapped[float] = mapped_column(Numeric(30, 12), nullable=False)
-    reference_price: Mapped[float | None] = mapped_column(Numeric(30, 12))
-    limit_price: Mapped[float | None] = mapped_column(Numeric(30, 12))
+    rounded_size: Mapped[Decimal] = mapped_column(Numeric(30, 12), nullable=False)
+    reference_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 12))
+    limit_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 12))
     status: Mapped[str] = mapped_column(
         Text, default="pending", server_default="pending", nullable=False
     )
-    filled_size: Mapped[float] = mapped_column(
+    filled_size: Mapped[Decimal] = mapped_column(
         Numeric(30, 12), nullable=False, default=0
     )
-    average_price: Mapped[float | None] = mapped_column(Numeric(30, 12))
+    average_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 12))
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
     error_code: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
@@ -277,12 +278,12 @@ class CopyExecutionAllocation(Base):
     subscription_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("subscriptions.id"), nullable=False
     )
-    requested_delta: Mapped[float] = mapped_column(Numeric(30, 12), nullable=False)
-    filled_delta: Mapped[float] = mapped_column(
+    requested_delta: Mapped[Decimal] = mapped_column(Numeric(30, 12), nullable=False)
+    filled_delta: Mapped[Decimal] = mapped_column(
         Numeric(30, 12), nullable=False, default=0
     )
-    allocation_price: Mapped[float | None] = mapped_column(Numeric(30, 12))
-    realized_pnl: Mapped[float | None] = mapped_column(Numeric(30, 8))
+    allocation_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 12))
+    realized_pnl: Mapped[Decimal | None] = mapped_column(Numeric(30, 8))
     created_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), nullable=False
     )

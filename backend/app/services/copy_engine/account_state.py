@@ -53,7 +53,7 @@ class AccountStateReader:
     ) -> CopyAccountSnapshot:
         abstraction = await self._client.get_user_abstraction(account_address)
         mode = abstraction.mode
-        dexes = tuple(dict.fromkeys(market.dex for market in registry.markets))
+        dexes = tuple(dict.fromkeys(registry.dex_names))
 
         async def read_dex(dex: str) -> DexAccountState:
             state, orders = await asyncio.gather(

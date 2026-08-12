@@ -63,6 +63,7 @@ async def run_preflight(
     checked_at = datetime.now(tz=UTC)
     context = await _context(db, user)
     state = context.state
+    account_address = state.account_address if state is not None else None
     checks: list[PreflightCheck] = []
     positions: list[BlockingPosition] = []
     orders: list[BlockingOrder] = []
@@ -88,7 +89,7 @@ async def run_preflight(
     selected_ok = bool(
         state
         and state.master_address
-        and state.account_address
+        and account_address
         and user.hl_address
         and state.master_address.lower() == user.hl_address.lower()
     )
@@ -121,11 +122,11 @@ async def run_preflight(
     account_snapshot = None
     registry_snapshot = None
     api_error: str | None = None
-    if selected_ok:
+    if selected_ok and account_address is not None:
         try:
             registry_snapshot = await (registry or MarketRegistry()).get_snapshot()
             account_snapshot = await (reader or AccountStateReader()).read(
-                state.account_address, registry_snapshot
+                account_address, registry_snapshot
             )
         except Exception:
             api_error = "Hyperliquid account or market state is unavailable."
@@ -248,10 +249,10 @@ async def run_preflight(
         state.last_preflight_at = utcnow_naive()
         state.account_mode = mode
         state.version += 1
-        if account_snapshot is not None:
+        if account_snapshot is not None and account_address is not None:
             try:
                 fills = await HyperliquidInfoClient().get_fills(
-                    state.account_address, limit=1
+                    account_address, limit=1
                 )
             except Exception:
                 fills = []

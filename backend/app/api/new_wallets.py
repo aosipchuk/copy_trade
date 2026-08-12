@@ -447,7 +447,7 @@ async def _candidate_response(
         id=candidate.id,
         trader_id=candidate.trader_id,
         hl_address=candidate.hl_address,
-        status=candidate.status,  # type: ignore[arg-type]
+        status=candidate.status,
         detected_at=candidate.detected_at,
         funded_at=candidate.funded_at,
         qualified_at=candidate.qualified_at,
@@ -466,7 +466,7 @@ async def _candidate_response(
         reject_reason=candidate.reject_reason,
         first_seen_tx_hash=candidate.first_seen_tx_hash,
         links=links,
-        user_item_status=item.status if item else None,  # type: ignore[arg-type]
+        user_item_status=item.status if item else None,
         user_child_subscription_id=item.subscription_id if item else None,
         user_child_expires_at=item.expires_at if item else None,
         user_is_subscribed=active_subscription is not None,
@@ -507,7 +507,7 @@ async def _subscription_response(
                 subscription_id=item.subscription_id,
                 trader_id=item.trader_id,
                 target_allocation_usd=float(item.target_allocation_usd),
-                status=item.status,  # type: ignore[arg-type]
+                status=item.status,
                 created_at=item.created_at,
                 expires_at=item.expires_at,
                 ended_at=item.ended_at,
@@ -526,7 +526,7 @@ async def _subscription_response(
     return UserNewWalletSubscriptionResponse(
         id=parent.id,
         user_id=parent.user_id,
-        status=parent.status,  # type: ignore[arg-type]
+        status=parent.status,
         is_demo=parent.is_demo,
         total_allocation_usd=float(parent.total_allocation_usd),
         max_active_wallets=parent.max_active_wallets,

@@ -376,7 +376,7 @@ async def _attach_candidate_to_parent(
             copy_ratio_pct=float(parent.copy_ratio_pct),
             stop_loss_pct=float(parent.stop_loss_pct),
             max_leverage=float(parent.max_leverage),
-            sizing_mode=parent.sizing_mode,  # type: ignore[arg-type]
+            sizing_mode=parent.sizing_mode,
             allowed_coins=parent.allowed_coins,
             is_demo=parent.is_demo,
         ),

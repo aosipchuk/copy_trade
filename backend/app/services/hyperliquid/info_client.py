@@ -226,10 +226,12 @@ class HyperliquidInfoClient:
         data: dict[str, Any] = await self._post(
             {"type": "orderStatus", "user": owner_address, "oid": order_id}
         )
-        payload = data.get("order")
-        if not isinstance(payload, dict):
+        raw_payload = data.get("order")
+        if not isinstance(raw_payload, dict):
             return OrderStatusResult(status="unknown")
-        order = payload.get("order") if isinstance(payload.get("order"), dict) else {}
+        payload: dict[str, Any] = raw_payload
+        raw_order = payload.get("order")
+        order: dict[str, Any] = raw_order if isinstance(raw_order, dict) else {}
         raw_status = str(payload.get("status", "unknown"))
         if raw_status in ("filled", "triggered"):
             status = "filled"

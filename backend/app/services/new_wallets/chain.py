@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
@@ -25,13 +26,11 @@ class FundingLookup(Protocol):
         address: str,
         *,
         before_time: datetime | None = None,
-    ) -> FundingEvent | None:
-        ...
+    ) -> FundingEvent | None: ...
 
 
 class AccountBalanceClient(Protocol):
-    async def get_account_equity_usd(self, address: str) -> AccountEquitySnapshot:
-        ...
+    async def get_account_equity_usd(self, address: str) -> AccountEquitySnapshot: ...
 
     async def get_fills_by_time(
         self,
@@ -40,11 +39,9 @@ class AccountBalanceClient(Protocol):
         start_time: int = 0,
         end_time: int | None = None,
         max_fills: int = 1,
-    ) -> list[object]:
-        ...
+    ) -> Sequence[object]: ...
 
-    async def get_positions(self, address: str) -> list[object]:
-        ...
+    async def get_positions(self, address: str) -> Sequence[object]: ...
 
 
 async def is_wallet_new_for_copying(
@@ -327,16 +324,14 @@ def _evidence(
                 "depth": link.depth,
                 "wallet_address": link.wallet_address,
                 "funded_by_address": link.funded_by_address,
-                "amount_usdc": str(link.amount_usdc)
-                if link.amount_usdc is not None
-                else None,
-                "event_time": link.event_time.isoformat()
-                if link.event_time
-                else None,
+                "amount_usdc": (
+                    str(link.amount_usdc) if link.amount_usdc is not None else None
+                ),
+                "event_time": link.event_time.isoformat() if link.event_time else None,
                 "tx_hash": link.tx_hash,
-                "balance_usd": str(link.balance_usd)
-                if link.balance_usd is not None
-                else None,
+                "balance_usd": (
+                    str(link.balance_usd) if link.balance_usd is not None else None
+                ),
                 "balance_source": link.balance_source,
             }
             for link in links

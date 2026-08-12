@@ -169,8 +169,8 @@ async def process_signal_target(signal_id: int, subscription_id: int) -> list[st
             .with_for_update()
         )
         target_by_key = {
-            market_id(target.dex, target.coin).key: target
-            for target in target_result.scalars().all()
+            market_id(row_target.dex, row_target.coin).key: row_target
+            for row_target in target_result.scalars().all()
         }
         next_version = (
             max(
@@ -182,9 +182,13 @@ async def process_signal_target(signal_id: int, subscription_id: int) -> list[st
 
         for result in calculated:
             key = market_id(result.dex, result.coin).key
-            target = target_by_key.get(key)
-            old_size = _decimal(target.target_size) if target else Decimal("0")
-            if target is None:
+            existing_target = target_by_key.get(key)
+            old_size = (
+                _decimal(existing_target.target_size)
+                if existing_target is not None
+                else Decimal("0")
+            )
+            if existing_target is None:
                 target = CopyPositionTarget(
                     subscription_id=subscription_id,
                     dex=result.dex,
@@ -205,6 +209,7 @@ async def process_signal_target(signal_id: int, subscription_id: int) -> list[st
                 )
                 db.add(target)
             else:
+                target = existing_target
                 target.leader_size = result.leader_size
                 target.raw_target_size = result.raw_target_size
                 target.target_size = result.target_size
