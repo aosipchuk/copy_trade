@@ -451,6 +451,8 @@ class TestDemoPortfolioActivation:
             is_demo=False,
             source_type="manual",
             managed_by_portfolio=False,
+            engine_version=2,
+            execution_status="active",
         )
         db_session.add(manual)
         await db_session.commit()
@@ -484,6 +486,8 @@ class TestDemoPortfolioActivation:
             is_demo=True,
             source_type="manual",
             managed_by_portfolio=False,
+            engine_version=2,
+            execution_status="active",
         )
         db_session.add(manual)
         await db_session.commit()
@@ -540,6 +544,8 @@ class TestDemoPortfolioActivation:
             is_demo=True,
             source_type="manual",
             managed_by_portfolio=False,
+            engine_version=2,
+            execution_status="active",
         )
         db_session.add(manual)
         await db_session.commit()
@@ -568,6 +574,7 @@ class TestDemoPortfolioActivation:
             size=Decimal("0.01"),
             entry_price=Decimal("50000.00"),
             leverage=Decimal("3.00"),
+            engine_version=2,
         )
         db_session.add(signal)
         await db_session.commit()
@@ -757,14 +764,8 @@ class TestPortfolioRebalance:
             headers=headers,
         )
 
-        assert response.status_code == 200
-        body = response.json()
-        assert body["status"] == "blocked"
-        assert body["can_apply"] is False
-        assert body["event"]["status"] == "skipped"
-        assert "past_due" in body["event"]["error_msg"]
-        assert body["portfolio_subscription"]["active_version_no"] == 1
-        assert any(item["action"] == "blocked_by_payment" for item in body["diff"])
+        assert response.status_code == 400
+        assert "paused" in response.json()["detail"].lower()
 
     async def test_update_rebalance_preferences(self, client, db_session) -> None:
         seed = await _seed_published_portfolio(db_session)
@@ -875,15 +876,16 @@ class TestLivePortfolioActivation:
             headers=headers,
         )
 
-        assert response.status_code == 400
-        assert "Insufficient free margin" in response.json()["detail"]
+        assert response.status_code == 201
+        assert response.json()["execution_status"] == "paused"
+        assert response.json()["pause_reason"] == "preflight_required"
 
         items_result = await db_session.execute(
             select(UserPortfolioItem).where(
                 UserPortfolioItem.user_portfolio_subscription_id == paid_holder.id
             )
         )
-        assert list(items_result.scalars().all()) == []
+        assert len(list(items_result.scalars().all())) == 3
 
     async def test_live_activation_creates_portfolio_owned_subscriptions(
         self, client, db_session

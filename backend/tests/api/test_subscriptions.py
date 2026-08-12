@@ -138,7 +138,9 @@ class TestSubscriptionsCRUD:
         assert response.status_code == 201
         data = response.json()
         assert data["trader_id"] == trader_id
-        assert data["is_active"] is True
+        assert data["is_active"] is False
+        assert data["execution_status"] == "paused"
+        assert data["pause_reason"] == "preflight_required"
 
         subscription = await db_session.get(Subscription, data["id"])
         assert subscription is not None

@@ -1,4 +1,3 @@
-import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -138,7 +137,7 @@ async def deactivate_portfolio_owned_subscriptions(
         select(UserPortfolioItem).where(
             UserPortfolioItem.user_portfolio_subscription_id
             == portfolio_subscription.id,
-            UserPortfolioItem.status == "active",
+            UserPortfolioItem.status.in_(("active", "paused")),
         )
     )
     items = list(items_result.scalars().all())
@@ -152,23 +151,26 @@ async def deactivate_portfolio_owned_subscriptions(
             Subscription.source_type == "model_portfolio",
             Subscription.source_id == portfolio_subscription.id,
             Subscription.managed_by_portfolio.is_(True),
-            Subscription.is_active.is_(True),
+            Subscription.execution_status.in_(
+                ("active", "paused", "blocked", "stopping")
+            ),
         )
     )
     subscriptions = list(result.scalars().all())
+    from app.services.copy_engine.lifecycle import stop_subscription_targets
+
     for subscription in subscriptions:
-        subscription.is_active = False
-
-    if close_positions and not portfolio_subscription.is_demo:
-        from app.tasks.execution_tasks import close_subscription_positions_async
-
-        for subscription in subscriptions:
-            asyncio.create_task(
-                close_subscription_positions_async(
-                    portfolio_subscription.user_id,
-                    subscription.id,
-                )
+        await stop_subscription_targets(
+            db,
+            subscription,
+            reason="portfolio_deactivated",
+        )
+        if subscription.is_demo:
+            from app.services.copy_engine.demo_executor import (
+                reconcile_demo_targets_in_session,
             )
+
+            await reconcile_demo_targets_in_session(db, subscription)
 
     await db.flush()
     return len(subscriptions)

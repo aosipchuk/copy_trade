@@ -222,7 +222,7 @@ async def _active_item_count(
         select(func.count(UserPortfolioItem.id)).where(
             UserPortfolioItem.user_portfolio_subscription_id
             == user_portfolio_subscription_id,
-            UserPortfolioItem.status == "active",
+            UserPortfolioItem.status.in_(("active", "paused")),
         )
     )
     return int(result.scalar_one())
