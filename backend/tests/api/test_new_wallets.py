@@ -29,7 +29,7 @@ from app.models.new_wallet import (
 from app.models.signal import Signal
 from app.models.subscription import Subscription
 from app.models.trade import UserTrade
-from app.models.trader import Trader
+from app.models.trader import Trader, TraderStat
 from app.services.portfolio.subscription_lifecycle import (
     executable_subscription_targets_for_signal,
 )
@@ -56,6 +56,7 @@ async def _clean_new_wallet_test_tables(db_session) -> None:
         Subscription,
         TraderPositionState,
         TraderMarketScope,
+        TraderStat,
         Trader,
     ):
         await db_session.execute(delete(model))
