@@ -8,9 +8,9 @@ from app.models.copy_execution import (
     CopyExecutionOrder,
     CopyPositionTarget,
 )
-from app.models.trade import UserTrade
-from app.models.subscription import Subscription
 from app.models.new_wallet import UserNewWalletItem
+from app.models.subscription import Subscription
+from app.models.trade import UserTrade
 from app.services.copy_engine.execution_state import utcnow_naive
 
 
@@ -78,7 +78,10 @@ async def apply_filled_delta(
         )
         if after == _decimal(target.target_size) == 0 and target.state == "stopping":
             target.state = "zero"
-    await _finalize_stopping_subscriptions(db, {target.subscription_id for _, target in rows})
+    await _finalize_stopping_subscriptions(
+        db,
+        {target.subscription_id for _, target in rows},
+    )
 
 
 async def apply_internal_reallocation(
@@ -108,7 +111,10 @@ async def apply_internal_reallocation(
             and target.state == "stopping"
         ):
             target.state = "zero"
-    await _finalize_stopping_subscriptions(db, {target.subscription_id for _, target in rows})
+    await _finalize_stopping_subscriptions(
+        db,
+        {target.subscription_id for _, target in rows},
+    )
 
 
 async def _finalize_stopping_subscriptions(

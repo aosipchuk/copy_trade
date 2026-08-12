@@ -19,7 +19,6 @@ from app.models.subscription import Subscription
 from app.models.user import User, UserAgent
 from app.schemas.new_wallet import NewWalletSubscriptionCreate
 from app.schemas.subscription import SubscriptionCreate
-from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import MarginSummary
 from app.services.subscription_service import create_subscription
 

@@ -11,6 +11,8 @@ from app.schemas.portfolio import (
     UserPortfolioSubscriptionDetailResponse,
     UserPortfolioSubscriptionUpdate,
 )
+from app.services.copy_engine.managed_resume import resume_portfolio_parent
+from app.services.copy_engine.preflight import run_preflight
 from app.services.portfolio.activation import (
     activate_user_portfolio_subscription,
     cancel_user_portfolio_subscription,
@@ -24,8 +26,6 @@ from app.services.portfolio.rebalance import (
     preview_user_portfolio_rebalance,
     update_user_portfolio_subscription_settings,
 )
-from app.services.copy_engine.managed_resume import resume_portfolio_parent
-from app.services.copy_engine.preflight import run_preflight
 
 router = APIRouter(prefix="/portfolio-subscriptions", tags=["portfolio-subscriptions"])
 

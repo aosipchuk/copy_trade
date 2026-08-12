@@ -55,9 +55,10 @@ def detect_changes(
             signal_type = SignalType.OPEN
         elif previous_size != 0 and target_size == 0:
             signal_type = SignalType.CLOSE
-        elif previous_size * target_size < 0:
-            signal_type = SignalType.UPDATE
-        elif abs(target_size) < abs(previous_size):
+        elif (
+            previous_size * target_size < 0
+            or abs(target_size) < abs(previous_size)
+        ):
             signal_type = SignalType.UPDATE
         else:
             change_ratio = abs(target_size - previous_size) / abs(previous_size)

@@ -198,7 +198,9 @@ async def process_signal_target(signal_id: int, subscription_id: int) -> list[st
                     sizing_mode=subscription.sizing_mode,
                     state="active" if result.target_size else "zero",
                     source_signal_id=(
-                        signal.id if key == market_id(signal.dex, signal.coin).key else None
+                        signal.id
+                        if key == market_id(signal.dex, signal.coin).key
+                        else None
                     ),
                     target_version=next_version,
                 )

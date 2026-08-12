@@ -6,7 +6,6 @@ from app.services.copy_engine.market_registry import RegistrySnapshot
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import OpenOrder, Position
 
-
 SUPPORTED_ACCOUNT_MODES = frozenset({"standard", "unified"})
 
 

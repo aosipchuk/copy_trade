@@ -1,4 +1,3 @@
-import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -25,7 +24,6 @@ from app.services.portfolio.billing import (
     PAID_BILLING_STATUSES,
     user_has_beta_override,
 )
-from app.services.risk_manager import check_portfolio_risk
 
 logger = get_logger(__name__)
 
@@ -432,9 +430,8 @@ async def create_subscription(
     if trader is None:
         raise ValueError(f"Trader {data.trader_id} not found or not copyable")
 
-    if not data.is_demo:
-        if not user_hl_address:
-            raise ValueError("HL wallet address required to create a subscription")
+    if not data.is_demo and not user_hl_address:
+        raise ValueError("HL wallet address required to create a subscription")
 
     sub = Subscription(
         user_id=user_id,

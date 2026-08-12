@@ -181,7 +181,7 @@ async def expire_new_wallet_subscriptions_async() -> None:
             )
         )
         rows = result.all()
-        for item, subscription, parent in rows:
+        for item, subscription, _parent in rows:
             subscription.ended_reason = "new_wallet_ttl_expired"
             item.status = "paused"
             expired_count += 1

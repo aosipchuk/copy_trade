@@ -28,7 +28,8 @@ class Subscription(Base):
             name="ck_subscriptions_engine_version",
         ),
         CheckConstraint(
-            "execution_status IN ('active', 'paused', 'blocked', 'stopping', 'stopped')",
+            "execution_status IN ("
+            "'active', 'paused', 'blocked', 'stopping', 'stopped')",
             name="ck_subscriptions_execution_status",
         ),
     )

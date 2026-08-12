@@ -14,12 +14,12 @@ from app.models.copy_execution import (
     CopyPositionTarget,
 )
 from app.models.subscription import Subscription
+from app.models.user import User, UserAgent
 from app.services.copy_engine.account_risk import (
     RiskAllocation,
     required_initial_margin,
     risk_increase_allowed,
 )
-from app.models.user import User, UserAgent
 from app.services.copy_engine.account_state import AccountStateReader
 from app.services.copy_engine.allocation_service import apply_filled_delta
 from app.services.copy_engine.execution_state import block_account
@@ -196,10 +196,7 @@ async def recover_intent(order_id: int) -> None:
         order = await db.get(CopyExecutionOrder, order_id)
         if order is None or order.status not in ACTIVE_INTENT_STATUSES:
             return
-        if order.status == "pending":
-            should_execute = True
-        else:
-            should_execute = False
+        should_execute = order.status == "pending"
         state = await db.get(CopyAccountExecutionState, order.user_id)
         if state is None or state.account_address is None:
             return

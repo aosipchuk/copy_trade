@@ -64,7 +64,11 @@ async def copy_engine_health(db: DBSession) -> CopyEngineHealthResponse:
             0.0,
             (datetime.now(tz=UTC).replace(tzinfo=None) - oldest).total_seconds(),
         )
-    status = "ok" if registry_fresh or not settings.copy_engine_v2_live_enabled else "degraded"
+    status = (
+        "ok"
+        if registry_fresh or not settings.copy_engine_v2_live_enabled
+        else "degraded"
+    )
     return CopyEngineHealthResponse(
         status=status,
         live_enabled=settings.copy_engine_v2_live_enabled,

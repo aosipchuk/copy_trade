@@ -35,7 +35,11 @@ async def discover_trader_dexes(
                     dex=dex,
                     discovery_source="fills" if dex else "default",
                     last_fill_time_ms=max(
-                        (fill.time for fill in fills if fill.coin.startswith(f"{dex}:")),
+                        (
+                            fill.time
+                            for fill in fills
+                            if fill.coin.startswith(f"{dex}:")
+                        ),
                         default=None,
                     ),
                 )

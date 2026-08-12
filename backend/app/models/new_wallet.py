@@ -104,7 +104,8 @@ class UserNewWalletSubscription(Base):
             name="ck_user_new_wallet_subscriptions_engine_version",
         ),
         CheckConstraint(
-            "execution_status IN ('active', 'paused', 'blocked', 'stopping', 'stopped')",
+            "execution_status IN ("
+            "'active', 'paused', 'blocked', 'stopping', 'stopped')",
             name="ck_user_new_wallet_subscriptions_execution_status",
         ),
         Index(

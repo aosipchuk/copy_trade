@@ -5,7 +5,6 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AdminUser, CurrentUser, DBSession
-from app.schemas.copy_execution import CopyPreflightResponse, ManagedResumeResponse
 from app.core.config import settings
 from app.models.new_wallet import (
     NewWalletCandidate,
@@ -15,6 +14,7 @@ from app.models.new_wallet import (
 )
 from app.models.subscription import Subscription
 from app.models.trade import UserTrade
+from app.schemas.copy_execution import CopyPreflightResponse, ManagedResumeResponse
 from app.schemas.new_wallet import (
     AdminNewWalletRescanRequest,
     NewWalletCandidateAttachRequest,
@@ -28,6 +28,8 @@ from app.schemas.new_wallet import (
     UserNewWalletItemResponse,
     UserNewWalletSubscriptionResponse,
 )
+from app.services.copy_engine.managed_resume import resume_new_wallet_parent
+from app.services.copy_engine.preflight import run_preflight
 from app.services.hyperliquid.address import normalize_hl_address
 from app.services.hyperliquid.funding_events import get_funding_event_provider
 from app.services.new_wallets.activation import (
@@ -37,8 +39,6 @@ from app.services.new_wallets.activation import (
     get_user_new_wallet_subscription,
     list_user_new_wallet_subscriptions,
 )
-from app.services.copy_engine.managed_resume import resume_new_wallet_parent
-from app.services.copy_engine.preflight import run_preflight
 from app.services.new_wallets.discovery import candidate_status_counts, qualify_address
 
 router = APIRouter(prefix="/new-wallets", tags=["new-wallets"])

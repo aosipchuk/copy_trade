@@ -114,9 +114,13 @@ class MarketRegistry:
         if spec is None:
             raise ValueError(f"Unknown Hyperliquid market: {market.canonical_coin}")
         if not spec.is_active or spec.is_delisted or spec.is_halted:
-            raise ValueError(f"Hyperliquid market is not active: {market.canonical_coin}")
+            raise ValueError(
+                f"Hyperliquid market is not active: {market.canonical_coin}"
+            )
         if spec.mid is None:
-            raise ValueError(f"Hyperliquid market has no valid price: {market.canonical_coin}")
+            raise ValueError(
+                f"Hyperliquid market has no valid price: {market.canonical_coin}"
+            )
         return spec
 
     def cached_snapshot(self) -> RegistrySnapshot | None:

@@ -79,7 +79,9 @@ async def detect_account_drift(user_id: int) -> bool:
             )
         )
         positions = list(position_result.scalars().all())
-        known_keys = {market_id(position.dex, position.coin).key for position in positions}
+        known_keys = {
+            market_id(position.dex, position.coin).key for position in positions
+        }
         for position in positions:
             key = market_id(position.dex, position.coin).key
             actual = actual_by_key.get(key, Decimal("0"))

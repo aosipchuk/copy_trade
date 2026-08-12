@@ -104,7 +104,11 @@ async def prepare_market_intent(
         return PreparedIntent(active_id, aggregate, actual_size)
 
     allocation_deltas = [
-        (target, _decimal(target.target_size) - _decimal(target.confirmed_allocated_size))
+        (
+            target,
+            _decimal(target.target_size)
+            - _decimal(target.confirmed_allocated_size),
+        )
         for target in targets
     ]
     delta = aggregate - actual_size

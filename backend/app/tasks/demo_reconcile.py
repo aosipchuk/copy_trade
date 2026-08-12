@@ -7,7 +7,7 @@ from app.services.copy_engine.demo_executor import reconcile_demo_targets
 
 
 async def reconcile_async() -> int:
-    """Repair v2 demo targets after a worker restart without inferring from v1 trades."""
+    """Repair v2 demo targets after restart without inferring from v1 trades."""
     async with get_db_session() as db:
         result = await db.execute(
             select(Subscription.id)
@@ -27,5 +27,8 @@ async def reconcile_async() -> int:
         )
         subscription_ids = list(result.scalars().all())
     return sum(
-        [await reconcile_demo_targets(subscription_id) for subscription_id in subscription_ids]
+        [
+            await reconcile_demo_targets(subscription_id)
+            for subscription_id in subscription_ids
+        ]
     )

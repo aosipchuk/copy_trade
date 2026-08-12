@@ -48,7 +48,11 @@ async def reconcile_copy_engine_async() -> None:
         try:
             await recover_intent(intent_id)
         except Exception as exc:
-            logger.warning("copy_intent_recovery_failed", intent_id=intent_id, error=str(exc))
+            logger.warning(
+                "copy_intent_recovery_failed",
+                intent_id=intent_id,
+                error=str(exc),
+            )
 
     async with get_db_session() as db:
         position_result = await db.execute(

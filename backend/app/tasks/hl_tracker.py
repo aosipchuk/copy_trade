@@ -13,10 +13,10 @@ from app.models.copy_execution import TraderMarketScope
 from app.models.new_wallet import NewWalletCandidate
 from app.models.subscription import Subscription
 from app.models.trader import Trader, TraderStat
-from app.services.hydromancer.client import HydromancerClient
-from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.copy_engine.leader_discovery import discover_trader_dexes
 from app.services.copy_engine.leader_state import accept_leader_snapshot
+from app.services.hydromancer.client import HydromancerClient
+from app.services.hyperliquid.info_client import HyperliquidInfoClient
 
 logger = get_logger(__name__)
 
@@ -253,7 +253,7 @@ async def track_active_traders_async() -> None:
 
 
 async def discover_leader_markets_async() -> None:
-    """Discover durable HIP-3 scopes without turning the first snapshot into a signal."""
+    """Discover HIP-3 scopes without turning the first snapshot into a signal."""
     traders = await _get_tracked_traders()
     for trader_id, address in traders:
         async with _POLL_SEMAPHORE:
