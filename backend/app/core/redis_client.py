@@ -29,7 +29,7 @@ class RedisClient(Protocol):
 
 
 def get_redis_client() -> RedisClient:
-    client = redis.from_url(  # type: ignore[no-untyped-call]
+    client = redis.from_url(
         settings.redis_url,
         decode_responses=True,
     )
