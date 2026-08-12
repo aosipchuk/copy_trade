@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { fetchDemoPortfolio, resetDemoStats } from '../api/demo'
-import { deleteSubscription, listSubscriptions, updateSubscription } from '../api/subscriptions'
+import { deleteSubscription, listSubscriptions, preflightSubscription, resumeSubscription, updateSubscription } from '../api/subscriptions'
+import { ExecutionStatusCard } from '../components/ExecutionStatusCard'
 import { fetchWalletPositions } from '../api/wallet'
 import { FullPageSpinner } from '../components/LoadingSpinner'
 import { UnsubscribeModal } from '../components/UnsubscribeModal'
@@ -167,7 +168,7 @@ function LiveTab({
     setLoading(true)
     setError(null)
     Promise.all([
-      listSubscriptions(false),
+      listSubscriptions(false, true),
       fetchWalletPositions().catch(() => [] as PositionItem[]),
     ])
       .then(([s, p]) => {
@@ -241,6 +242,7 @@ function LiveTab({
             onCancelEdit={() => setEditId(null)}
             onUpdate={(data) => handleUpdate(sub.id, data)}
             onUnsubscribe={() => setUnsubscribeId(sub.id)}
+            onChanged={reload}
           />
         )
       })}
@@ -632,11 +634,13 @@ function DemoSubscriptionCard({
   openPositions,
   onDetail,
   onUnsubscribe,
+  onChanged,
 }: {
   sub: Subscription
   openPositions: DemoOpenPosition[]
   onDetail: () => void
   onUnsubscribe: () => void
+  onChanged: () => void
 }) {
   const addr = sub.trader_address
   const shortAddr = addr
@@ -814,8 +818,18 @@ function SubscriptionCard({
   return (
     <div className="rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800">
       <div className="px-3 py-3" style={{ background: 'var(--tg-theme-secondary-bg-color)' }}>
+        <ExecutionStatusCard
+          status={sub.execution_status}
+          reason={sub.pause_reason}
+          onPreflight={() => preflightSubscription(sub.id)}
+          onResume={async () => {
+            const result = await resumeSubscription(sub.id)
+            return { warning: result.warning }
+          }}
+          onChanged={onChanged}
+        />
         <button
-          className="w-full text-left active:opacity-70 transition-opacity"
+          className="mt-3 w-full text-left active:opacity-70 transition-opacity"
           onClick={() => navigate(`/traders/${sub.trader_id}`, { state: { fromMyTradesTab: 'live' } })}
         >
           <div className="flex items-center justify-between mb-1">

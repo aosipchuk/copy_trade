@@ -4,6 +4,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { closeAllPositions, deleteAgent, fetchAgentStatus, fetchPortfolioRisk, fetchWalletActivity, fetchWalletBalance, fetchWalletPositions, updatePortfolioRisk, walletApprove, walletBuilderApprove, walletBuilderSetup, walletSetup } from '../api/wallet'
 import { FullPageSpinner, LoadingSpinner } from '../components/LoadingSpinner'
+import { CopyAccountPreflight } from '../components/CopyAccountPreflight'
 import type { ActivityItem, AgentStatus, PortfolioRisk, PositionItem, WalletBalance } from '../types'
 import { fmt } from '../utils/format'
 
@@ -86,6 +87,8 @@ export function WalletPage() {
           <div className="text-xs font-mono text-tg-text break-all">{status.agent_address}</div>
         </div>
       )}
+
+      <CopyAccountPreflight />
 
       <div>
         <h2 className="text-sm font-semibold text-tg-text mb-2">Your Positions ({positions.length})</h2>
@@ -201,7 +204,7 @@ export function WalletPage() {
             setClosingAll(true)
             try {
               const result = await closeAllPositions()
-              alert(`Closed ${result.closed} positions, paused ${result.subscriptions_paused} subscriptions.`)
+              alert(`Accepted ${result.accepted_intents.length} emergency close intents and paused ${result.subscriptions_paused} subscriptions. Final status will follow exchange fills.`)
             } catch {
               alert('Emergency stop failed. Please try again or revoke agent access.')
             } finally {

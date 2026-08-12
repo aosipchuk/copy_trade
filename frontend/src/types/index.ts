@@ -115,6 +115,68 @@ export interface ClosedTradeItem {
 }
 
 export type SizingMode = 'fixed_ratio' | 'fixed_usd' | 'equity_pct'
+export type ExecutionStatus = 'active' | 'paused' | 'blocked' | 'stopping' | 'stopped'
+
+export interface PreflightCheck {
+  code: string
+  ok: boolean
+  message: string
+}
+
+export interface BlockingPosition {
+  dex: string
+  coin: string
+  side: string
+  size: number
+}
+
+export interface BlockingOrder {
+  dex: string
+  coin: string
+  side: string
+  size: number
+  oid: number
+  cloid: string | null
+}
+
+export interface CopyPreflight {
+  ok: boolean
+  account_mode: string | null
+  equity_usd: number | null
+  checked_at: string
+  checks: PreflightCheck[]
+  positions: BlockingPosition[]
+  open_orders: BlockingOrder[]
+}
+
+export interface CopyAccountOption {
+  address: string
+  name: string
+  kind: 'master' | 'subaccount'
+}
+
+export interface CopyAccountState {
+  master_address: string | null
+  account_address: string | null
+  vault_address: string | null
+  account_mode: string | null
+  status: ExecutionStatus
+  reason: string | null
+  dedicated_confirmed_at: string | null
+  options: CopyAccountOption[]
+}
+
+export interface SubscriptionResumeResult {
+  subscription: Subscription
+  baseline_market_count: number
+  warning: string
+}
+
+export interface ManagedResumeResult {
+  child_count: number
+  baseline_market_count: number
+  warning: string
+}
 
 export interface Subscription {
   id: number
@@ -136,6 +198,14 @@ export interface Subscription {
   is_demo: boolean
   expires_at: string | null
   ended_reason: string | null
+  engine_version: number
+  execution_status: ExecutionStatus
+  pause_reason: string | null
+  execution_status_details: Record<string, unknown> | null
+  resumed_at: string | null
+  blocked_at: string | null
+  baseline_market_count: number
+  last_reconciled_at: string | null
   created_at: string
   realized_pnl: number
   unrealized_pnl: number
@@ -373,6 +443,12 @@ export interface UserPortfolioSubscription {
   created_at: string
   updated_at: string
   canceled_at: string | null
+  engine_version: number
+  execution_status: ExecutionStatus
+  pause_reason: string | null
+  execution_status_details: Record<string, unknown> | null
+  resumed_at: string | null
+  blocked_at: string | null
 }
 
 export interface UserPortfolioItem {
@@ -725,6 +801,12 @@ export interface UserNewWalletSubscription {
   created_at: string
   updated_at: string
   canceled_at: string | null
+  engine_version: number
+  execution_status: ExecutionStatus
+  pause_reason: string | null
+  execution_status_details: Record<string, unknown> | null
+  resumed_at: string | null
+  blocked_at: string | null
   items: UserNewWalletItem[]
 }
 

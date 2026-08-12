@@ -3,7 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   cancelNewWalletSubscription,
   fetchNewWalletSubscription,
+  preflightNewWalletSubscription,
+  resumeNewWalletSubscription,
 } from '../api/newWallets'
+import { ExecutionStatusCard } from '../components/ExecutionStatusCard'
 import { FullPageSpinner } from '../components/LoadingSpinner'
 import { useBackButton } from '../hooks/useTelegram'
 import type { UserNewWalletSubscription } from '../types'
@@ -113,6 +116,23 @@ export function NewWalletSubscriptionDetailPage() {
           )}
         />
       </div>
+
+      {!subscription.is_demo && subscription.status !== 'canceled' && (
+        <div className="mx-4 mb-3">
+          <ExecutionStatusCard
+            status={subscription.execution_status}
+            reason={subscription.pause_reason}
+            onPreflight={() => preflightNewWalletSubscription(subscription.id)}
+            onResume={async () => {
+              const result = await resumeNewWalletSubscription(subscription.id)
+              return { warning: result.warning }
+            }}
+            onChanged={() => {
+              fetchNewWalletSubscription(subscription.id).then(setSubscription)
+            }}
+          />
+        </div>
+      )}
 
       {error && <div className="mx-4 mb-3 text-xs text-red-500">{error}</div>}
 

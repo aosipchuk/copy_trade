@@ -14,6 +14,8 @@ import type {
   UserPortfolioSubscriptionCreate,
   UserPortfolioSubscriptionDetail,
   UserPortfolioSubscriptionUpdate,
+  CopyPreflight,
+  ManagedResumeResult,
 } from '../types'
 import { http } from './http'
 
@@ -165,5 +167,15 @@ export async function fetchPortfolioRebalanceHistory(
   const res = await http.get<PortfolioRebalanceEvent[]>(
     `/portfolio-subscriptions/${id}/rebalance-history`,
   )
+  return res.data
+}
+
+export async function preflightPortfolioSubscription(id: number): Promise<CopyPreflight> {
+  const res = await http.post<CopyPreflight>(`/portfolio-subscriptions/${id}/preflight`)
+  return res.data
+}
+
+export async function resumePortfolioSubscription(id: number): Promise<ManagedResumeResult> {
+  const res = await http.post<ManagedResumeResult>(`/portfolio-subscriptions/${id}/resume`)
   return res.data
 }

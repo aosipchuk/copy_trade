@@ -37,8 +37,8 @@ export async function deleteAgent(): Promise<void> {
   await http.delete('/wallet/agent')
 }
 
-export async function closeAllPositions(): Promise<{ closed: number; subscriptions_paused: number }> {
-  const res = await http.post<{ closed: number; subscriptions_paused: number }>('/wallet/close-all')
+export async function closeAllPositions(): Promise<{ closed: number; subscriptions_paused: number; accepted_intents: number[] }> {
+  const res = await http.post<{ closed: number; subscriptions_paused: number; accepted_intents: number[] }>('/wallet/close-all')
   return res.data
 }
 

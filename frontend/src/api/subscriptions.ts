@@ -1,4 +1,4 @@
-import type { Subscription, SubscriptionCreate, SubscriptionUpdate } from '../types'
+import type { CopyPreflight, Subscription, SubscriptionCreate, SubscriptionResumeResult, SubscriptionUpdate } from '../types'
 import { http } from './http'
 
 export async function createSubscription(data: SubscriptionCreate): Promise<Subscription> {
@@ -31,4 +31,14 @@ export async function updateSubscription(id: number, data: SubscriptionUpdate): 
 
 export async function deleteSubscription(id: number, closePositions: boolean): Promise<void> {
   await http.delete(`/subscriptions/${id}`, { params: { close_positions: closePositions } })
+}
+
+export async function preflightSubscription(id: number): Promise<CopyPreflight> {
+  const res = await http.post<CopyPreflight>(`/subscriptions/${id}/preflight`)
+  return res.data
+}
+
+export async function resumeSubscription(id: number): Promise<SubscriptionResumeResult> {
+  const res = await http.post<SubscriptionResumeResult>(`/subscriptions/${id}/resume`)
+  return res.data
 }

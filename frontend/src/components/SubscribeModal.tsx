@@ -96,6 +96,13 @@ export function SubscribeModal({ traderId, onClose, onSuccess, isDemo = false }:
               </p>
             )}
           </div>
+          {!isDemo && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-tg-hint">
+              Live subscriptions start paused. Select a dedicated copy account,
+              pass flat-account preflight, and resume manually. Existing leader
+              positions are baseline-only.
+            </div>
+          )}
           <button className="text-tg-hint text-xl" onClick={onClose}>✕</button>
         </div>
 

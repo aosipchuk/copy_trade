@@ -10,14 +10,18 @@ import {
   fetchPortfolioBillingStatus,
   fetchPortfolioExplanations,
   fetchPortfolioRebalanceHistory,
+  fetchPortfolioSubscription,
   fetchPortfolioSubscriptions,
   fetchPortfolioWeeklyReport,
   generatePortfolioWeeklyReport,
   previewPortfolioRebalance,
+  preflightPortfolioSubscription,
+  resumePortfolioSubscription,
   updatePortfolioSubscription,
 } from '../api/portfolios'
 import { fetchAgentStatus } from '../api/wallet'
 import { FullPageSpinner } from '../components/LoadingSpinner'
+import { ExecutionStatusCard } from '../components/ExecutionStatusCard'
 import { useBackButton } from '../hooks/useTelegram'
 import type {
   AgentStatus,
@@ -456,6 +460,20 @@ export function PortfolioDetailPage() {
           onCancel={handleCancelLive}
           onWalletSetup={() => navigate('/wallet')}
         />
+        {livePortfolioSubscription && livePortfolioSubscription.status !== 'canceled' && (
+          <ExecutionStatusCard
+            status={livePortfolioSubscription.execution_status}
+            reason={livePortfolioSubscription.pause_reason}
+            onPreflight={() => preflightPortfolioSubscription(livePortfolioSubscription.id)}
+            onResume={async () => {
+              const result = await resumePortfolioSubscription(livePortfolioSubscription.id)
+              return { warning: result.warning }
+            }}
+            onChanged={() => {
+              fetchPortfolioSubscription(livePortfolioSubscription.id).then(setLivePortfolioSubscription)
+            }}
+          />
+        )}
         {livePortfolioSubscription && livePortfolioSubscription.status !== 'canceled' && (
           <RebalancePanel
             label="Live rebalance"

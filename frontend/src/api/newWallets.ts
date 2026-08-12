@@ -6,6 +6,8 @@ import type {
   NewWalletSubscriptionCreate,
   NewWalletSummary,
   UserNewWalletSubscription,
+  CopyPreflight,
+  ManagedResumeResult,
 } from '../types'
 import { http } from './http'
 
@@ -73,5 +75,15 @@ export async function cancelNewWalletSubscription(
     `/new-wallet-subscriptions/${id}`,
     { params: { close_positions: closePositions } },
   )
+  return res.data
+}
+
+export async function preflightNewWalletSubscription(id: number): Promise<CopyPreflight> {
+  const res = await http.post<CopyPreflight>(`/new-wallet-subscriptions/${id}/preflight`)
+  return res.data
+}
+
+export async function resumeNewWalletSubscription(id: number): Promise<ManagedResumeResult> {
+  const res = await http.post<ManagedResumeResult>(`/new-wallet-subscriptions/${id}/resume`)
   return res.data
 }
