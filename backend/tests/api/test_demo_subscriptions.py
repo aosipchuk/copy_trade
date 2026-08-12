@@ -35,10 +35,17 @@ _FAKE_HL_ADDRESS = "0x" + "cd" * 20
 @pytest.fixture(autouse=True)
 def _mock_hl_margin():
     """Patch HL account-summary so live subscription creation works without a real HL account."""
-    with patch.object(
-        HyperliquidInfoClient,
-        "get_account_summary",
-        AsyncMock(return_value=_RICH_MARGIN),
+    with (
+        patch.object(
+            HyperliquidInfoClient,
+            "get_account_summary",
+            AsyncMock(return_value=_RICH_MARGIN),
+        ),
+        patch.object(
+            HyperliquidInfoClient,
+            "get_positions",
+            AsyncMock(return_value=[]),
+        ),
     ):
         yield
 
@@ -91,6 +98,7 @@ async def _seed_trader(db_session) -> int:
             period="week",
             pnl_usd=5000,
             roi_pct=10,
+            roi_percent=10,
             volume_usd=100000,
         )
     )

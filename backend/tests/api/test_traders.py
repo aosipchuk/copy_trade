@@ -68,6 +68,7 @@ async def _seed_traders(db_session) -> list[int]:
                 period="week",
                 pnl_usd=float(n) * 1000,
                 roi_pct=float(n) * 5,
+                roi_percent=float(n) * 5,
                 volume_usd=float(n) * 50000,
             )
         )
@@ -95,6 +96,7 @@ async def _seed_null_roi_trader(db_session) -> str:
             period="week",
             pnl_usd=2500,
             roi_pct=None,
+            roi_percent=None,
             volume_usd=75000,
         )
     )

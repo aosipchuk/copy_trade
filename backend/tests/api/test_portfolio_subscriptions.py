@@ -50,10 +50,17 @@ _LOW_MARGIN = MarginSummary(
 
 @pytest.fixture(autouse=True)
 def _mock_hl_margin():
-    with patch.object(
-        HyperliquidInfoClient,
-        "get_account_summary",
-        AsyncMock(return_value=_RICH_MARGIN),
+    with (
+        patch.object(
+            HyperliquidInfoClient,
+            "get_account_summary",
+            AsyncMock(return_value=_RICH_MARGIN),
+        ),
+        patch.object(
+            HyperliquidInfoClient,
+            "get_positions",
+            AsyncMock(return_value=[]),
+        ),
     ):
         yield
 
