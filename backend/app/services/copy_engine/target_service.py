@@ -84,7 +84,7 @@ async def process_signal_target(signal_id: int, subscription_id: int) -> list[st
         current = target_by_key.get(current_market.key)
 
         if current is not None and current.state == "baseline_only":
-            current.leader_size = signal.target_size
+            current.leader_size = _decimal(signal.target_size)
             current.source_signal_id = signal.id
             if _decimal(signal.target_size) != 0:
                 signal.dispatch_status = "dispatched"
@@ -93,10 +93,10 @@ async def process_signal_target(signal_id: int, subscription_id: int) -> list[st
 
         if not allowed_market(subscription.allowed_coins, current_market):
             if current is not None:
-                current.leader_size = signal.target_size
-                current.raw_target_size = 0
-                current.target_size = 0
-                current.target_notional_usd = 0
+                current.leader_size = _decimal(signal.target_size)
+                current.raw_target_size = Decimal("0")
+                current.target_size = Decimal("0")
+                current.target_notional_usd = Decimal("0")
                 current.state = "blocked"
                 current.reason = "market_not_allowed"
             signal.dispatch_status = "dispatched"
