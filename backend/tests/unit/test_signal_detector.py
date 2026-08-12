@@ -26,6 +26,9 @@ class TestDetectChanges:
         assert signals[0].coin == "BTC"
         assert signals[0].side == "long"
         assert signals[0].size == Decimal("0.01")
+        assert signals[0].previous_size == 0
+        assert signals[0].target_size == Decimal("0.01")
+        assert signals[0].delta_size == Decimal("0.01")
 
     def test_close_signal_when_position_disappears(self) -> None:
         prev = [_pos("ETH", "1.0")]
@@ -37,6 +40,8 @@ class TestDetectChanges:
         assert signals[0].signal_type == SignalType.CLOSE
         assert signals[0].coin == "ETH"
         assert signals[0].size is None
+        assert signals[0].target_size == 0
+        assert signals[0].delta_size == Decimal("-1.0")
 
     def test_update_signal_when_size_changes_above_threshold(self) -> None:
         prev = [_pos("SOL", "10.0")]
@@ -72,15 +77,21 @@ class TestDetectChanges:
         assert SignalType.OPEN in types
         assert SignalType.CLOSE in types
 
-    def test_side_change_treated_as_close_then_open(self) -> None:
+    def test_side_change_is_one_signed_flip_target(self) -> None:
         prev = [_pos("BTC", "0.01")]  # long
         curr = [_pos("BTC", "-0.01")]  # short — different (coin, side) key
 
         signals = detect_changes(prev, curr)
-        types = {s.signal_type for s in signals}
+        assert len(signals) == 1
+        assert signals[0].signal_type == SignalType.UPDATE
+        assert signals[0].previous_size == Decimal("0.01")
+        assert signals[0].target_size == Decimal("-0.01")
+        assert signals[0].delta_size == Decimal("-0.02")
 
-        assert SignalType.CLOSE in types  # old long closed
-        assert SignalType.OPEN in types  # new short opened
+    def test_reduction_never_waits_for_update_threshold(self) -> None:
+        signals = detect_changes([_pos("BTC", "1")], [_pos("BTC", "0.99")])
+        assert len(signals) == 1
+        assert signals[0].delta_size == Decimal("-0.01")
 
     def test_empty_snapshots_produce_no_signals(self) -> None:
         assert detect_changes([], []) == []

@@ -309,6 +309,7 @@ class TestPlaceOrderBuilderField:
                     is_buy=True,
                     size=Decimal("0.01"),
                     limit_px=Decimal("50000"),
+                    cloid="0x" + "11" * 16,
                     include_builder=True,
                 )
             )
@@ -344,6 +345,7 @@ class TestPlaceOrderBuilderField:
                     is_buy=True,
                     size=Decimal("0.01"),
                     limit_px=Decimal("50000"),
+                    cloid="0x" + "22" * 16,
                     include_builder=False,
                 )
             )
@@ -384,6 +386,7 @@ class TestPlaceOrderBuilderField:
                     is_buy=True,
                     size=Decimal("0.01"),
                     limit_px=Decimal("50000"),
+                    cloid="0x" + "33" * 16,
                     include_builder=True,
                 )
             )
