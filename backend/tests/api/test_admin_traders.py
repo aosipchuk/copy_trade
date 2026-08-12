@@ -17,9 +17,7 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 def _make_init_data(user_id: int, username: str = "admintest") -> str:
     bot_token = "123456:test"
-    user_data = json.dumps(
-        {"id": user_id, "username": username, "first_name": "Admin"}
-    )
+    user_data = json.dumps({"id": user_id, "username": username, "first_name": "Admin"})
     fields = {"user": user_data, "auth_date": str(int(time.time())), "query_id": "test"}
     data_check_string = "\n".join(
         f"{key}={value}" for key, value in sorted(fields.items())

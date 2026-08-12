@@ -63,9 +63,7 @@ async def test_http_provider_parses_hypurrscan_usdc_transfers() -> None:
 
     provider = HttpFundingEventProvider("https://api.hypurrscan.io/transfers")
     batch = await provider.fetch_events_since(
-        start_time=datetime.fromtimestamp(1_784_570_405, tz=UTC).replace(
-            tzinfo=None
-        ),
+        start_time=datetime.fromtimestamp(1_784_570_405, tz=UTC).replace(tzinfo=None),
         cursor=None,
         limit=10,
     )
@@ -118,9 +116,7 @@ async def test_http_provider_skips_reserved_hyperliquid_addresses() -> None:
 
     provider = HttpFundingEventProvider("https://api.hypurrscan.io/transfers")
     batch = await provider.fetch_events_since(
-        start_time=datetime.fromtimestamp(1_784_570_405, tz=UTC).replace(
-            tzinfo=None
-        ),
+        start_time=datetime.fromtimestamp(1_784_570_405, tz=UTC).replace(tzinfo=None),
         cursor=None,
         limit=10,
     )

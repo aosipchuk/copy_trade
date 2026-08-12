@@ -83,9 +83,7 @@ async def test_get_account_equity_uses_larger_spot_usdc_snapshot() -> None:
         side_effect=[Response(200, json=state), Response(200, json=spot)]
     )
 
-    snapshot = await HyperliquidInfoClient().get_account_equity_usd(
-        "0x" + "aa" * 20
-    )
+    snapshot = await HyperliquidInfoClient().get_account_equity_usd("0x" + "aa" * 20)
 
     assert float(snapshot.balance_usd) == pytest.approx(2000)
     assert snapshot.balance_source == "spot_usdc_total"

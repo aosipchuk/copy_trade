@@ -242,10 +242,7 @@ async def _send_export_failed(chat_id: int) -> None:
     try:
         await bot.send_message(
             chat_id=chat_id,
-            text=(
-                "Не удалось подготовить Excel-файл. "
-                "Попробуйте позже."
-            ),
+            text=("Не удалось подготовить Excel-файл. " "Попробуйте позже."),
         )
     finally:
         await bot.session.close()
