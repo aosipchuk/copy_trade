@@ -65,9 +65,9 @@ async def emergency_close_all(user_id: int) -> EmergencyResult:
             )
         )
         for target in target_result.scalars().all():
-            target.raw_target_size = 0
-            target.target_size = 0
-            target.target_notional_usd = 0
+            target.raw_target_size = Decimal("0")
+            target.target_size = Decimal("0")
+            target.target_notional_usd = Decimal("0")
             target.state = "stopping"
             target.reason = "emergency_close_all_requested"
             target.target_version += 1

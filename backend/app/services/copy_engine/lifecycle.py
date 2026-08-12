@@ -27,9 +27,9 @@ async def stop_subscription_targets(
     for target in targets:
         if Decimal(str(target.target_size)) == 0:
             continue
-        target.raw_target_size = 0
-        target.target_size = 0
-        target.target_notional_usd = 0
+        target.raw_target_size = Decimal("0")
+        target.target_size = Decimal("0")
+        target.target_notional_usd = Decimal("0")
         target.state = "stopping"
         target.reason = reason
         target.target_version = next_version

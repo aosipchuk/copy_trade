@@ -158,7 +158,7 @@ async def prepare_market_intent(
             await db.flush()
             await apply_internal_reallocation(db, order)
         position.status = "clean"
-        position.pending_explained_delta = 0
+        position.pending_explained_delta = Decimal("0")
         return PreparedIntent(None, aggregate, actual_size)
 
     order_params = delta_to_order(

@@ -279,7 +279,7 @@ def test_optimizer_rejects_high_correlation_candidate() -> None:
 def test_candidate_metrics_load_daily_pnl_snapshot_for_correlation() -> None:
     class Stat:
         pnl_usd = None
-        roi_pct = None
+        roi_percent = None
         volume_usd = None
         win_rate_pct = None
         max_drawdown_pct = 12.0

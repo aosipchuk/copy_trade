@@ -389,17 +389,17 @@ def _summary_rows(
     ]
 
     for period in ("day", "week", "month", "allTime"):
-        stat = period_stats.get(period)
-        if stat is None:
+        period_row = period_stats.get(period)
+        if period_row is None:
             continue
         rows.append(
             [
                 period,
-                _cell(stat.roi_pct, STYLE_NUMBER),
-                _cell(stat.pnl_usd, STYLE_USD),
-                _cell(stat.volume_usd, STYLE_USD),
-                _cell(stat.trade_count, STYLE_INTEGER),
-                _cell(stat.win_rate_pct, STYLE_NUMBER),
+                _cell(period_row.roi_pct, STYLE_NUMBER),
+                _cell(period_row.pnl_usd, STYLE_USD),
+                _cell(period_row.volume_usd, STYLE_USD),
+                _cell(period_row.trade_count, STYLE_INTEGER),
+                _cell(period_row.win_rate_pct, STYLE_NUMBER),
             ]
         )
 

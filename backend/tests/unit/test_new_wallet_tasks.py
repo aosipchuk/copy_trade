@@ -16,15 +16,21 @@ class FakeResult:
     def all(self):
         return self._rows
 
+    def scalars(self):
+        return self
+
 
 class FakeSession:
     def __init__(self, rows):
         self.rows = rows
+        self.execute_count = 0
+
+    async def execute(self, *_args, **_kwargs):
+        self.execute_count += 1
+        return FakeResult(self.rows if self.execute_count == 1 else [])
 
     async def __aenter__(self):
-        db = AsyncMock()
-        db.execute = AsyncMock(return_value=FakeResult(self.rows))
-        return db
+        return self
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
@@ -67,7 +73,7 @@ async def test_expiry_deactivates_before_demo_close(monkeypatch) -> None:
     )
     close_mock = AsyncMock(return_value=0)
     with patch(
-        "app.services.demo_service.close_demo_subscription_positions",
+        "app.services.copy_engine.demo_executor.reconcile_demo_targets",
         close_mock,
     ):
         await expire_new_wallet_subscriptions_async()

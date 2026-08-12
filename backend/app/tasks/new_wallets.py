@@ -187,11 +187,13 @@ async def expire_new_wallet_subscriptions_async() -> None:
             expired_count += 1
             from app.services.copy_engine.lifecycle import stop_subscription_targets
 
-            await stop_subscription_targets(
+            pending_targets = await stop_subscription_targets(
                 db,
                 subscription,
                 reason="new_wallet_ttl_expired",
             )
+            if pending_targets == 0:
+                item.status = "expired"
             if subscription.is_demo:
                 demo_to_close.append(subscription.id)
             else:
