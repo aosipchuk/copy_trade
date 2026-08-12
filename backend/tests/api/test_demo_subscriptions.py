@@ -12,10 +12,16 @@ from urllib.parse import urlencode
 import pytest
 from sqlalchemy import insert, select, update
 
+from app.models.copy_execution import CopyPositionTarget
 from app.models.signal import Signal
 from app.models.trade import UserTrade
 from app.models.trader import Trader, TraderStat
 from app.models.user import User
+from app.services.copy_engine.market_registry import (
+    MarketRegistry,
+    MarketSpec,
+    RegistrySnapshot,
+)
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
 from app.services.hyperliquid.models import MarginSummary
 
@@ -552,12 +558,47 @@ class TestDemoPortfolio:
                 is_demo=True,
             )
         )
+        await db_session.execute(
+            insert(CopyPositionTarget).values(
+                subscription_id=sub_id,
+                dex="",
+                coin="BTC",
+                leader_size=Decimal("2"),
+                raw_target_size=Decimal("2"),
+                target_size=Decimal("2"),
+                confirmed_allocated_size=Decimal("2"),
+                target_notional_usd=Decimal("200"),
+                price_snapshot=Decimal("100"),
+                sizing_mode="fixed_ratio",
+                state="active",
+                source_signal_id=signal_id,
+                target_version=1,
+            )
+        )
         await db_session.commit()
 
+        snapshot = RegistrySnapshot(
+            loaded_at=time.time(),
+            dex_names=("",),
+            markets={
+                "|BTC": MarketSpec(
+                    dex="",
+                    coin="BTC",
+                    asset_id=0,
+                    sz_decimals=5,
+                    max_leverage=50,
+                    collateral_token=None,
+                    mid_price="105",
+                    is_active=True,
+                    is_delisted=False,
+                    is_halted=False,
+                )
+            },
+        )
         with patch.object(
-            HyperliquidInfoClient,
-            "get_all_mids",
-            AsyncMock(return_value={"BTC": "105.0"}),
+            MarketRegistry,
+            "get_snapshot",
+            AsyncMock(return_value=snapshot),
         ):
             delete_r = await client.delete(
                 f"/api/subscriptions/{sub_id}",

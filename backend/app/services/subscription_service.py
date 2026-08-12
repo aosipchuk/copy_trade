@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -474,7 +474,22 @@ async def list_subscriptions(
         Subscription.is_demo.is_(is_demo),
     ]
     if not include_inactive:
-        filters.append(Subscription.is_active.is_(True))
+        if is_demo:
+            filters.append(Subscription.is_active.is_(True))
+        else:
+            # V2 live subscriptions are deliberately inactive while they wait
+            # for preflight/manual resume, but must remain visible to the user.
+            filters.append(
+                or_(
+                    Subscription.is_active.is_(True),
+                    and_(
+                        Subscription.engine_version == 2,
+                        Subscription.execution_status.in_(
+                            ("paused", "blocked", "stopping")
+                        ),
+                    ),
+                )
+            )
 
     result = await db.execute(
         select(Subscription)
@@ -592,6 +607,12 @@ async def delete_subscription(
                 "A live subscription with non-zero targets cannot be detached"
             )
     await stop_subscription_targets(db, sub, reason="user_requested_stop")
+    if sub.is_demo:
+        from app.services.copy_engine.demo_executor import (
+            reconcile_demo_targets_in_session,
+        )
+
+        await reconcile_demo_targets_in_session(db, sub)
 
 
 async def _get_owned(
