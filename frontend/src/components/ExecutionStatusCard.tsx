@@ -59,7 +59,7 @@ export function ExecutionStatusCard({ status, reason, onPreflight, onResume, onC
       <p className="mt-1 text-tg-hint">
         {reason === 'engine_v2_reconciliation_required'
           ? 'Migration safety pause: verify and close positions/open orders, then run preflight and resume manually.'
-          : reason?.replaceAll('_', ' ') ?? 'Manual preflight is required.'}
+          : reason?.split('_').join(' ') ?? 'Manual preflight is required.'}
       </p>
       {preflight && (
         <div className="mt-2 space-y-1">

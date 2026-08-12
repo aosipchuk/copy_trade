@@ -634,13 +634,11 @@ function DemoSubscriptionCard({
   openPositions,
   onDetail,
   onUnsubscribe,
-  onChanged,
 }: {
   sub: Subscription
   openPositions: DemoOpenPosition[]
   onDetail: () => void
   onUnsubscribe: () => void
-  onChanged: () => void
 }) {
   const addr = sub.trader_address
   const shortAddr = addr
@@ -793,6 +791,7 @@ function SubscriptionCard({
   onCancelEdit,
   onUpdate,
   onUnsubscribe,
+  onChanged,
 }: {
   sub: Subscription
   unrealizedPnl: number
@@ -801,6 +800,7 @@ function SubscriptionCard({
   onCancelEdit: () => void
   onUpdate: (data: SubscriptionUpdate) => void
   onUnsubscribe: () => void
+  onChanged: () => void
 }) {
   const navigate = useNavigate()
   const [allocation, setAllocation] = useState(sub.max_allocation_usd)
