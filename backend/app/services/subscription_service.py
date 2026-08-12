@@ -7,6 +7,7 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
+from app.models.copy_execution import CopyPositionTarget
 from app.models.portfolio import UserPortfolioSubscription
 from app.models.subscription import Subscription
 from app.models.trade import UserTrade
@@ -73,6 +74,12 @@ def _response_from_parts(
         is_demo=sub.is_demo,
         expires_at=sub.expires_at,
         ended_reason=sub.ended_reason,
+        engine_version=sub.engine_version,
+        execution_status=sub.execution_status,
+        pause_reason=sub.pause_reason,
+        execution_status_details=sub.execution_status_details,
+        resumed_at=sub.resumed_at,
+        blocked_at=sub.blocked_at,
         created_at=sub.created_at,
         realized_pnl=stats.realized_pnl,
         unrealized_pnl=stats.unrealized_pnl,
@@ -429,26 +436,6 @@ async def create_subscription(
         if not user_hl_address:
             raise ValueError("HL wallet address required to create a subscription")
 
-        if margin_summary is None:
-            try:
-                hl = HyperliquidInfoClient()
-                margin_summary = await hl.get_account_summary(user_hl_address)
-            except Exception as exc:
-                logger.error("subscription_equity_fetch_failed", error=str(exc))
-                raise ValueError(
-                    "Failed to fetch HL account data — try again later"
-                ) from exc
-
-        allowed, reason = await check_portfolio_risk(
-            db,
-            user_id,
-            data.max_allocation_usd,
-            float(data.max_leverage),
-            margin_summary,
-        )
-        if not allowed:
-            raise ValueError(reason)
-
     sub = Subscription(
         user_id=user_id,
         trader_id=data.trader_id,
@@ -463,12 +450,19 @@ async def create_subscription(
         source_id=source_id,
         source_version_id=source_version_id,
         managed_by_portfolio=managed_by_portfolio,
-        is_active=True,
+        is_active=data.is_demo,
         is_demo=data.is_demo,
         expires_at=expires_at,
+        engine_version=2,
+        execution_status="active" if data.is_demo else "paused",
+        pause_reason=None if data.is_demo else "preflight_required",
     )
     db.add(sub)
     await db.flush()
+    if data.is_demo:
+        from app.services.copy_engine.resume import initialize_subscription_baseline
+
+        await initialize_subscription_baseline(db, sub, trader)
     return await _to_response(db, sub)
 
 
@@ -566,6 +560,11 @@ async def update_subscription(
     if "allowed_coins" in data.model_fields_set:
         sub.allowed_coins = data.allowed_coins
 
+    if not sub.is_demo and sub.execution_status == "active":
+        sub.is_active = False
+        sub.execution_status = "paused"
+        sub.pause_reason = "settings_changed_preflight_required"
+
     return await _to_response(
         db,
         sub,
@@ -582,25 +581,20 @@ async def delete_subscription(
 ) -> None:
     sub = await _get_owned(db, user_id, subscription_id)
 
-    if sub.is_demo:
-        from app.services.demo_service import (  # noqa: PLC0415
-            close_demo_subscription_positions,
+    from app.services.copy_engine.lifecycle import stop_subscription_targets
+
+    if not close_positions and not sub.is_demo:
+        target_result = await db.execute(
+            select(CopyPositionTarget.id).where(
+                CopyPositionTarget.subscription_id == sub.id,
+                CopyPositionTarget.target_size != 0,
+            )
         )
-
-        await close_demo_subscription_positions(db, sub)
-        sub.is_active = False
-        return
-
-    sub.is_active = False
-
-    if close_positions:
-        from app.tasks.execution_tasks import (
-            close_subscription_positions_async,  # noqa: PLC0415
-        )
-
-        asyncio.create_task(
-            close_subscription_positions_async(user_id, subscription_id)
-        )
+        if target_result.first() is not None:
+            raise ValueError(
+                "A live subscription with non-zero targets cannot be detached"
+            )
+    await stop_subscription_targets(db, sub, reason="user_requested_stop")
 
 
 async def _get_owned(

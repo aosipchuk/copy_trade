@@ -12,12 +12,25 @@ def _drop_color_message_key(
     return event_dict
 
 
+def _redact_sensitive_fields(
+    logger: logging.Logger,
+    method: str,
+    event_dict: EventDict,
+) -> EventDict:
+    for key in tuple(event_dict):
+        normalized = key.lower()
+        if normalized in {"agent_key", "private_key", "signature"}:
+            event_dict[key] = "[REDACTED]"
+    return event_dict
+
+
 def configure_logging(log_level: str = "INFO", json_logs: bool = False) -> None:
     shared_processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         _drop_color_message_key,
+        _redact_sensitive_fields,
     ]
 
     if json_logs:

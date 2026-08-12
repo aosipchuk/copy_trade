@@ -28,6 +28,12 @@ async def save_signals(
             size=event.size,
             entry_price=event.entry_price,
             leverage=event.leverage,
+            dex=event.dex,
+            previous_size=event.previous_size,
+            target_size=event.target_size,
+            delta_size=event.delta_size,
+            engine_version=2,
+            dispatch_status="accepted",
         )
         db.add(sig)
         await db.flush()

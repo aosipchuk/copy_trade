@@ -83,6 +83,8 @@ class ClearinghouseState(BaseModel):
 
     asset_positions: list[AssetPosition] = Field(alias="assetPositions")
     margin_summary: MarginSummary | None = Field(None, alias="marginSummary")
+    cross_margin_summary: MarginSummary | None = Field(None, alias="crossMarginSummary")
+    withdrawable: Decimal | None = None
 
     @property
     def open_positions(self) -> list[Position]:
@@ -178,6 +180,9 @@ class Fill(BaseModel):
     dir: str  # "Open Long", "Close Short", etc.
     oid: int
     fee: Decimal = Field(default=Decimal("0"))
+    start_position: Decimal | None = Field(None, alias="startPosition")
+    hash: str | None = None
+    tid: int | None = None
 
 
 class AssetMeta(BaseModel):
@@ -186,15 +191,90 @@ class AssetMeta(BaseModel):
     name: str
     sz_decimals: int = Field(alias="szDecimals")
     max_leverage: int = Field(alias="maxLeverage")
+    is_delisted: bool = Field(False, alias="isDelisted")
+    margin_table_id: int | None = Field(None, alias="marginTableId")
 
 
 class Meta(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     universe: list[AssetMeta]
+    collateral_token: int | None = Field(None, alias="collateralToken")
 
     def asset_index(self, coin: str) -> int | None:
         for i, asset in enumerate(self.universe):
             if asset.name == coin:
                 return i
         return None
+
+
+class AssetContext(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    mark_px: Decimal | None = Field(None, alias="markPx")
+    oracle_px: Decimal | None = Field(None, alias="oraclePx")
+    mid_px: Decimal | None = Field(None, alias="midPx")
+    open_interest: Decimal | None = Field(None, alias="openInterest")
+
+
+class OpenOrder(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    coin: str
+    oid: int
+    side: str
+    size: Decimal = Field(alias="sz")
+    limit_price: Decimal = Field(alias="limitPx")
+    reduce_only: bool = Field(False, alias="reduceOnly")
+    cloid: str | None = None
+    timestamp: int | None = None
+
+
+class UserAbstraction(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    abstraction: str | None = None
+    dex_abstraction_enabled: bool | None = Field(None, alias="dexAbstractionEnabled")
+
+    @property
+    def mode(self) -> str:
+        if self.abstraction in (None, "disabled"):
+            return "legacy_dex_abstraction" if self.dex_abstraction_enabled else "standard"
+        if self.abstraction == "unifiedAccount":
+            return "unified"
+        if self.abstraction == "portfolioMargin":
+            return "portfolio_margin"
+        return "unknown"
+
+
+class SubAccount(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    name: str
+    sub_account_user: str = Field(alias="subAccountUser")
+    master: str
+
+
+class PlacementResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    oid: int | None = None
+    filled_size: Decimal = Decimal("0")
+    average_price: Decimal | None = None
+    error: str | None = None
+
+
+class OrderStatusResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    oid: int | None = None
+    cloid: str | None = None
+    status_timestamp: int | None = None
+
+
+class PerpDex(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    name: str

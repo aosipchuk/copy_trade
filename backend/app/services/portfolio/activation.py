@@ -487,7 +487,7 @@ async def activate_user_portfolio_subscription(
 
         user = await _load_user(db, user_id)
         user_hl_address = await _require_live_wallet_ready(db, user)
-        margin_summary = await _fetch_margin_summary(user_hl_address, user_id)
+        margin_summary = None
 
         logger.info(
             "portfolio_activation_started",
@@ -511,11 +511,17 @@ async def activate_user_portfolio_subscription(
                 billing_provider=(
                     "admin_override" if user_has_beta_override(user) else None
                 ),
+                engine_version=2,
+                execution_status="paused",
+                pause_reason="preflight_required",
             )
             db.add(portfolio_subscription)
             await db.flush()
         else:
             portfolio_subscription.status = "active"
+            portfolio_subscription.engine_version = 2
+            portfolio_subscription.execution_status = "paused"
+            portfolio_subscription.pause_reason = "preflight_required"
             portfolio_subscription.auto_rebalance = data.auto_rebalance
             portfolio_subscription.total_allocation_usd = data.total_allocation_usd
             portfolio_subscription.close_removed_positions = (
@@ -555,7 +561,7 @@ async def activate_user_portfolio_subscription(
                         trader_id=allocation.trader_id,
                         target_allocation_usd=float(target_allocation),
                         target_weight_pct=allocation.target_weight_pct,
-                        status="active",
+                        status="paused",
                     )
                 )
         except ValueError as exc:
@@ -614,6 +620,8 @@ async def activate_user_portfolio_subscription(
         auto_rebalance=data.auto_rebalance,
         total_allocation_usd=data.total_allocation_usd,
         close_removed_positions=data.close_removed_positions,
+        engine_version=2,
+        execution_status="active",
     )
     db.add(portfolio_subscription)
     await db.flush()
@@ -678,6 +686,8 @@ async def cancel_user_portfolio_subscription(
 
     now = _now()
     portfolio_subscription.status = "canceled"
+    portfolio_subscription.execution_status = "stopping"
+    portfolio_subscription.pause_reason = "portfolio_canceled"
     portfolio_subscription.canceled_at = now
     disabled_subscription_count = await deactivate_portfolio_owned_subscriptions(
         db,

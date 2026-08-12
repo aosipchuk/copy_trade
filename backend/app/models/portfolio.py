@@ -199,6 +199,14 @@ class UserPortfolioSubscription(Base):
             "status IN ('trialing', 'active', 'past_due', 'paused', 'canceled')",
             name="ck_user_portfolio_subscriptions_status",
         ),
+        CheckConstraint(
+            "engine_version IN (1, 2)",
+            name="ck_user_portfolio_subscriptions_engine_version",
+        ),
+        CheckConstraint(
+            "execution_status IN ('active', 'paused', 'blocked', 'stopping', 'stopped')",
+            name="ck_user_portfolio_subscriptions_execution_status",
+        ),
         Index(
             "uq_user_portfolio_subscriptions_active_version_mode",
             "user_id",
@@ -244,6 +252,14 @@ class UserPortfolioSubscription(Base):
         server_default=func.now(), onupdate=func.now(), nullable=False
     )
     canceled_at: Mapped[datetime | None] = mapped_column()
+    engine_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    execution_status: Mapped[str] = mapped_column(
+        Text, default="paused", server_default="paused", nullable=False
+    )
+    pause_reason: Mapped[str | None] = mapped_column(Text)
+    execution_status_details: Mapped[JsonDict | None] = mapped_column(JSONB)
+    resumed_at: Mapped[datetime | None] = mapped_column()
+    blocked_at: Mapped[datetime | None] = mapped_column()
 
     user: Mapped["User"] = relationship(  # type: ignore[name-defined]
         back_populates="portfolio_subscriptions"

@@ -69,6 +69,9 @@ async def create_or_reactivate_new_wallet_subscription(
             sizing_mode=data.sizing_mode,
             allowed_coins=data.allowed_coins,
             close_positions_on_expire=True,
+            engine_version=2,
+            execution_status="active" if data.is_demo else "paused",
+            pause_reason=None if data.is_demo else "preflight_required",
         )
         db.add(parent)
     else:
@@ -84,9 +87,14 @@ async def create_or_reactivate_new_wallet_subscription(
         parent.allowed_coins = data.allowed_coins
         parent.close_positions_on_expire = True
         parent.canceled_at = None
+        parent.engine_version = 2
+        parent.execution_status = "active" if data.is_demo else "paused"
+        parent.pause_reason = None if data.is_demo else "preflight_required"
 
     await db.flush()
     if (
+        (parent.is_demo or parent.execution_status == "active")
+        and
         settings.new_wallet_discovery_enabled
         and settings.new_wallet_auto_attach_enabled
     ):
@@ -100,7 +108,7 @@ async def attach_qualified_new_wallets_for_parent(
     *,
     user: User | None = None,
 ) -> int:
-    if parent.status != "active":
+    if parent.status != "active" or parent.execution_status != "active":
         return 0
 
     user_obj = user
@@ -120,11 +128,7 @@ async def attach_qualified_new_wallets_for_parent(
 
     if not parent.is_demo:
         await _require_live_wallet_and_agent(db, user_obj)
-        margin_summary = await HyperliquidInfoClient().get_account_summary(
-            user_obj.hl_address or ""
-        )
-    else:
-        margin_summary = None
+    margin_summary = None
 
     attached = 0
     candidates = await _eligible_candidates(db, parent, limit=available_slots)
@@ -175,11 +179,7 @@ async def attach_new_wallet_candidate_for_user(
 
     if not parent.is_demo:
         await _require_live_wallet_and_agent(db, user)
-        margin_summary = await HyperliquidInfoClient().get_account_summary(
-            user.hl_address or ""
-        )
-    else:
-        margin_summary = None
+    margin_summary = None
 
     child_id = await _attach_candidate_to_parent(
         db,
@@ -208,7 +208,11 @@ async def attach_qualified_new_wallets(db: AsyncSession) -> int:
         return 0
     parent_result = await db.execute(
         select(UserNewWalletSubscription)
-        .where(UserNewWalletSubscription.status == "active")
+        .where(
+            UserNewWalletSubscription.status == "active",
+            UserNewWalletSubscription.execution_status == "active",
+            UserNewWalletSubscription.engine_version == 2,
+        )
         .order_by(UserNewWalletSubscription.created_at.asc())
         .limit(settings.new_wallet_max_attach_per_run)
     )
@@ -384,6 +388,22 @@ async def _attach_candidate_to_parent(
         margin_summary=margin_summary,
         expires_at=expires_at,
     )
+    child_subscription = await db.get(Subscription, child.id)
+    if (
+        child_subscription is not None
+        and not parent.is_demo
+        and parent.execution_status == "active"
+    ):
+        from app.models.trader import Trader
+        from app.services.copy_engine.resume import initialize_subscription_baseline
+
+        trader = await db.get(Trader, candidate.trader_id)
+        if trader is None:
+            raise ValueError("New-wallet trader no longer exists")
+        await initialize_subscription_baseline(db, child_subscription, trader)
+        child_subscription.execution_status = "active"
+        child_subscription.pause_reason = None
+        child_subscription.is_active = True
     db.add(
         UserNewWalletItem(
             user_new_wallet_subscription_id=parent.id,
@@ -391,7 +411,11 @@ async def _attach_candidate_to_parent(
             subscription_id=child.id,
             trader_id=candidate.trader_id,
             target_allocation_usd=float(target_allocation),
-            status="active",
+            status=(
+                "active"
+                if parent.is_demo or parent.execution_status == "active"
+                else "paused"
+            ),
             expires_at=expires_at,
         )
     )

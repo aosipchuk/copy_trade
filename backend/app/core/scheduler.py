@@ -12,16 +12,19 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 def setup_scheduler() -> None:
     """Register all periodic jobs. Called once from FastAPI lifespan."""
     from app.tasks.analytics_tasks import compute_quality_metrics_async
+    from app.tasks.copy_reconcile import reconcile_copy_engine_async
     from app.tasks.demo_reconcile import reconcile_async
     from app.tasks.execution_tasks import (
         check_stop_losses_async,
         monitor_pending_trades_async,
     )
     from app.tasks.hl_tracker import (
+        discover_leader_markets_async,
         refresh_human_scores_async,
         refresh_leaderboard_async,
         track_active_traders_async,
     )
+    from app.tasks.market_registry import refresh_market_registry_async
     from app.tasks.new_wallets import (
         attach_qualified_new_wallets_async,
         discover_new_wallets_async,
@@ -43,6 +46,27 @@ def setup_scheduler() -> None:
         track_active_traders_async,
         IntervalTrigger(seconds=5),
         id="track_active_traders",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        discover_leader_markets_async,
+        IntervalTrigger(seconds=settings.copy_engine_discovery_interval_seconds),
+        id="discover_leader_markets",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        refresh_market_registry_async,
+        IntervalTrigger(seconds=settings.copy_engine_registry_refresh_seconds),
+        id="refresh_copy_market_registry",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        reconcile_copy_engine_async,
+        IntervalTrigger(seconds=settings.copy_engine_reconcile_interval_seconds),
+        id="reconcile_copy_engine_v2",
         replace_existing=True,
         max_instances=1,
     )

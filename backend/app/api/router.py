@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api import (
     admin_traders,
     auth,
+    copy_execution,
     demo,
     health,
     new_wallets,
@@ -25,6 +26,7 @@ api_router.include_router(traders.export_router)
 api_router.include_router(traders.router)
 api_router.include_router(ws_traders.router)
 api_router.include_router(wallet.router)
+api_router.include_router(copy_execution.router)
 api_router.include_router(subscriptions.router)
 api_router.include_router(new_wallets.router)
 api_router.include_router(new_wallets.subscription_router)

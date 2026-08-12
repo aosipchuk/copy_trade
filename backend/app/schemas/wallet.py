@@ -68,6 +68,7 @@ class WalletBuilderApproveRequest(BaseModel):
 class CloseAllResponse(BaseModel):
     closed: int
     subscriptions_paused: int
+    accepted_intents: list[int] = Field(default_factory=list)
 
 
 class ActivityItem(BaseModel):

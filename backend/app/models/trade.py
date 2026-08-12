@@ -14,17 +14,24 @@ class UserTrade(Base):
     subscription_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("subscriptions.id"), nullable=False
     )
-    signal_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("signals.id"), nullable=False
+    signal_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("signals.id"), nullable=True
+    )
+    execution_order_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("copy_execution_orders.id")
+    )
+    execution_allocation_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("copy_execution_allocations.id")
     )
     hl_order_id: Mapped[int | None] = mapped_column(BigInteger)
     coin: Mapped[str | None] = mapped_column(Text)
+    dex: Mapped[str] = mapped_column(Text, default="", server_default="")
     side: Mapped[str | None] = mapped_column(Text)  # long|short
     size: Mapped[float | None] = mapped_column(Numeric(20, 8))
     price: Mapped[float | None] = mapped_column(Numeric(20, 4))
     trade_type: Mapped[str | None] = mapped_column(Text)  # 'open' | 'close'
     realized_pnl: Mapped[float | None] = mapped_column(Numeric(20, 4))
-    # pending|filled|failed|cancelled
+    # pending|filled|failed|cancelled|unknown
     status: Mapped[str] = mapped_column(Text, default="pending", nullable=False)
     error_msg: Mapped[str | None] = mapped_column(Text)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

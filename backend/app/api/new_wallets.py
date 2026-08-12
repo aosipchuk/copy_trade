@@ -5,6 +5,7 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AdminUser, CurrentUser, DBSession
+from app.schemas.copy_execution import CopyPreflightResponse, ManagedResumeResponse
 from app.core.config import settings
 from app.models.new_wallet import (
     NewWalletCandidate,
@@ -36,6 +37,8 @@ from app.services.new_wallets.activation import (
     get_user_new_wallet_subscription,
     list_user_new_wallet_subscriptions,
 )
+from app.services.copy_engine.managed_resume import resume_new_wallet_parent
+from app.services.copy_engine.preflight import run_preflight
 from app.services.new_wallets.discovery import candidate_status_counts, qualify_address
 
 router = APIRouter(prefix="/new-wallets", tags=["new-wallets"])
@@ -301,6 +304,52 @@ async def get_subscription(
     return await _subscription_response(db, parent)
 
 
+@subscription_router.post(
+    "/{subscription_id}/preflight",
+    response_model=CopyPreflightResponse,
+)
+async def preflight_subscription(
+    subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> CopyPreflightResponse:
+    try:
+        await get_user_new_wallet_subscription(
+            db,
+            user_id=current_user.id,
+            subscription_id=subscription_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await run_preflight(db, current_user, persist=True)
+
+
+@subscription_router.post(
+    "/{subscription_id}/resume",
+    response_model=ManagedResumeResponse,
+)
+async def resume_subscription(
+    subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> ManagedResumeResponse:
+    try:
+        result = await resume_new_wallet_parent(
+            db,
+            user=current_user,
+            parent_id=subscription_id,
+        )
+        return ManagedResumeResponse(
+            child_count=result.child_count,
+            baseline_market_count=result.baseline_market_count,
+            warning=result.warning,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @subscription_router.delete(
     "/{subscription_id}",
     response_model=UserNewWalletSubscriptionResponse,
@@ -490,6 +539,12 @@ async def _subscription_response(
         created_at=parent.created_at,
         updated_at=parent.updated_at,
         canceled_at=parent.canceled_at,
+        engine_version=parent.engine_version,
+        execution_status=parent.execution_status,
+        pause_reason=parent.pause_reason,
+        execution_status_details=parent.execution_status_details,
+        resumed_at=parent.resumed_at,
+        blocked_at=parent.blocked_at,
         items=items,
     )
 

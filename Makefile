@@ -1,6 +1,6 @@
 .PHONY: up down build logs shell test lint typecheck migrate makemigrations install clean \
         prod-up prod-down prod-logs prod-build prod-target prod-check-target \
-        deploy deploy-backend deploy-frontend run
+        deploy deploy-backend deploy-frontend deploy-copy-engine-v2 run
 
 PROD_ENV_FILE ?= $(if $(wildcard ./.env.prod),.env.prod,.env)
 
@@ -102,6 +102,16 @@ deploy-backend:
 deploy-frontend:
 	$(PROD_COMPOSE) build frontend
 	$(PROD_COMPOSE) up -d --no-deps frontend
+
+# One-time v2 rollout: build while v1 runs, then stop the scheduler before SQL
+# changes. A failed migration deliberately leaves backend stopped.
+deploy-copy-engine-v2:
+	@test "$${COPY_ENGINE_V2_LIVE_ENABLED:-false}" = "false" || \
+		(echo "COPY_ENGINE_V2_LIVE_ENABLED must be false for migration"; exit 1)
+	$(PROD_COMPOSE) build backend frontend
+	$(PROD_COMPOSE) stop backend
+	$(PROD_COMPOSE) run --rm --no-deps backend sh -c "uv run alembic upgrade head"
+	$(PROD_COMPOSE) up -d --no-deps backend frontend
 
 # ─── Development ─────────────────────────────────────────────────────────────
 

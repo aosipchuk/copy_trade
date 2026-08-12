@@ -9,6 +9,7 @@ from sqlalchemy import (
     Numeric,
     Text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -21,6 +22,14 @@ class Subscription(Base):
         CheckConstraint(
             "source_type IN ('manual', 'model_portfolio', 'new_wallet')",
             name="ck_subscriptions_source_type",
+        ),
+        CheckConstraint(
+            "engine_version IN (1, 2)",
+            name="ck_subscriptions_engine_version",
+        ),
+        CheckConstraint(
+            "execution_status IN ('active', 'paused', 'blocked', 'stopping', 'stopped')",
+            name="ck_subscriptions_execution_status",
         ),
     )
 
@@ -52,6 +61,14 @@ class Subscription(Base):
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column()
     ended_reason: Mapped[str | None] = mapped_column(Text)
+    engine_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    execution_status: Mapped[str] = mapped_column(
+        Text, default="paused", server_default="paused", nullable=False
+    )
+    pause_reason: Mapped[str | None] = mapped_column(Text)
+    execution_status_details: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    resumed_at: Mapped[datetime | None] = mapped_column()
+    blocked_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     user: Mapped["User"] = relationship(  # type: ignore[name-defined]

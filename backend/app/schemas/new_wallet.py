@@ -134,6 +134,12 @@ class UserNewWalletSubscriptionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     canceled_at: datetime | None
+    engine_version: int
+    execution_status: str
+    pause_reason: str | None = None
+    execution_status_details: dict[str, object] | None = None
+    resumed_at: datetime | None = None
+    blocked_at: datetime | None = None
     items: list[UserNewWalletItemResponse] = Field(default_factory=list)
 
 

@@ -2,7 +2,6 @@ import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from pydantic import TypeAdapter
 from sqlalchemy import case, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import func
@@ -10,23 +9,20 @@ from sqlalchemy.sql import func
 from app.core.config import settings
 from app.core.database import get_db_session
 from app.core.logging import get_logger
-from app.core.redis_client import get_redis_client
+from app.models.copy_execution import TraderMarketScope
 from app.models.new_wallet import NewWalletCandidate
 from app.models.subscription import Subscription
 from app.models.trader import Trader, TraderStat
 from app.services.hydromancer.client import HydromancerClient
 from app.services.hyperliquid.info_client import HyperliquidInfoClient
-from app.services.hyperliquid.models import Position
-from app.services.signal_detector import SignalEvent, detect_changes
-from app.services.signal_publisher import save_signals
+from app.services.copy_engine.leader_discovery import discover_trader_dexes
+from app.services.copy_engine.leader_state import accept_leader_snapshot
 
 logger = get_logger(__name__)
 
-_MIN_30D_ROI = Decimal("0.03")  # Level 1: minimum 30-day ROI (3%)
+_MIN_30D_ROI_RATIO = Decimal("0.03")  # HL boundary: 0.03 == 3%
 _MIN_ACCOUNT_VALUE_USD = 1_000  # skip empty / abandoned accounts
 _MAX_TRADERS = 5_000  # safety cap against unexpected leaderboard growth
-_SNAPSHOT_TTL = 60  # seconds in Redis
-_position_adapter: TypeAdapter[list[Position]] = TypeAdapter(list[Position])
 
 # Limit concurrent HL HTTP requests to avoid memory spikes in a single uvicorn process.
 # With Celery, each poll ran in a separate worker; now all run in the same asyncio loop.
@@ -40,14 +36,6 @@ def _utcnow() -> datetime:
     return datetime.now(tz=UTC).replace(tzinfo=None)
 
 
-def _serialize_positions(positions: list[Position]) -> str:
-    return _position_adapter.dump_json(positions).decode()
-
-
-def _deserialize_positions(raw: str) -> list[Position]:
-    return _position_adapter.validate_json(raw)
-
-
 # ─── Async business logic ─────────────────────────────────────────────────────
 
 
@@ -57,7 +45,7 @@ def _filter_leaderboard(all_rows: list) -> list:  # type: ignore[type-arg]
         row
         for row in all_rows
         if (month := row.get_perf("month")) is not None
-        and month.roi > _MIN_30D_ROI
+        and month.roi > _MIN_30D_ROI_RATIO
         and row.account_value >= _MIN_ACCOUNT_VALUE_USD
     ]
     return filtered[:_MAX_TRADERS]
@@ -120,12 +108,14 @@ async def refresh_leaderboard_async() -> int:
                         .values(
                             trader_id=trader_id,
                             period=period,
-                            roi_pct=float(perf.roi),
+                            roi_pct=perf.roi,
+                            roi_percent=perf.roi * Decimal("100"),
                         )
                         .on_conflict_do_update(
                             constraint="trader_stats_pkey",
                             set_={
-                                "roi_pct": float(perf.roi),
+                                "roi_pct": perf.roi,
+                                "roi_percent": perf.roi * Decimal("100"),
                                 "updated_at": func.now(),
                             },
                         )
@@ -160,10 +150,10 @@ async def refresh_leaderboard_async() -> int:
     return len(rows)
 
 
-async def _get_tracked_addresses() -> list[str]:
+async def _get_tracked_traders() -> list[tuple[int, str]]:
     async with get_db_session() as db:
         result = await db.execute(
-            select(Trader.hl_address)
+            select(Trader.id, Trader.hl_address)
             .join(Subscription, Subscription.trader_id == Trader.id)
             .where(
                 Subscription.is_active == True,  # noqa: E712
@@ -175,10 +165,14 @@ async def _get_tracked_addresses() -> list[str]:
             )
             .distinct()
         )
-        return list(result.scalars().all())
+        return [(int(row[0]), str(row[1])) for row in result.all()]
 
 
-async def _poll_trader_positions_async(trader_address: str) -> int:
+async def _poll_trader_positions_async(
+    trader_id: int,
+    trader_address: str,
+    dex: str,
+) -> int:
     """
     1. Fetch current positions from Hyperliquid.
     2. Compare with previous snapshot stored in Redis.
@@ -187,34 +181,15 @@ async def _poll_trader_positions_async(trader_address: str) -> int:
     Returns number of signals detected.
     """
     client = HyperliquidInfoClient()
-    curr_positions = await client.get_positions(trader_address)
-
-    redis_cli = get_redis_client()
-    snap_key = f"hl:snapshot:{trader_address}"
-
-    prev_raw: str | None = redis_cli.get(snap_key)
-    prev_positions = _deserialize_positions(prev_raw) if prev_raw else []
-
-    # Persist current snapshot
-    redis_cli.setex(snap_key, _SNAPSHOT_TTL, _serialize_positions(curr_positions))
-
-    if prev_raw is None:
-        return 0  # first snapshot — no baseline to compare
-
-    events: list[SignalEvent] = detect_changes(prev_positions, curr_positions)
-    if not events:
-        return 0
+    curr_positions = await client.get_positions(trader_address, dex)
 
     async with get_db_session() as db:
-        result = await db.execute(
-            select(Trader).where(Trader.hl_address == trader_address)
+        signal_ids = await accept_leader_snapshot(
+            db,
+            trader_id=trader_id,
+            dex=dex,
+            positions=curr_positions,
         )
-        trader: Trader | None = result.scalar_one_or_none()
-        if trader is None:
-            logger.warning("poll_trader_not_in_db", address=trader_address)
-            return 0
-
-        signal_ids = await save_signals(db, trader.id, trader_address, events)
 
     # Dispatch fan-out tasks outside the DB transaction
     from app.tasks.signal_consumer import (
@@ -232,26 +207,69 @@ async def _poll_trader_positions_async(trader_address: str) -> int:
     return len(signal_ids)
 
 
-async def _poll_and_execute(trader_address: str) -> None:
+async def _poll_and_execute(
+    trader_id: int,
+    trader_address: str,
+    dex: str,
+) -> None:
     """Poll one trader and fan-out copy trades for all subscribers."""
     async with _POLL_SEMAPHORE:
         try:
-            await _poll_trader_positions_async(trader_address)
+            await _poll_trader_positions_async(trader_id, trader_address, dex)
         except Exception as exc:
-            logger.error("poll_positions_failed", trader=trader_address, error=str(exc))
+            logger.error(
+                "poll_positions_failed",
+                trader=trader_address,
+                dex=dex,
+                error=str(exc),
+            )
 
 
 async def track_active_traders_async() -> None:
     """Poll positions for all traders with active subscribers in parallel."""
-    addresses = await _get_tracked_addresses()
-    if not addresses:
+    traders = await _get_tracked_traders()
+    if not traders:
         return
+    async with get_db_session() as db:
+        trader_ids = [trader_id for trader_id, _ in traders]
+        scope_result = await db.execute(
+            select(TraderMarketScope.trader_id, TraderMarketScope.dex).where(
+                TraderMarketScope.trader_id.in_(trader_ids)
+            )
+        )
+        scopes_by_trader: dict[int, list[str]] = {}
+        for trader_id, dex in scope_result.all():
+            scopes_by_trader.setdefault(int(trader_id), []).append(str(dex))
     results = await asyncio.gather(
-        *[_poll_and_execute(addr) for addr in addresses],
+        *[
+            _poll_and_execute(trader_id, address, dex)
+            for trader_id, address in traders
+            for dex in scopes_by_trader.get(trader_id, [""])
+        ],
         return_exceptions=True,
     )
     failed = sum(1 for r in results if isinstance(r, Exception))
-    logger.debug("tracking_dispatched", count=len(addresses), failed=failed)
+    logger.debug("tracking_dispatched", count=len(results), failed=failed)
+
+
+async def discover_leader_markets_async() -> None:
+    """Discover durable HIP-3 scopes without turning the first snapshot into a signal."""
+    traders = await _get_tracked_traders()
+    for trader_id, address in traders:
+        async with _POLL_SEMAPHORE:
+            try:
+                async with get_db_session() as db:
+                    await discover_trader_dexes(
+                        db,
+                        trader_id=trader_id,
+                        trader_address=address,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "leader_market_discovery_failed",
+                    trader=address,
+                    error=str(exc),
+                )
 
 
 async def refresh_human_scores_async() -> int:

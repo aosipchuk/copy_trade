@@ -23,6 +23,7 @@ from tenacity import (
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.hyperliquid.models import PlacementResult
 
 logger = get_logger(__name__)
 
@@ -112,13 +113,23 @@ class HyperliquidExchangeClient:
         is_buy: bool,
         size: Decimal,
         limit_px: Decimal,
+        cloid: str,
         reduce_only: bool = False,
         include_builder: bool = False,
-    ) -> int | None:
+        vault_address: str | None = None,
+    ) -> PlacementResult:
         """
         Place an IOC limit order on behalf of the agent.
-        Returns Hyperliquid order ID, or None if the order was rejected.
+        The caller persists ``cloid`` before this call. A transport timeout is
+        deliberately raised so the reconciler can recover by cloid.
         """
+        normalized_cloid = cloid.lower()
+        if (
+            len(normalized_cloid) != 34
+            or not normalized_cloid.startswith("0x")
+        ):
+            raise ValueError("cloid must be a 128-bit 0x-prefixed hex string")
+        int(normalized_cloid[2:], 16)
         nonce = int(time.time() * 1000)
         action: dict[str, Any] = {
             "type": "order",
@@ -130,6 +141,7 @@ class HyperliquidExchangeClient:
                     "s": str(size),
                     "r": reduce_only,
                     "t": {"limit": {"tif": "Ioc"}},
+                    "c": normalized_cloid,
                 }
             ],
             "grouping": "na",
@@ -143,29 +155,43 @@ class HyperliquidExchangeClient:
                 "b": settings.builder_address.lower(),
                 "f": settings.builder_fee_rate,
             }
-        signature = _sign_l1_action(agent_key, action, nonce, self._is_mainnet)
-        result = await self._post(
-            {"action": action, "nonce": nonce, "signature": signature}
-        )  # noqa: E501
+        signature = _sign_l1_action(
+            agent_key, action, nonce, self._is_mainnet, vault_address
+        )
+        payload: dict[str, Any] = {
+            "action": action,
+            "nonce": nonce,
+            "signature": signature,
+        }
+        if vault_address is not None:
+            payload["vaultAddress"] = vault_address.lower()
+        result = await self._post(payload)
 
         if result.get("status") != "ok":
             logger.warning("hl_order_rejected", coin=coin, response=result)
-            return None
+            return PlacementResult(status="failed", error=str(result))
 
         statuses: list[Any] = (
             result.get("response", {}).get("data", {}).get("statuses", [])
         )  # noqa: E501
         if not statuses:
-            return None
+            return PlacementResult(status="unknown", error="Empty order status")
 
         first = statuses[0]
         if "resting" in first:
-            return int(first["resting"]["oid"])
+            return PlacementResult(status="submitted", oid=int(first["resting"]["oid"]))
         if "filled" in first:
-            return int(first["filled"]["oid"])
+            filled = first["filled"]
+            return PlacementResult(
+                status="filled",
+                oid=int(filled["oid"]),
+                filled_size=Decimal(str(filled.get("totalSz", size))),
+                average_price=Decimal(str(filled.get("avgPx", limit_px))),
+            )
         if "error" in first:
             logger.warning("hl_order_error", coin=coin, error=first["error"])
-        return None
+            return PlacementResult(status="failed", error=str(first["error"]))
+        return PlacementResult(status="unknown", error="Unrecognized order response")
 
     async def close_position(
         self,
@@ -175,8 +201,10 @@ class HyperliquidExchangeClient:
         is_long: bool,
         size: Decimal,
         limit_px: Decimal,
+        cloid: str,
         include_builder: bool = False,
-    ) -> int | None:
+        vault_address: str | None = None,
+    ) -> PlacementResult:
         """Close an existing position using a reduce-only IOC order."""
         return await self.place_order(
             agent_key=agent_key,
@@ -185,29 +213,60 @@ class HyperliquidExchangeClient:
             is_buy=not is_long,
             size=size,
             limit_px=limit_px,
+            cloid=cloid,
             reduce_only=True,
             include_builder=include_builder,
+            vault_address=vault_address,
         )
 
-    async def get_order_status(self, owner_address: str, order_id: int) -> str:
+    async def get_order_status(self, owner_address: str, order_id: int | str) -> str:
         """
         Return order status: 'open' | 'filled' | 'cancelled' | 'unknown'.
         Uses Info API since exchange API has no dedicated status endpoint.
         """
         from app.services.hyperliquid.info_client import HyperliquidInfoClient
 
-        client = HyperliquidInfoClient()
-        data: dict[str, Any] = await client._post(
-            {"type": "orderStatus", "user": owner_address, "oid": order_id}
+        return (await HyperliquidInfoClient().get_order_status(
+            owner_address,
+            order_id,
+        )).status
+
+    async def cancel_by_cloid(
+        self,
+        *,
+        agent_key: str,
+        asset_index: int,
+        cloid: str,
+        vault_address: str | None = None,
+    ) -> PlacementResult:
+        """Explicit recovery primitive; callers must query status before cancel."""
+        nonce = int(time.time() * 1000)
+        action: dict[str, Any] = {
+            "type": "cancelByCloid",
+            "cancels": [{"asset": asset_index, "cloid": cloid.lower()}],
+        }
+        signature = _sign_l1_action(
+            agent_key,
+            action,
+            nonce,
+            self._is_mainnet,
+            vault_address,
         )
-        status = data.get("order", {}).get("status", "unknown")
-        if status == "open":
-            return "open"
-        if status in ("filled", "triggered"):
-            return "filled"
-        if status in ("cancelled", "marginCancelled"):
-            return "cancelled"
-        return "unknown"
+        payload: dict[str, Any] = {
+            "action": action,
+            "nonce": nonce,
+            "signature": signature,
+        }
+        if vault_address is not None:
+            payload["vaultAddress"] = vault_address.lower()
+        result = await self._post(payload)
+        if result.get("status") != "ok":
+            return PlacementResult(status="failed", error=str(result))
+        statuses = result.get("response", {}).get("data", {}).get("statuses", [])
+        first = statuses[0] if statuses else None
+        if first == "success":
+            return PlacementResult(status="cancelled")
+        return PlacementResult(status="failed", error=str(first or result))
 
     def build_approve_agent_payload(
         self, agent_address: str, nonce: int

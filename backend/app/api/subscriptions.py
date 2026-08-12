@@ -3,9 +3,13 @@ from fastapi import APIRouter, HTTPException, status
 from app.api.deps import CurrentUser, DBSession
 from app.schemas.subscription import (
     SubscriptionCreate,
+    SubscriptionResumeResponse,
     SubscriptionResponse,
     SubscriptionUpdate,
 )
+from app.schemas.copy_execution import CopyPreflightResponse
+from app.services.copy_engine.preflight import run_preflight
+from app.services.copy_engine.resume import resume_subscription
 from app.services.subscription_service import (
     create_subscription,
     delete_subscription,
@@ -61,6 +65,59 @@ async def get_one(
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+
+@router.post(
+    "/{subscription_id}/preflight",
+    response_model=CopyPreflightResponse,
+)
+async def preflight_subscription(
+    subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> CopyPreflightResponse:
+    try:
+        await get_subscription(db, current_user.id, subscription_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return await run_preflight(db, current_user, persist=True)
+
+
+@router.post(
+    "/{subscription_id}/resume",
+    response_model=SubscriptionResumeResponse,
+)
+async def resume(
+    subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> SubscriptionResumeResponse:
+    try:
+        result = await resume_subscription(
+            db,
+            user=current_user,
+            subscription_id=subscription_id,
+        )
+        response = await get_subscription(db, current_user.id, subscription_id)
+        response.baseline_market_count = result.baseline_market_count
+        return SubscriptionResumeResponse(
+            subscription=response,
+            baseline_market_count=result.baseline_market_count,
+            warning=result.warning,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
         ) from exc
 
 

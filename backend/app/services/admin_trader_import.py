@@ -156,6 +156,7 @@ async def _upsert_trader_stats(
             "trader_id": trader_id,
             "period": period,
             "roi_pct": None,
+            "roi_percent": None,
             "pnl_usd": pnl_usd,
             "volume_usd": volume_usd,
             "updated_at": updated_at,
@@ -164,7 +165,7 @@ async def _upsert_trader_stats(
         update_values = {
             key: value
             for key, value in insert_values.items()
-            if key not in {"trader_id", "period", "roi_pct"}
+            if key not in {"trader_id", "period", "roi_pct", "roi_percent"}
         }
         stmt = (
             pg_insert(TraderStat)

@@ -99,6 +99,14 @@ class UserNewWalletSubscription(Base):
             "status IN ('active', 'paused', 'canceled')",
             name="ck_user_new_wallet_subscriptions_status",
         ),
+        CheckConstraint(
+            "engine_version IN (1, 2)",
+            name="ck_user_new_wallet_subscriptions_engine_version",
+        ),
+        CheckConstraint(
+            "execution_status IN ('active', 'paused', 'blocked', 'stopping', 'stopped')",
+            name="ck_user_new_wallet_subscriptions_execution_status",
+        ),
         Index(
             "ix_user_new_wallet_subscriptions_user_status_mode",
             "user_id",
@@ -146,6 +154,14 @@ class UserNewWalletSubscription(Base):
         server_default=func.now(), onupdate=func.now(), nullable=False
     )
     canceled_at: Mapped[datetime | None] = mapped_column()
+    engine_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    execution_status: Mapped[str] = mapped_column(
+        Text, default="paused", server_default="paused", nullable=False
+    )
+    pause_reason: Mapped[str | None] = mapped_column(Text)
+    execution_status_details: Mapped[JsonDict | None] = mapped_column(JSONB)
+    resumed_at: Mapped[datetime | None] = mapped_column()
+    blocked_at: Mapped[datetime | None] = mapped_column()
 
     user: Mapped["User"] = relationship(  # type: ignore[name-defined]
         back_populates="new_wallet_subscriptions"
@@ -164,7 +180,7 @@ class UserNewWalletItem(Base):
             name="uq_user_new_wallet_items_subscription",
         ),
         CheckConstraint(
-            "status IN ('active', 'expired', 'failed', 'removed')",
+            "status IN ('active', 'paused', 'expired', 'failed', 'removed')",
             name="ck_user_new_wallet_items_status",
         ),
         Index("ix_user_new_wallet_items_subscription", "subscription_id"),

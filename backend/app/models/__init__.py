@@ -1,3 +1,12 @@
+from app.models.copy_execution import (
+    CopyAccountExecutionState,
+    CopyAccountPosition,
+    CopyExecutionAllocation,
+    CopyExecutionOrder,
+    CopyPositionTarget,
+    TraderMarketScope,
+    TraderPositionState,
+)
 from app.models.new_wallet import (
     NewWalletCandidate,
     NewWalletFundingLink,
@@ -40,4 +49,11 @@ __all__ = [
     "PortfolioRebalanceEvent",
     "PortfolioBacktest",
     "PortfolioReport",
+    "TraderMarketScope",
+    "TraderPositionState",
+    "CopyAccountExecutionState",
+    "CopyPositionTarget",
+    "CopyAccountPosition",
+    "CopyExecutionOrder",
+    "CopyExecutionAllocation",
 ]

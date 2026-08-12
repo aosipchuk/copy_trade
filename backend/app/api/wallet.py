@@ -223,29 +223,14 @@ async def close_all_positions(
             detail="No HL address configured.",
         )
 
-    # Count open positions
-    hl = HyperliquidInfoClient()
-    positions = await hl.get_positions(current_user.hl_address)
-    position_count = len(positions)
+    from app.services.copy_engine.emergency import emergency_close_all
 
-    # Deactivate all active subscriptions
-    sub_res = await db.execute(
-        select(Subscription).where(
-            Subscription.user_id == current_user.id,
-            Subscription.is_active == True,  # noqa: E712
-        )
+    result = await emergency_close_all(current_user.id)
+    return CloseAllResponse(
+        closed=0,
+        subscriptions_paused=result.subscription_count,
+        accepted_intents=result.accepted_intent_ids,
     )
-    subs = sub_res.scalars().all()
-    sub_count = len(subs)
-    for sub in subs:
-        sub.is_active = False
-
-    # Schedule close in background (fire-and-forget)
-    from app.tasks.execution_tasks import close_all_positions_for_user_async
-
-    asyncio.create_task(close_all_positions_for_user_async(current_user.id))
-
-    return CloseAllResponse(closed=position_count, subscriptions_paused=sub_count)
 
 
 @router.get("/activity", response_model=list[ActivityItem])

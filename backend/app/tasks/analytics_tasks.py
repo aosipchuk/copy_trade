@@ -84,7 +84,7 @@ async def _compute_quality_metrics_async() -> int:
     trader_stat_month = aliased(TraderStat)
     async with get_db_session() as db:
         result = await db.execute(
-            select(Trader.id, Trader.hl_address, trader_stat_month.roi_pct)
+            select(Trader.id, Trader.hl_address, trader_stat_month.roi_percent)
             .outerjoin(
                 trader_stat_month,
                 (trader_stat_month.trader_id == Trader.id)
@@ -93,7 +93,7 @@ async def _compute_quality_metrics_async() -> int:
             .where(Trader.is_active == True)  # noqa: E712
             # Highest 30-day ROI first: the traders users are most likely to view
             # get fresh metrics earliest each cycle. NULL ROI processed last.
-            .order_by(trader_stat_month.roi_pct.desc().nulls_last())
+            .order_by(trader_stat_month.roi_percent.desc().nulls_last())
         )
         traders = result.all()
 

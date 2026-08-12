@@ -62,6 +62,8 @@ async def _due_auto_rebalance_subscription_ids() -> list[tuple[int, int]]:
             )
             .where(
                 UserPortfolioSubscription.auto_rebalance.is_(True),
+                UserPortfolioSubscription.execution_status == "active",
+                UserPortfolioSubscription.engine_version == 2,
                 UserPortfolioSubscription.status.in_(
                     ("trialing", "active", "past_due", "paused")
                 ),

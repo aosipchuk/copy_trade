@@ -6,6 +6,7 @@ from sqlalchemy import and_, exists, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.models.copy_execution import CopyAccountExecutionState
 from app.models.new_wallet import UserNewWalletItem, UserNewWalletSubscription
 from app.models.portfolio import UserPortfolioItem, UserPortfolioSubscription
 from app.models.signal import Signal
@@ -33,12 +34,16 @@ def subscription_execution_allowed_clause() -> ColumnElement[bool]:
         UserPortfolioSubscription.user_id == Subscription.user_id,
         UserPortfolioSubscription.is_demo == Subscription.is_demo,
         UserPortfolioSubscription.status.in_(PORTFOLIO_EXECUTION_STATUSES),
+        UserPortfolioSubscription.execution_status == "active",
+        UserPortfolioSubscription.engine_version == 2,
     )
     new_wallet_parent_is_active = exists().where(
         UserNewWalletSubscription.id == Subscription.source_id,
         UserNewWalletSubscription.user_id == Subscription.user_id,
         UserNewWalletSubscription.is_demo == Subscription.is_demo,
         UserNewWalletSubscription.status == "active",
+        UserNewWalletSubscription.execution_status == "active",
+        UserNewWalletSubscription.engine_version == 2,
     )
     new_wallet_item_is_active = exists().where(
         UserNewWalletItem.subscription_id == Subscription.id,
@@ -73,13 +78,23 @@ async def executable_subscription_targets_for_signal(
 ) -> list[ExecutableSubscriptionTarget]:
     signal_result = await db.execute(select(Signal).where(Signal.id == signal_id))
     signal = signal_result.scalar_one_or_none()
-    if signal is None:
+    if signal is None or signal.engine_version != 2:
+        if signal is not None:
+            signal.dispatch_status = "skipped_legacy"
         return []
+
+    live_account_is_active = exists().where(
+        CopyAccountExecutionState.user_id == Subscription.user_id,
+        CopyAccountExecutionState.status == "active",
+    )
 
     result = await db.execute(
         select(Subscription.id, Subscription.user_id, Subscription.is_demo).where(
             Subscription.trader_id == signal.trader_id,
             Subscription.is_active.is_(True),
+            Subscription.engine_version == 2,
+            Subscription.execution_status == "active",
+            or_(Subscription.is_demo.is_(True), live_account_is_active),
             subscription_execution_allowed_clause(),
         )
     )

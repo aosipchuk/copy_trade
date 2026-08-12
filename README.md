@@ -1,5 +1,9 @@
 # Copy-Trade — Telegram Mini App
 
+Copy Engine v2 live execution работает в fail-closed режиме и по умолчанию
+выключен. Production migration и ручное возобновление описаны в
+[`docs/copy_engine_v2_runbook.md`](docs/copy_engine_v2_runbook.md).
+
 Telegram Mini App для автоматического копирования сделок топовых трейдеров Hyperliquid. Бэкенд опрашивает лидерборд каждые 5 секунд, обнаруживает изменения в позициях и исполняет зеркальные ордера через агентские кошельки пользователей с подписью EIP-712.
 
 ## Как это работает

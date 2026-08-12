@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     # most-viewed get metrics; the rest keep NULL metrics until they rank higher.
     # This bounds the dominant background HL load that drives 429 storms.
     hl_quality_metrics_max_traders: int = 1000
+    copy_engine_v2_live_enabled: bool = False
+    copy_engine_registry_refresh_seconds: int = 300
+    copy_engine_registry_stale_seconds: int = 900
+    copy_engine_reconcile_interval_seconds: int = 5
+    copy_engine_discovery_interval_seconds: int = 60
 
     # Hydromancer (human-score filtering)
     hydromancer_api_key: str = ""

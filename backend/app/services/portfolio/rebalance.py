@@ -235,6 +235,8 @@ async def _load_rebalance_context(
     portfolio_subscription, user, portfolio, from_version = row
     if portfolio_subscription.status not in ACTIVE_REBALANCE_STATUSES:
         raise ValueError("Canceled portfolio subscriptions cannot be rebalanced.")
+    if portfolio_subscription.execution_status != "active":
+        raise ValueError("Paused or blocked portfolio execution cannot be rebalanced.")
 
     current_result = await db.execute(
         select(ModelPortfolioVersion)
@@ -947,6 +949,8 @@ def _apply_target_to_existing_item(
     )
     subscription.source_version_id = target_version_id
     subscription.is_active = True
+    subscription.engine_version = 2
+    subscription.execution_status = "active"
 
     item.item.portfolio_version_id = target_version_id
     item.item.allocation_id = allocation.id
@@ -1036,6 +1040,24 @@ async def _apply_rebalance_mutations(
             managed_by_portfolio=True,
             margin_summary=margin_summary,
         )
+        child_subscription = await db.get(Subscription, subscription_response.id)
+        if (
+            child_subscription is not None
+            and not ctx.portfolio_subscription.is_demo
+            and ctx.portfolio_subscription.execution_status == "active"
+        ):
+            from app.services.copy_engine.resume import (
+                initialize_subscription_baseline,
+            )
+
+            await initialize_subscription_baseline(
+                db,
+                child_subscription,
+                allocation.trader,
+            )
+            child_subscription.execution_status = "active"
+            child_subscription.pause_reason = None
+            child_subscription.is_active = True
         db.add(
             UserPortfolioItem(
                 user_portfolio_subscription_id=ctx.portfolio_subscription.id,
@@ -1045,7 +1067,11 @@ async def _apply_rebalance_mutations(
                 trader_id=allocation.trader_id,
                 target_allocation_usd=float(target_allocation),
                 target_weight_pct=float(allocation.target_weight_pct),
-                status="active",
+                status=(
+                    "active"
+                    if ctx.portfolio_subscription.execution_status == "active"
+                    else "paused"
+                ),
             )
         )
 

@@ -1,31 +1,5 @@
 from decimal import Decimal
 
-# Top-20 coins by volume on Hyperliquid (MVP whitelist)
-COIN_WHITELIST: frozenset[str] = frozenset(
-    [
-        "BTC",
-        "ETH",
-        "SOL",
-        "ARB",
-        "AVAX",
-        "DOGE",
-        "LINK",
-        "BNB",
-        "OP",
-        "SUI",
-        "INJ",
-        "APT",
-        "ATOM",
-        "MATIC",
-        "LTC",
-        "NEAR",
-        "FIL",
-        "ADA",
-        "XRP",
-        "TON",
-    ]
-)
-
 # Minimum trade size in USD
 MIN_TRADE_USD: Decimal = Decimal("10")
 

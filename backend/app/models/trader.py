@@ -1,7 +1,15 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, Numeric, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Integer,
+    Numeric,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -45,6 +53,14 @@ class Trader(Base):
 
 class TraderStat(Base):
     __tablename__ = "trader_stats"
+    __table_args__ = (
+        CheckConstraint(
+            "roi_percent IS NULL OR ("
+            "roi_percent::text NOT IN ('NaN', 'Infinity', '-Infinity') AND "
+            "roi_percent BETWEEN -1000000 AND 1000000)",
+            name="ck_trader_stats_roi_percent_finite_range",
+        ),
+    )
 
     trader_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("traders.id"), primary_key=True
@@ -52,6 +68,9 @@ class TraderStat(Base):
     period: Mapped[str] = mapped_column(Text, primary_key=True)  # day|week|month|all
     pnl_usd: Mapped[float | None] = mapped_column(Numeric(20, 4))
     roi_pct: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    # Canonical application unit: 5.0 means 5%. roi_pct remains the legacy
+    # Hyperliquid ratio during the rollback-safe dual-write period.
+    roi_percent: Mapped[float | None] = mapped_column(Numeric(20, 8))
     volume_usd: Mapped[float | None] = mapped_column(Numeric(20, 2))
     win_rate_pct: Mapped[float | None] = mapped_column(Numeric(5, 2))
     max_drawdown_usd: Mapped[float | None] = mapped_column(Numeric(20, 4))

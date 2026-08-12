@@ -163,7 +163,7 @@ def _make_stat_schema(stat: TraderStat) -> TraderStatSchema:
     return TraderStatSchema(
         period=stat.period,
         pnl_usd=_f(stat.pnl_usd),
-        roi_pct=_f(stat.roi_pct),
+        roi_pct=_f(stat.roi_percent),
         volume_usd=_f(stat.volume_usd),
         win_rate_pct=_f(stat.win_rate_pct),
         max_drawdown_usd=_f(stat.max_drawdown_usd),
@@ -217,7 +217,7 @@ async def list_traders(
     min_roi: float = Query(default=0, ge=-100),
 ) -> TraderListResponse:
     sort_col = {
-        "roi": TraderStat.roi_pct,
+        "roi": TraderStat.roi_percent,
         "pnl": TraderStat.pnl_usd,
         "volume": TraderStat.volume_usd,
     }[sort]
@@ -293,7 +293,7 @@ async def list_traders(
         col_cal = TraderStat.calmar_ratio
         query = query.where(or_(col_cal >= min_calmar, col_cal.is_(None)))
     if min_roi != 0:
-        query = query.where(TraderStat.roi_pct >= min_roi)
+        query = query.where(TraderStat.roi_percent >= min_roi)
 
     if cursor:
         try:
@@ -337,7 +337,7 @@ async def list_traders(
         if last_stat is None:
             sort_val = None
         elif sort == "roi":
-            sort_val = last_stat.roi_pct
+            sort_val = last_stat.roi_percent
         elif sort == "pnl":
             sort_val = last_stat.pnl_usd
         else:

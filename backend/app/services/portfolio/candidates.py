@@ -43,7 +43,7 @@ def _float_mapping(value: object) -> dict[str, float] | None:
 def metrics_from_stat(stat: TraderStat) -> CandidateMetrics:
     return CandidateMetrics(
         pnl_usd=_float(stat.pnl_usd),
-        roi_pct=_float(stat.roi_pct),
+        roi_pct=_float(stat.roi_percent),
         volume_usd=_float(stat.volume_usd),
         win_rate_pct=_float(stat.win_rate_pct),
         max_drawdown_pct=_float(stat.max_drawdown_pct),

@@ -54,7 +54,7 @@ async def get_trader_stats(db: AsyncSession, trader_id: int) -> list[TraderStatS
         TraderStatSchema(
             period=r.period,
             pnl_usd=_f(r.pnl_usd),
-            roi_pct=_f(r.roi_pct),
+            roi_pct=_f(r.roi_percent),
             volume_usd=_f(r.volume_usd),
             win_rate_pct=_f(r.win_rate_pct),
             max_drawdown_usd=_f(r.max_drawdown_usd),

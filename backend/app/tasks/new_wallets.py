@@ -158,6 +158,7 @@ async def attach_qualified_new_wallets_async() -> None:
 async def expire_new_wallet_subscriptions_async() -> None:
     now = _utcnow()
     live_to_close: list[tuple[int, int]] = []
+    demo_to_close: list[int] = []
     expired_count = 0
 
     async with get_db_session() as db:
@@ -171,40 +172,43 @@ async def expire_new_wallet_subscriptions_async() -> None:
             )
             .where(
                 UserNewWalletItem.status == "active",
+                UserNewWalletSubscription.execution_status == "active",
+                UserNewWalletSubscription.engine_version == 2,
+                Subscription.execution_status == "active",
+                Subscription.engine_version == 2,
                 UserNewWalletItem.expires_at <= now,
                 Subscription.source_type == "new_wallet",
             )
         )
         rows = result.all()
         for item, subscription, parent in rows:
-            subscription.is_active = False
             subscription.ended_reason = "new_wallet_ttl_expired"
-            item.status = "expired"
-            item.ended_at = now
+            item.status = "paused"
             expired_count += 1
+            from app.services.copy_engine.lifecycle import stop_subscription_targets
 
+            await stop_subscription_targets(
+                db,
+                subscription,
+                reason="new_wallet_ttl_expired",
+            )
             if subscription.is_demo:
-                try:
-                    from app.services.demo_service import (
-                        close_demo_subscription_positions,
-                    )
-
-                    await close_demo_subscription_positions(db, subscription)
-                except Exception as exc:
-                    item.status = "failed"
-                    item.error_msg = str(exc)
-                    logger.error(
-                        "new_wallet_close_positions_failed",
-                        subscription_id=subscription.id,
-                        is_demo=True,
-                        error=str(exc),
-                    )
-                    get_redis_client().incrby(
-                        "new_wallets:metrics:expiry_failures",
-                        1,
-                    )
+                demo_to_close.append(subscription.id)
             else:
                 live_to_close.append((subscription.user_id, subscription.id))
+
+    for subscription_id in demo_to_close:
+        try:
+            from app.services.copy_engine.demo_executor import reconcile_demo_targets
+
+            await reconcile_demo_targets(subscription_id)
+        except Exception as exc:
+            logger.error(
+                "new_wallet_close_positions_failed",
+                subscription_id=subscription_id,
+                is_demo=True,
+                error=str(exc),
+            )
 
     for user_id, subscription_id in live_to_close:
         try:

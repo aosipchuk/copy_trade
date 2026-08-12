@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Response, status
 
 from app.api.deps import CurrentUser, DBSession
+from app.schemas.copy_execution import CopyPreflightResponse, ManagedResumeResponse
 from app.schemas.portfolio import (
     PortfolioRebalanceApplyResponse,
     PortfolioRebalanceEventResponse,
@@ -23,6 +24,8 @@ from app.services.portfolio.rebalance import (
     preview_user_portfolio_rebalance,
     update_user_portfolio_subscription_settings,
 )
+from app.services.copy_engine.managed_resume import resume_portfolio_parent
+from app.services.copy_engine.preflight import run_preflight
 
 router = APIRouter(prefix="/portfolio-subscriptions", tags=["portfolio-subscriptions"])
 
@@ -89,6 +92,52 @@ async def get(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
+
+
+@router.post(
+    "/{portfolio_subscription_id}/preflight",
+    response_model=CopyPreflightResponse,
+)
+async def preflight(
+    portfolio_subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> CopyPreflightResponse:
+    try:
+        await get_user_portfolio_subscription(
+            db,
+            current_user.id,
+            portfolio_subscription_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await run_preflight(db, current_user, persist=True)
+
+
+@router.post(
+    "/{portfolio_subscription_id}/resume",
+    response_model=ManagedResumeResponse,
+)
+async def resume(
+    portfolio_subscription_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> ManagedResumeResponse:
+    try:
+        result = await resume_portfolio_parent(
+            db,
+            user=current_user,
+            parent_id=portfolio_subscription_id,
+        )
+        return ManagedResumeResponse(
+            child_count=result.child_count,
+            baseline_market_count=result.baseline_market_count,
+            warning=result.warning,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.patch(

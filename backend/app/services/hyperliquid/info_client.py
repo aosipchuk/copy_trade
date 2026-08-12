@@ -20,9 +20,13 @@ from app.services.hyperliquid.models import (
     MarginSummary,
     Meta,
     NonFundingLedgerUpdate,
+    OpenOrder,
+    OrderStatusResult,
     Position,
     SpotBalance,
     SpotClearinghouseState,
+    SubAccount,
+    UserAbstraction,
 )
 from app.services.hyperliquid.rate_limiter import (
     hl_priority_low,
@@ -109,15 +113,26 @@ class HyperliquidInfoClient:
         logger.info("hl_leaderboard_fetched", count=len(response.leaderboard_rows))
         return response.leaderboard_rows
 
-    async def get_positions(self, address: str) -> list[Position]:
+    async def get_clearinghouse_state(
+        self, address: str, dex: str = ""
+    ) -> ClearinghouseState:
+        payload: dict[str, Any] = {
+            "type": "clearinghouseState",
+            "user": address,
+        }
+        if dex:
+            payload["dex"] = dex
+        data = await self._post(payload)
+        return ClearinghouseState.model_validate(data)
+
+    async def get_positions(self, address: str, dex: str = "") -> list[Position]:
         """Fetch open perp positions for a trader address."""
-        data = await self._post({"type": "clearinghouseState", "user": address})
-        state = ClearinghouseState.model_validate(data)
+        state = await self.get_clearinghouse_state(address, dex)
         return state.open_positions
 
     _MARGIN_CACHE_TTL: int = 30  # seconds
 
-    async def get_account_summary(self, address: str) -> MarginSummary:
+    async def get_account_summary(self, address: str, dex: str = "") -> MarginSummary:
         """Fetch margin summary (equity, margin used) for a user account.
 
         Results are cached in Redis for 30 s to reduce HL API load when
@@ -125,7 +140,7 @@ class HyperliquidInfoClient:
         """
         from app.core.redis_client import get_redis_client
 
-        cache_key = f"hl:margin:{address}"
+        cache_key = f"hl:margin:{address}:{dex}"
         try:
             r = get_redis_client()
             cached = r.get(cache_key)
@@ -134,8 +149,7 @@ class HyperliquidInfoClient:
         except Exception as cache_exc:
             logger.warning("margin_cache_read_failed", error=str(cache_exc))
 
-        data = await self._post({"type": "clearinghouseState", "user": address})
-        state = ClearinghouseState.model_validate(data)
+        state = await self.get_clearinghouse_state(address, dex)
         if state.margin_summary is None:
             raise ValueError(f"marginSummary missing in HL response for {address}")
 
@@ -189,10 +203,54 @@ class HyperliquidInfoClient:
             },
         )
 
-    async def get_all_mids(self) -> dict[str, str]:
+    async def get_all_mids(self, dex: str = "") -> dict[str, str]:
         """Fetch current mid prices for all active markets."""
-        data: dict[str, str] = await self._post({"type": "allMids"})
+        payload: dict[str, Any] = {"type": "allMids"}
+        if dex:
+            payload["dex"] = dex
+        data: dict[str, str] = await self._post(payload)
         return data
+
+    async def get_open_orders(self, address: str, dex: str = "") -> list[OpenOrder]:
+        payload: dict[str, Any] = {"type": "openOrders", "user": address}
+        if dex:
+            payload["dex"] = dex
+        data: list[Any] = await self._post(payload)
+        return [OpenOrder.model_validate(item) for item in data]
+
+    async def get_order_status(
+        self,
+        owner_address: str,
+        order_id: int | str,
+    ) -> OrderStatusResult:
+        data: dict[str, Any] = await self._post(
+            {"type": "orderStatus", "user": owner_address, "oid": order_id}
+        )
+        payload = data.get("order")
+        if not isinstance(payload, dict):
+            return OrderStatusResult(status="unknown")
+        order = payload.get("order") if isinstance(payload.get("order"), dict) else {}
+        raw_status = str(payload.get("status", "unknown"))
+        if raw_status in ("filled", "triggered"):
+            status = "filled"
+        elif raw_status == "open":
+            status = "open"
+        elif raw_status in (
+            "cancelled",
+            "marginCancelled",
+            "vaultWithdrawalCanceled",
+            "rejected",
+        ):
+            status = "cancelled"
+        else:
+            status = "unknown"
+        oid = order.get("oid")
+        return OrderStatusResult(
+            status=status,
+            oid=int(oid) if oid is not None else None,
+            cloid=order.get("cloid"),
+            status_timestamp=payload.get("statusTimestamp"),
+        )
 
     async def get_fills(self, address: str, limit: int | None = 50) -> list[Fill]:
         """Fetch recent trade fills for an address.
@@ -326,7 +384,55 @@ class HyperliquidInfoClient:
 
         return updates
 
-    async def get_meta(self) -> Meta:
+    async def get_meta(self, dex: str = "") -> Meta:
         """Fetch market metadata: asset names, size decimals, max leverage."""
-        data = await self._post({"type": "meta"})
+        payload: dict[str, Any] = {"type": "meta"}
+        if dex:
+            payload["dex"] = dex
+        data = await self._post(payload)
         return Meta.model_validate(data)
+
+    async def get_meta_and_asset_contexts(
+        self, dex: str = ""
+    ) -> tuple[Meta, list[dict[str, Any]]]:
+        payload: dict[str, Any] = {"type": "metaAndAssetCtxs"}
+        if dex:
+            payload["dex"] = dex
+        data: list[Any] = await self._post(payload)
+        if len(data) != 2:
+            raise ValueError("Invalid metaAndAssetCtxs response")
+        return Meta.model_validate(data[0]), list(data[1])
+
+    async def get_perp_dexs(self) -> list[str]:
+        data: list[Any] = await self._post({"type": "perpDexs"})
+        names = [""]
+        for item in data:
+            if item is None:
+                continue
+            if isinstance(item, str):
+                name = item
+            elif isinstance(item, dict):
+                name = str(item.get("name") or item.get("dex") or "")
+            else:
+                continue
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    async def get_all_perp_metas(self) -> list[Any]:
+        data: list[Any] = await self._post({"type": "allPerpMetas"})
+        return data
+
+    async def get_user_abstraction(self, address: str) -> UserAbstraction:
+        data: Any = await self._post({"type": "userAbstraction", "user": address})
+        if isinstance(data, str):
+            return UserAbstraction(abstraction=data)
+        if data is None:
+            return UserAbstraction(abstraction="disabled")
+        return UserAbstraction.model_validate(data)
+
+    async def get_subaccounts(self, master_address: str) -> list[SubAccount]:
+        data: list[Any] | None = await self._post(
+            {"type": "subAccounts", "user": master_address}
+        )
+        return [SubAccount.model_validate(item) for item in (data or [])]

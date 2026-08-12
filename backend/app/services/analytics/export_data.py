@@ -13,7 +13,7 @@ async def fetch_trader_all_time_metrics_export_rows() -> list[
             select(
                 Trader.hl_address,
                 TraderStat.trade_count,
-                TraderStat.roi_pct,
+                TraderStat.roi_percent,
                 TraderStat.pnl_usd,
                 TraderStat.active_trading_days,
                 TraderStat.max_drawdown_pct,
@@ -25,7 +25,7 @@ async def fetch_trader_all_time_metrics_export_rows() -> list[
                     TraderStat.period == "allTime",
                 ),
             )
-            .order_by(TraderStat.roi_pct.desc().nulls_last(), Trader.id.desc())
+            .order_by(TraderStat.roi_percent.desc().nulls_last(), Trader.id.desc())
         )
         return [
             TraderAllTimeMetricsExportRow(

@@ -233,7 +233,7 @@ async def monitor_pending_trades_async() -> None:
         result = await db.execute(
             select(UserTrade)
             .join(Subscription, UserTrade.subscription_id == Subscription.id)
-            .where(UserTrade.status == "pending")
+            .where(UserTrade.status.in_(("pending", "unknown")))
         )
         trades = result.scalars().all()
 
@@ -248,19 +248,19 @@ async def monitor_pending_trades_async() -> None:
                     select(UserTrade).where(UserTrade.id == trade.id)
                 )
                 tr = tr_res.scalar_one_or_none()
-                if tr is None or tr.status != "pending":
+                if tr is None or tr.status not in ("pending", "unknown"):
                     continue
 
                 # Timeout check
-                if tr.executed_at < timeout_cutoff:
-                    tr.status = "failed"
-                    tr.error_msg = "Timed out waiting for fill"
+                if tr.status == "pending" and tr.executed_at < timeout_cutoff:
+                    tr.status = "unknown"
+                    tr.error_msg = "Timed out; exchange status remains ambiguous"
                     logger.info("trade_timed_out", trade_id=tr.id)
                     continue
 
                 if tr.hl_order_id is None:
-                    tr.status = "failed"
-                    tr.error_msg = "No order ID recorded"
+                    tr.status = "unknown"
+                    tr.error_msg = "No order ID recorded; manual review required"
                     continue
 
                 # Get owner address to query order status
@@ -298,6 +298,9 @@ async def monitor_pending_trades_async() -> None:
                 elif status == "cancelled":
                     tr.status = "cancelled"
                     logger.info("trade_cancelled", trade_id=tr.id)
+                elif status == "unknown":
+                    tr.status = "unknown"
+                    tr.error_msg = "Exchange order status is unknown"
 
             except Exception as exc:
                 logger.error("monitor_trade_error", trade_id=trade.id, error=str(exc))

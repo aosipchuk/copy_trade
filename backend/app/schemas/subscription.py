@@ -50,10 +50,24 @@ class SubscriptionResponse(BaseModel):
     is_demo: bool
     expires_at: datetime | None = None
     ended_reason: str | None = None
+    engine_version: int
+    execution_status: str
+    pause_reason: str | None = None
+    execution_status_details: dict[str, object] | None = None
+    resumed_at: datetime | None = None
+    blocked_at: datetime | None = None
+    baseline_market_count: int = 0
+    last_reconciled_at: datetime | None = None
     created_at: datetime
     realized_pnl: float
     unrealized_pnl: float = 0.0
     trade_count: int
+
+
+class SubscriptionResumeResponse(BaseModel):
+    subscription: SubscriptionResponse
+    baseline_market_count: int
+    warning: str
 
 
 class DemoOpenPosition(BaseModel):
