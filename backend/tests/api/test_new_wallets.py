@@ -11,6 +11,15 @@ import pytest
 from sqlalchemy import delete, select, update
 
 from app.core.config import settings
+from app.models.copy_execution import (
+    CopyAccountExecutionState,
+    CopyAccountPosition,
+    CopyExecutionAllocation,
+    CopyExecutionOrder,
+    CopyPositionTarget,
+    TraderMarketScope,
+    TraderPositionState,
+)
 from app.models.new_wallet import (
     NewWalletCandidate,
     NewWalletFundingLink,
@@ -34,12 +43,19 @@ _addr_counter: itertools.count = itertools.count(1)
 async def _clean_new_wallet_test_tables(db_session) -> None:
     for model in (
         UserTrade,
+        CopyExecutionAllocation,
+        CopyExecutionOrder,
+        CopyPositionTarget,
+        CopyAccountPosition,
+        CopyAccountExecutionState,
         Signal,
         UserNewWalletItem,
         UserNewWalletSubscription,
         NewWalletFundingLink,
         NewWalletCandidate,
         Subscription,
+        TraderPositionState,
+        TraderMarketScope,
         Trader,
     ):
         await db_session.execute(delete(model))
@@ -48,9 +64,7 @@ async def _clean_new_wallet_test_tables(db_session) -> None:
 
 def _make_init_data(user_id: int, username: str = "newwallet") -> str:
     bot_token = "123456:test"
-    user_data = json.dumps(
-        {"id": user_id, "username": username, "first_name": "New"}
-    )
+    user_data = json.dumps({"id": user_id, "username": username, "first_name": "New"})
     fields = {"user": user_data, "auth_date": str(int(time.time())), "query_id": "test"}
     data_check_string = "\n".join(
         f"{key}={value}" for key, value in sorted(fields.items())
@@ -200,8 +214,8 @@ class TestNewWalletsAPI:
     async def test_candidate_list_prioritizes_existing_active_subscription(
         self, client, db_session
     ) -> None:
-        subscribed_candidate_id, subscribed_trader_id = (
-            await _seed_qualified_candidate(db_session)
+        subscribed_candidate_id, subscribed_trader_id = await _seed_qualified_candidate(
+            db_session
         )
         newer_candidate_id, _newer_trader_id = await _seed_qualified_candidate(
             db_session
@@ -407,9 +421,7 @@ class TestNewWalletsAPI:
         )
 
         assert response.status_code == 201, response.text
-        item_candidate_ids = {
-            item["candidate_id"] for item in response.json()["items"]
-        }
+        item_candidate_ids = {item["candidate_id"] for item in response.json()["items"]}
         assert item_candidate_ids == {
             shared_top_candidate_id,
             shared_second_candidate_id,
