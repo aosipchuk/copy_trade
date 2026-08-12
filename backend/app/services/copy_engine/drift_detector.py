@@ -22,11 +22,7 @@ def _decimal(value: object | None) -> Decimal:
 async def detect_account_drift(user_id: int) -> bool:
     async with get_db_session() as db:
         state = await db.get(CopyAccountExecutionState, user_id)
-        if (
-            state is None
-            or state.status != "active"
-            or state.account_address is None
-        ):
+        if state is None or state.status != "active" or state.account_address is None:
             return False
         account_address = state.account_address
     try:
@@ -74,9 +70,7 @@ async def detect_account_drift(user_id: int) -> bool:
             for dex, position in snapshot.positions
         }
         position_result = await db.execute(
-            select(CopyAccountPosition).where(
-                CopyAccountPosition.user_id == user_id
-            )
+            select(CopyAccountPosition).where(CopyAccountPosition.user_id == user_id)
         )
         positions = list(position_result.scalars().all())
         known_keys = {

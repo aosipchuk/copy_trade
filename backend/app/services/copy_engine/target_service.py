@@ -34,11 +34,7 @@ async def _live_equity(
         return None
     async with get_db_session() as db:
         state = await db.get(CopyAccountExecutionState, subscription.user_id)
-        if (
-            state is None
-            or state.status != "active"
-            or state.account_address is None
-        ):
+        if state is None or state.status != "active" or state.account_address is None:
             raise ValueError("Copy account is not active")
         snapshot = await registry.get_snapshot()
         account = await AccountStateReader().read(state.account_address, snapshot)
@@ -176,10 +172,13 @@ async def process_signal_target(signal_id: int, subscription_id: int) -> list[st
             market_id(target.dex, target.coin).key: target
             for target in target_result.scalars().all()
         }
-        next_version = max(
-            (target.target_version for target in target_by_key.values()),
-            default=0,
-        ) + 1
+        next_version = (
+            max(
+                (target.target_version for target in target_by_key.values()),
+                default=0,
+            )
+            + 1
+        )
 
         for result in calculated:
             key = market_id(result.dex, result.coin).key

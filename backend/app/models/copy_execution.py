@@ -60,9 +60,7 @@ class TraderPositionState(Base):
     )
     entry_price: Mapped[float | None] = mapped_column(Numeric(30, 12))
     leverage: Mapped[float | None] = mapped_column(Numeric(10, 4))
-    snapshot_version: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
+    snapshot_version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     observed_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
     accepted_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
 

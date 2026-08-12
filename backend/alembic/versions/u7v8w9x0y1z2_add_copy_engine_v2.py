@@ -22,9 +22,7 @@ depends_on: str | Sequence[str] | None = None
 def _add_execution_columns(table: str) -> None:
     op.add_column(
         table,
-        sa.Column(
-            "engine_version", sa.Integer(), server_default="1", nullable=False
-        ),
+        sa.Column("engine_version", sa.Integer(), server_default="1", nullable=False),
     )
     op.add_column(
         table,
@@ -33,9 +31,7 @@ def _add_execution_columns(table: str) -> None:
         ),
     )
     op.add_column(table, sa.Column("pause_reason", sa.Text()))
-    op.add_column(
-        table, sa.Column("execution_status_details", postgresql.JSONB())
-    )
+    op.add_column(table, sa.Column("execution_status_details", postgresql.JSONB()))
     op.add_column(table, sa.Column("resumed_at", sa.DateTime()))
     op.add_column(table, sa.Column("blocked_at", sa.DateTime()))
     op.create_check_constraint(
@@ -119,8 +115,12 @@ def upgrade() -> None:
         sa.Column("discovery_source", sa.Text(), nullable=False),
         sa.Column("last_fill_time_ms", sa.BigInteger()),
         sa.Column("last_polled_at", sa.DateTime()),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
         sa.ForeignKeyConstraint(["trader_id"], ["traders.id"]),
         sa.PrimaryKeyConstraint("trader_id", "dex"),
     )
@@ -130,11 +130,17 @@ def upgrade() -> None:
         sa.Column("trader_id", sa.BigInteger(), nullable=False),
         sa.Column("dex", sa.Text(), server_default="", nullable=False),
         sa.Column("coin", sa.Text(), nullable=False),
-        sa.Column("observed_size", sa.Numeric(30, 12), server_default="0", nullable=False),
-        sa.Column("accepted_size", sa.Numeric(30, 12), server_default="0", nullable=False),
+        sa.Column(
+            "observed_size", sa.Numeric(30, 12), server_default="0", nullable=False
+        ),
+        sa.Column(
+            "accepted_size", sa.Numeric(30, 12), server_default="0", nullable=False
+        ),
         sa.Column("entry_price", sa.Numeric(30, 12)),
         sa.Column("leverage", sa.Numeric(10, 4)),
-        sa.Column("snapshot_version", sa.BigInteger(), server_default="0", nullable=False),
+        sa.Column(
+            "snapshot_version", sa.BigInteger(), server_default="0", nullable=False
+        ),
         sa.Column("observed_at", sa.DateTime(), nullable=False),
         sa.Column("accepted_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["trader_id"], ["traders.id"]),
@@ -159,8 +165,12 @@ def upgrade() -> None:
         sa.Column("blocked_at", sa.DateTime()),
         sa.Column("cleared_at", sa.DateTime()),
         sa.Column("version", sa.Integer(), server_default="1", nullable=False),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint(
             "status IN ('active', 'paused', 'blocked')",
             name="ck_copy_account_execution_states_status",
@@ -176,16 +186,29 @@ def upgrade() -> None:
         sa.Column("leader_size", sa.Numeric(30, 12), nullable=False),
         sa.Column("raw_target_size", sa.Numeric(30, 12), nullable=False),
         sa.Column("target_size", sa.Numeric(30, 12), nullable=False),
-        sa.Column("confirmed_allocated_size", sa.Numeric(30, 12), server_default="0", nullable=False),
-        sa.Column("target_notional_usd", sa.Numeric(30, 8), server_default="0", nullable=False),
+        sa.Column(
+            "confirmed_allocated_size",
+            sa.Numeric(30, 12),
+            server_default="0",
+            nullable=False,
+        ),
+        sa.Column(
+            "target_notional_usd", sa.Numeric(30, 8), server_default="0", nullable=False
+        ),
         sa.Column("price_snapshot", sa.Numeric(30, 12)),
         sa.Column("sizing_mode", sa.Text(), nullable=False),
         sa.Column("state", sa.Text(), nullable=False),
         sa.Column("source_signal_id", sa.BigInteger()),
-        sa.Column("target_version", sa.BigInteger(), server_default="1", nullable=False),
+        sa.Column(
+            "target_version", sa.BigInteger(), server_default="1", nullable=False
+        ),
         sa.Column("reason", sa.Text()),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint(
             "state IN ('baseline_only', 'active', 'blocked', 'zero', 'stopping')",
             name="ck_copy_position_targets_state",
@@ -202,22 +225,45 @@ def upgrade() -> None:
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("dex", sa.Text(), server_default="", nullable=False),
         sa.Column("coin", sa.Text(), nullable=False),
-        sa.Column("aggregate_target_size", sa.Numeric(30, 12), server_default="0", nullable=False),
-        sa.Column("confirmed_actual_size", sa.Numeric(30, 12), server_default="0", nullable=False),
-        sa.Column("pending_explained_delta", sa.Numeric(30, 12), server_default="0", nullable=False),
-        sa.Column("target_version", sa.BigInteger(), server_default="0", nullable=False),
+        sa.Column(
+            "aggregate_target_size",
+            sa.Numeric(30, 12),
+            server_default="0",
+            nullable=False,
+        ),
+        sa.Column(
+            "confirmed_actual_size",
+            sa.Numeric(30, 12),
+            server_default="0",
+            nullable=False,
+        ),
+        sa.Column(
+            "pending_explained_delta",
+            sa.Numeric(30, 12),
+            server_default="0",
+            nullable=False,
+        ),
+        sa.Column(
+            "target_version", sa.BigInteger(), server_default="0", nullable=False
+        ),
         sa.Column("targets_hash", sa.Text()),
         sa.Column("status", sa.Text(), server_default="dirty", nullable=False),
         sa.Column("reason", sa.Text()),
         sa.Column("last_reconciled_at", sa.DateTime()),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint(
             "status IN ('clean', 'dirty', 'pending', 'blocked', 'stalled')",
             name="ck_copy_account_positions_status",
         ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
-        sa.UniqueConstraint("user_id", "dex", "coin", name="uq_copy_account_position_market"),
+        sa.UniqueConstraint(
+            "user_id", "dex", "coin", name="uq_copy_account_position_market"
+        ),
     )
     op.create_table(
         "copy_execution_orders",
@@ -238,15 +284,21 @@ def upgrade() -> None:
         sa.Column("reference_price", sa.Numeric(30, 12)),
         sa.Column("limit_price", sa.Numeric(30, 12)),
         sa.Column("status", sa.Text(), server_default="pending", nullable=False),
-        sa.Column("filled_size", sa.Numeric(30, 12), server_default="0", nullable=False),
+        sa.Column(
+            "filled_size", sa.Numeric(30, 12), server_default="0", nullable=False
+        ),
         sa.Column("average_price", sa.Numeric(30, 12)),
         sa.Column("idempotency_key", sa.Text(), nullable=False),
         sa.Column("error_code", sa.Text()),
         sa.Column("error_message", sa.Text()),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column("submitted_at", sa.DateTime()),
         sa.Column("completed_at", sa.DateTime()),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint(
             "kind IN ('exchange', 'internal_reallocation', 'emergency')",
             name="ck_copy_execution_orders_kind",
@@ -261,7 +313,9 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.UniqueConstraint("cloid", name="uq_copy_execution_orders_cloid"),
-        sa.UniqueConstraint("idempotency_key", name="uq_copy_execution_orders_idempotency"),
+        sa.UniqueConstraint(
+            "idempotency_key", name="uq_copy_execution_orders_idempotency"
+        ),
     )
     op.create_index(
         "uq_copy_execution_orders_active_market",
@@ -280,10 +334,14 @@ def upgrade() -> None:
         sa.Column("target_id", sa.BigInteger(), nullable=False),
         sa.Column("subscription_id", sa.BigInteger(), nullable=False),
         sa.Column("requested_delta", sa.Numeric(30, 12), nullable=False),
-        sa.Column("filled_delta", sa.Numeric(30, 12), server_default="0", nullable=False),
+        sa.Column(
+            "filled_delta", sa.Numeric(30, 12), server_default="0", nullable=False
+        ),
         sa.Column("allocation_price", sa.Numeric(30, 12)),
         sa.Column("realized_pnl", sa.Numeric(30, 8)),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False
+        ),
         sa.ForeignKeyConstraint(["execution_order_id"], ["copy_execution_orders.id"]),
         sa.ForeignKeyConstraint(["target_id"], ["copy_position_targets.id"]),
         sa.ForeignKeyConstraint(["subscription_id"], ["subscriptions.id"]),
@@ -294,7 +352,9 @@ def upgrade() -> None:
         ),
     )
 
-    op.alter_column("user_trades", "signal_id", existing_type=sa.BigInteger(), nullable=True)
+    op.alter_column(
+        "user_trades", "signal_id", existing_type=sa.BigInteger(), nullable=True
+    )
     op.add_column(
         "user_trades",
         sa.Column("dex", sa.Text(), server_default="", nullable=False),
@@ -317,8 +377,7 @@ def upgrade() -> None:
     )
 
     # Capture the users that had live subscriptions before pausing them.
-    op.execute(
-        """
+    op.execute("""
         INSERT INTO copy_account_execution_states (
             user_id, master_address, account_address, status, reason
         )
@@ -328,56 +387,44 @@ def upgrade() -> None:
         JOIN users u ON u.id = s.user_id
         WHERE s.is_active = true AND s.is_demo = false
         ON CONFLICT (user_id) DO NOTHING
-        """
-    )
-    op.execute(
-        """
+        """)
+    op.execute("""
         UPDATE subscriptions
         SET is_active = false,
             execution_status = 'paused',
             pause_reason = 'engine_v2_reconciliation_required',
             engine_version = 1
         WHERE is_active = true AND is_demo = false
-        """
-    )
-    op.execute(
-        """
+        """)
+    op.execute("""
         UPDATE user_portfolio_subscriptions
         SET execution_status = 'paused',
             pause_reason = 'engine_v2_reconciliation_required',
             engine_version = 1
         WHERE is_demo = false AND status <> 'canceled'
-        """
-    )
-    op.execute(
-        """
+        """)
+    op.execute("""
         UPDATE user_portfolio_items i
         SET status = 'paused'
         FROM user_portfolio_subscriptions p
         WHERE p.id = i.user_portfolio_subscription_id
           AND p.is_demo = false AND i.status = 'active'
-        """
-    )
-    op.execute(
-        """
+        """)
+    op.execute("""
         UPDATE user_new_wallet_subscriptions
         SET execution_status = 'paused',
             pause_reason = 'engine_v2_reconciliation_required',
             engine_version = 1
         WHERE is_demo = false AND status <> 'canceled'
-        """
-    )
-    op.execute(
-        """
+        """)
+    op.execute("""
         UPDATE user_new_wallet_items i
         SET status = 'paused'
         FROM user_new_wallet_subscriptions p
         WHERE p.id = i.user_new_wallet_subscription_id
           AND p.is_demo = false AND i.status = 'active'
-        """
-    )
-    op.execute(
-        """
+        """)
+    op.execute("""
         UPDATE subscriptions
         SET is_active = false,
             execution_status = 'stopped',
@@ -385,8 +432,7 @@ def upgrade() -> None:
             ended_reason = COALESCE(ended_reason, 'engine_v2_demo_restart_required'),
             engine_version = 1
         WHERE is_active = true AND is_demo = true
-        """
-    )
+        """)
     op.execute(
         "UPDATE signals SET dispatch_status = 'skipped_legacy' WHERE engine_version = 1"
     )
@@ -394,15 +440,23 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Safety invariant: never reactivate paused subscriptions on downgrade.
-    op.drop_constraint("fk_user_trades_execution_allocation", "user_trades", type_="foreignkey")
-    op.drop_constraint("fk_user_trades_execution_order", "user_trades", type_="foreignkey")
+    op.drop_constraint(
+        "fk_user_trades_execution_allocation", "user_trades", type_="foreignkey"
+    )
+    op.drop_constraint(
+        "fk_user_trades_execution_order", "user_trades", type_="foreignkey"
+    )
     op.drop_column("user_trades", "execution_allocation_id")
     op.drop_column("user_trades", "execution_order_id")
     op.drop_column("user_trades", "dex")
-    op.alter_column("user_trades", "signal_id", existing_type=sa.BigInteger(), nullable=False)
+    op.alter_column(
+        "user_trades", "signal_id", existing_type=sa.BigInteger(), nullable=False
+    )
 
     op.drop_table("copy_execution_allocations")
-    op.drop_index("uq_copy_execution_orders_active_market", table_name="copy_execution_orders")
+    op.drop_index(
+        "uq_copy_execution_orders_active_market", table_name="copy_execution_orders"
+    )
     op.drop_table("copy_execution_orders")
     op.drop_table("copy_account_positions")
     op.drop_table("copy_position_targets")

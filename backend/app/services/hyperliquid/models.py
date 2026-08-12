@@ -240,9 +240,7 @@ class UserAbstraction(BaseModel):
     def mode(self) -> str:
         if self.abstraction in (None, "disabled"):
             return (
-                "legacy_dex_abstraction"
-                if self.dex_abstraction_enabled
-                else "standard"
+                "legacy_dex_abstraction" if self.dex_abstraction_enabled else "standard"
             )
         if self.abstraction == "unifiedAccount":
             return "unified"

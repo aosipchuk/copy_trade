@@ -5,9 +5,7 @@ from app.services.copy_engine.target_calculator import TargetInput, calculate_ta
 
 def test_demo_uses_target_state_not_repeated_order_accumulation() -> None:
     kwargs = {
-        "items": [
-            TargetInput("", "BTC", Decimal("1"), Decimal("100"), 3)
-        ],
+        "items": [TargetInput("", "BTC", Decimal("1"), Decimal("100"), 3)],
         "sizing_mode": "fixed_ratio",
         "copy_ratio_pct": Decimal("10"),
         "max_allocation_usd": Decimal("1000"),

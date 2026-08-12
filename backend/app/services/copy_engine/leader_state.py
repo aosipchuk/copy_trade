@@ -81,10 +81,13 @@ async def accept_leader_snapshot(
     events = [] if is_baseline else detect_changes(accepted, positions, dex=dex)
     event_by_coin = {event.coin: event for event in events}
     observed_by_coin = {position.coin: position for position in positions}
-    next_version = max(
-        (state.snapshot_version for state in existing.values()),
-        default=0,
-    ) + 1
+    next_version = (
+        max(
+            (state.snapshot_version for state in existing.values()),
+            default=0,
+        )
+        + 1
+    )
 
     for coin in sorted(existing.keys() | observed_by_coin.keys()):
         observed = observed_by_coin.get(coin)

@@ -133,8 +133,7 @@ async def run_preflight(
     registry_ok = bool(
         registry_snapshot
         and registry_snapshot.markets
-        and registry_snapshot.age_seconds
-        <= settings.copy_engine_registry_stale_seconds
+        and registry_snapshot.age_seconds <= settings.copy_engine_registry_stale_seconds
     )
     checks.append(
         _check(

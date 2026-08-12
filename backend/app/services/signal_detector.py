@@ -55,10 +55,7 @@ def detect_changes(
             signal_type = SignalType.OPEN
         elif previous_size != 0 and target_size == 0:
             signal_type = SignalType.CLOSE
-        elif (
-            previous_size * target_size < 0
-            or abs(target_size) < abs(previous_size)
-        ):
+        elif previous_size * target_size < 0 or abs(target_size) < abs(previous_size):
             signal_type = SignalType.UPDATE
         else:
             change_ratio = abs(target_size - previous_size) / abs(previous_size)
@@ -76,17 +73,15 @@ def detect_changes(
                 side=(
                     "long"
                     if target_size > 0
-                    else "short"
-                    if target_size < 0
-                    else reference.side if reference else None
+                    else (
+                        "short"
+                        if target_size < 0
+                        else reference.side if reference else None
+                    )
                 ),
                 size=abs(target_size) if target_size else None,
                 entry_price=target.entry_px if target else None,
-                leverage=(
-                    float(target.leverage.value)
-                    if target is not None
-                    else None
-                ),
+                leverage=(float(target.leverage.value) if target is not None else None),
                 previous_size=previous_size,
                 target_size=target_size,
                 delta_size=target_size - previous_size,

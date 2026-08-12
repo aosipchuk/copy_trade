@@ -93,8 +93,7 @@ async def create_or_reactivate_new_wallet_subscription(
     await db.flush()
     if (
         (parent.is_demo or parent.execution_status == "active")
-        and
-        settings.new_wallet_discovery_enabled
+        and settings.new_wallet_discovery_enabled
         and settings.new_wallet_auto_attach_enabled
     ):
         await attach_qualified_new_wallets_for_parent(db, parent, user=user)

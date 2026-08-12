@@ -419,14 +419,14 @@ async def _candidate_response(
             depth=link.depth,
             wallet_address=link.wallet_address,
             funded_by_address=link.funded_by_address,
-            amount_usdc=float(link.amount_usdc)
-            if link.amount_usdc is not None
-            else None,
+            amount_usdc=(
+                float(link.amount_usdc) if link.amount_usdc is not None else None
+            ),
             event_time=link.event_time,
             tx_hash=link.tx_hash,
-            balance_usd=float(link.balance_usd)
-            if link.balance_usd is not None
-            else None,
+            balance_usd=(
+                float(link.balance_usd) if link.balance_usd is not None else None
+            ),
             balance_source=link.balance_source,
         )
         for link in links_result.scalars().all()
@@ -453,12 +453,16 @@ async def _candidate_response(
         qualified_at=candidate.qualified_at,
         last_checked_at=candidate.last_checked_at,
         chain_depth=candidate.chain_depth,
-        chain_total_balance_usd=float(candidate.chain_total_balance_usd)
-        if candidate.chain_total_balance_usd is not None
-        else None,
-        threshold_usd_snapshot=float(candidate.threshold_usd_snapshot)
-        if candidate.threshold_usd_snapshot is not None
-        else None,
+        chain_total_balance_usd=(
+            float(candidate.chain_total_balance_usd)
+            if candidate.chain_total_balance_usd is not None
+            else None
+        ),
+        threshold_usd_snapshot=(
+            float(candidate.threshold_usd_snapshot)
+            if candidate.threshold_usd_snapshot is not None
+            else None
+        ),
         reject_reason=candidate.reject_reason,
         first_seen_tx_hash=candidate.first_seen_tx_hash,
         links=links,
@@ -466,17 +470,17 @@ async def _candidate_response(
         user_child_subscription_id=item.subscription_id if item else None,
         user_child_expires_at=item.expires_at if item else None,
         user_is_subscribed=active_subscription is not None,
-        user_active_subscription_id=active_subscription.id
-        if active_subscription is not None
-        else None,
+        user_active_subscription_id=(
+            active_subscription.id if active_subscription is not None else None
+        ),
         user_is_live_subscribed=live_subscription is not None,
-        user_live_subscription_id=live_subscription.id
-        if live_subscription is not None
-        else None,
+        user_live_subscription_id=(
+            live_subscription.id if live_subscription is not None else None
+        ),
         user_is_demo_subscribed=demo_subscription is not None,
-        user_demo_subscription_id=demo_subscription.id
-        if demo_subscription is not None
-        else None,
+        user_demo_subscription_id=(
+            demo_subscription.id if demo_subscription is not None else None
+        ),
     )
 
 
@@ -532,9 +536,9 @@ async def _subscription_response(
         stop_loss_pct=float(parent.stop_loss_pct),
         max_leverage=float(parent.max_leverage),
         sizing_mode=parent.sizing_mode,
-        allowed_coins=list(parent.allowed_coins)
-        if parent.allowed_coins is not None
-        else None,
+        allowed_coins=(
+            list(parent.allowed_coins) if parent.allowed_coins is not None else None
+        ),
         close_positions_on_expire=parent.close_positions_on_expire,
         created_at=parent.created_at,
         updated_at=parent.updated_at,

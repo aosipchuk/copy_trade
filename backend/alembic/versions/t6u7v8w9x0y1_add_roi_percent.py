@@ -23,13 +23,11 @@ def upgrade() -> None:
         "trader_stats",
         sa.Column("roi_percent", sa.Numeric(precision=20, scale=8), nullable=True),
     )
-    op.execute(
-        """
+    op.execute("""
         UPDATE trader_stats
         SET roi_percent = roi_pct * 100
         WHERE roi_percent IS NULL AND roi_pct IS NOT NULL
-        """
-    )
+        """)
     op.create_check_constraint(
         "ck_trader_stats_roi_percent_finite_range",
         "trader_stats",

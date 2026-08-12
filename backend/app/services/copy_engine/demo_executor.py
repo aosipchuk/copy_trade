@@ -87,8 +87,7 @@ async def reconcile_demo_targets(
             or subscription.engine_version != 2
             or subscription.execution_status not in ("active", "stopping")
             or (
-                subscription.execution_status == "active"
-                and not subscription.is_active
+                subscription.execution_status == "active" and not subscription.is_active
             )
         ):
             return 0

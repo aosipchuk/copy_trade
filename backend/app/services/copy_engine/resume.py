@@ -32,9 +32,7 @@ async def initialize_subscription_baseline(
     trader: Trader,
 ) -> int:
     scope_result = await db.execute(
-        select(TraderMarketScope.dex).where(
-            TraderMarketScope.trader_id == trader.id
-        )
+        select(TraderMarketScope.dex).where(TraderMarketScope.trader_id == trader.id)
     )
     dexes = {"", *[str(dex) for dex in scope_result.scalars().all()]}
     hl = HyperliquidInfoClient()

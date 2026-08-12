@@ -106,8 +106,7 @@ async def prepare_market_intent(
     allocation_deltas = [
         (
             target,
-            _decimal(target.target_size)
-            - _decimal(target.confirmed_allocated_size),
+            _decimal(target.target_size) - _decimal(target.confirmed_allocated_size),
         )
         for target in targets
     ]
@@ -175,9 +174,7 @@ async def prepare_market_intent(
         position.reason = "residual_below_minimum"
         return PreparedIntent(None, aggregate, actual_size, dust=True)
 
-    effective_delta = (
-        order_params.size if order_params.is_buy else -order_params.size
-    )
+    effective_delta = order_params.size if order_params.is_buy else -order_params.size
     idempotency, cloid = _identity(
         position.user_id,
         position.dex,

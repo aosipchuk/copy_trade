@@ -371,10 +371,7 @@ class HyperliquidInfoClient:
                 if len(updates) >= max_updates:
                     break
 
-            if (
-                len(page) < _USER_NON_FUNDING_LEDGER_PAGE_LIMIT
-                or added_from_page == 0
-            ):
+            if len(page) < _USER_NON_FUNDING_LEDGER_PAGE_LIMIT or added_from_page == 0:
                 break
 
             last_time = page[-1].time

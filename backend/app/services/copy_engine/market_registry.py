@@ -141,17 +141,13 @@ class MarketRegistry:
         result: list[MarketSpec] = []
         for asset_index, asset in enumerate(meta.universe):
             context = (
-                asset_contexts[asset_index]
-                if asset_index < len(asset_contexts)
-                else {}
+                asset_contexts[asset_index] if asset_index < len(asset_contexts) else {}
             )
             canonical = market_id(dex, asset.name).canonical_coin
             mid = mids.get(canonical) or mids.get(asset.name)
             is_halted = bool(context.get("isHalted") or context.get("halted"))
             asset_id = (
-                asset_index
-                if not dex
-                else 100_000 + dex_index * 10_000 + asset_index
+                asset_index if not dex else 100_000 + dex_index * 10_000 + asset_index
             )
             result.append(
                 MarketSpec(

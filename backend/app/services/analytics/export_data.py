@@ -5,9 +5,9 @@ from app.models.trader import Trader, TraderStat
 from app.services.analytics.export_workbook import TraderAllTimeMetricsExportRow
 
 
-async def fetch_trader_all_time_metrics_export_rows() -> list[
-    TraderAllTimeMetricsExportRow
-]:
+async def fetch_trader_all_time_metrics_export_rows() -> (
+    list[TraderAllTimeMetricsExportRow]
+):
     async with get_db_session() as db:
         result = await db.execute(
             select(

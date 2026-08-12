@@ -124,10 +124,7 @@ class HyperliquidExchangeClient:
         deliberately raised so the reconciler can recover by cloid.
         """
         normalized_cloid = cloid.lower()
-        if (
-            len(normalized_cloid) != 34
-            or not normalized_cloid.startswith("0x")
-        ):
+        if len(normalized_cloid) != 34 or not normalized_cloid.startswith("0x"):
             raise ValueError("cloid must be a 128-bit 0x-prefixed hex string")
         int(normalized_cloid[2:], 16)
         nonce = int(time.time() * 1000)
@@ -226,10 +223,12 @@ class HyperliquidExchangeClient:
         """
         from app.services.hyperliquid.info_client import HyperliquidInfoClient
 
-        return (await HyperliquidInfoClient().get_order_status(
-            owner_address,
-            order_id,
-        )).status
+        return (
+            await HyperliquidInfoClient().get_order_status(
+                owner_address,
+                order_id,
+            )
+        ).status
 
     async def cancel_by_cloid(
         self,

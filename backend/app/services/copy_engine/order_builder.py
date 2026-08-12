@@ -43,11 +43,7 @@ def delta_to_order(
     if reducing:
         size = min(size, abs(before_size))
     is_buy = delta > 0
-    multiplier = (
-        Decimal("1") + IOC_SLIPPAGE
-        if is_buy
-        else Decimal("1") - IOC_SLIPPAGE
-    )
+    multiplier = Decimal("1") + IOC_SLIPPAGE if is_buy else Decimal("1") - IOC_SLIPPAGE
     return OrderParams(
         coin=coin,
         asset_index=asset_index,

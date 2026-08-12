@@ -15,9 +15,7 @@ async def discover_trader_dexes(
 ) -> set[str]:
     """Discover HIP-3 scopes from recent fills; new scopes remain unpolled baseline."""
     hl = client or HyperliquidInfoClient()
-    start_time = int(
-        (datetime.now(tz=UTC) - timedelta(days=7)).timestamp() * 1000
-    )
+    start_time = int((datetime.now(tz=UTC) - timedelta(days=7)).timestamp() * 1000)
     fills = await hl.get_fills_by_time(
         trader_address,
         start_time=start_time,

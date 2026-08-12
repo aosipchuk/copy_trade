@@ -109,10 +109,7 @@ async def execute_intent(order_id: int) -> None:
         order = await db.get(CopyExecutionOrder, order_id)
         if order is None or order.status != "pending":
             return
-        if (
-            order.kind != "emergency"
-            and not settings.copy_engine_v2_live_enabled
-        ):
+        if order.kind != "emergency" and not settings.copy_engine_v2_live_enabled:
             return
         state = await db.get(CopyAccountExecutionState, order.user_id)
         user = await db.get(User, order.user_id)
@@ -126,10 +123,7 @@ async def execute_intent(order_id: int) -> None:
         agent = agent_result.scalar_one_or_none()
         if (
             state is None
-            or (
-                state.status != "active"
-                and order.kind != "emergency"
-            )
+            or (state.status != "active" and order.kind != "emergency")
             or state.account_address is None
             or user is None
             or agent is None
@@ -221,10 +215,13 @@ async def recover_intent(order_id: int) -> None:
     ]
     total_filled = sum((fill.sz for fill in matching), start=Decimal("0"))
     if matching:
-        average = sum(
-            (fill.sz * fill.px for fill in matching),
-            start=Decimal("0"),
-        ) / total_filled
+        average = (
+            sum(
+                (fill.sz * fill.px for fill in matching),
+                start=Decimal("0"),
+            )
+            / total_filled
+        )
         await _apply_exchange_fill(
             order_id,
             exchange_oid=order.exchange_oid,
@@ -331,9 +328,7 @@ async def reconcile_market(user_id: int, dex: str, coin: str) -> None:
         risk_allocations: list[RiskAllocation] = []
         market_target = Decimal("0")
         for target, subscription in risk_rows:
-            target_market = registry_snapshot.markets.get(
-                f"{target.dex}|{target.coin}"
-            )
+            target_market = registry_snapshot.markets.get(f"{target.dex}|{target.coin}")
             if target_market is None or target_market.mid is None:
                 position.status = "stalled"
                 position.reason = "risk_market_state_unavailable"
@@ -345,9 +340,7 @@ async def reconcile_market(user_id: int, dex: str, coin: str) -> None:
                 RiskAllocation(
                     target_size=target_size,
                     price=target_market.mid,
-                    subscription_max_leverage=_decimal(
-                        subscription.max_leverage
-                    ),
+                    subscription_max_leverage=_decimal(subscription.max_leverage),
                     market_max_leverage=Decimal(target_market.max_leverage),
                 )
             )
