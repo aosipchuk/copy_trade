@@ -17,7 +17,7 @@ class FundingEventProviderError(RuntimeError):
     """Base error for funding-event provider failures."""
 
 
-class FundingEventProviderUnavailable(FundingEventProviderError):
+class FundingEventProviderUnavailable(FundingEventProviderError):  # noqa: N818
     """Raised when no global provider is configured for discovery scans."""
 
 
@@ -349,7 +349,7 @@ def _is_usdc_token(token: Any, *, event_type: str) -> bool:
     if token is None:
         return False
     token_name = str(token).upper()
-    return token_name == "USDC" or token_name.startswith("USDC:")
+    return token_name == "USDC" or token_name.startswith("USDC:")  # noqa: S105
 
 
 def _filter_batch_since(
