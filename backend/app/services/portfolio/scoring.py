@@ -7,6 +7,7 @@ from app.services.portfolio.advanced import (
 from app.services.portfolio.types import (
     CandidateMetrics,
     PortfolioCandidate,
+    RiskProfileConfig,
     ScoredCandidate,
 )
 
@@ -29,11 +30,18 @@ def _inverse_linear(value: float | None, low: float, high: float) -> float:
     return 100.0 - _linear(value, low, high)
 
 
-def _risk_adjusted_score(metrics: CandidateMetrics) -> float:
-    drawdown_score = _inverse_linear(metrics.max_drawdown_pct, 0.0, 35.0)
+def _risk_adjusted_score(
+    metrics: CandidateMetrics,
+    config: RiskProfileConfig,
+) -> float:
+    drawdown_score = _inverse_linear(
+        metrics.max_drawdown_pct,
+        0.0,
+        config.max_drawdown_pct,
+    )
     sharpe_score = _linear(metrics.sharpe_ratio, 0.0, 3.0)
     sortino_score = _linear(metrics.sortino_ratio, 0.0, 4.0)
-    leverage_score = _inverse_linear(metrics.avg_leverage, 1.0, 8.0)
+    leverage_score = _inverse_linear(metrics.avg_leverage, 1.0, config.max_leverage)
     composite = metrics.composite_score if metrics.composite_score is not None else 50.0
     return _clamp(
         0.30 * drawdown_score
@@ -107,7 +115,10 @@ def _diversification_score(metrics: CandidateMetrics) -> float:
     )
 
 
-def _behavior_stability_score(metrics: CandidateMetrics) -> float:
+def _behavior_stability_score(
+    metrics: CandidateMetrics,
+    config: RiskProfileConfig,
+) -> float:
     active_days_score = _linear(
         (
             float(metrics.active_trading_days)
@@ -117,8 +128,12 @@ def _behavior_stability_score(metrics: CandidateMetrics) -> float:
         30.0,
         180.0,
     )
-    trade_frequency_score = _inverse_linear(metrics.avg_trades_per_day, 5.0, 25.0)
-    leverage_score = _inverse_linear(metrics.avg_leverage, 1.0, 8.0)
+    trade_frequency_score = _inverse_linear(
+        metrics.avg_trades_per_day,
+        1.0,
+        config.max_avg_trades_per_day,
+    )
+    leverage_score = _inverse_linear(metrics.avg_leverage, 1.0, config.max_leverage)
     drawdown_duration_score = _inverse_linear(
         metrics.max_drawdown_duration_days, 0.0, 45.0
     )
@@ -130,31 +145,38 @@ def _behavior_stability_score(metrics: CandidateMetrics) -> float:
     )
 
 
-def score_candidate(candidate: PortfolioCandidate) -> ScoredCandidate:
+def score_candidate(
+    candidate: PortfolioCandidate,
+    config: RiskProfileConfig,
+) -> ScoredCandidate:
     metrics = candidate.metrics
     components = {
-        "risk_adjusted_score": round(_risk_adjusted_score(metrics), 4),
+        "risk_adjusted_score": round(_risk_adjusted_score(metrics, config), 4),
         "consistency_score": round(_consistency_score(metrics), 4),
         "return_score": round(_return_score(metrics), 4),
         "copyability_score": round(_copyability_score(metrics), 4),
         "diversification_score": round(_diversification_score(metrics), 4),
-        "behavior_stability_score": round(_behavior_stability_score(metrics), 4),
+        "behavior_stability_score": round(
+            _behavior_stability_score(metrics, config), 4
+        ),
     }
+    score_weights = config.score_weights.as_dict()
     base_portfolio_score = round(
-        0.30 * components["risk_adjusted_score"]
-        + 0.25 * components["consistency_score"]
-        + 0.15 * components["return_score"]
-        + 0.15 * components["copyability_score"]
-        + 0.10 * components["diversification_score"]
-        + 0.05 * components["behavior_stability_score"],
+        sum(
+            score_weights[component_name] * component_score
+            for component_name, component_score in components.items()
+        ),
         4,
     )
-    anomaly_detection = detect_candidate_anomalies(metrics)
+    anomaly_detection = detect_candidate_anomalies(metrics, config)
     anomaly_penalty = float(anomaly_detection["penalty"])
     portfolio_score = round(_clamp(base_portfolio_score - anomaly_penalty), 4)
     strategy_profile = classify_strategy_profile(metrics)
     snapshot = {
-        "methodology_version": "balanced-advanced-v2",
+        "methodology_version": config.methodology_version,
+        "risk_profile": config.risk_profile,
+        "selection_profile": config.selection_profile,
+        "score_weights": score_weights,
         "portfolio_score": portfolio_score,
         "base_portfolio_score": base_portfolio_score,
         "component_scores": components,
@@ -187,5 +209,6 @@ def score_candidate(candidate: PortfolioCandidate) -> ScoredCandidate:
 
 def score_candidates(
     candidates: Iterable[PortfolioCandidate],
+    config: RiskProfileConfig,
 ) -> tuple[ScoredCandidate, ...]:
-    return tuple(score_candidate(candidate) for candidate in candidates)
+    return tuple(score_candidate(candidate, config) for candidate in candidates)

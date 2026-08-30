@@ -19,7 +19,7 @@ from app.services.portfolio.types import (
     CandidateSelectionResult,
     OptimizationResult,
     get_internal_alpha_relaxed_config,
-    get_risk_profile_config,
+    get_portfolio_config,
 )
 
 
@@ -64,11 +64,11 @@ async def preview_model_portfolio_draft(
     internal_alpha_relaxed: bool = False,
 ) -> PortfolioDraftBuildPreview:
     portfolio = await _get_portfolio(db, portfolio_slug)
-    config = get_risk_profile_config(portfolio.risk_profile)
+    config = get_portfolio_config(portfolio.slug, portfolio.risk_profile)
     if internal_alpha_relaxed:
         config = get_internal_alpha_relaxed_config(config)
     candidate_selection = await load_portfolio_candidates(db, config, period=period)
-    scored_candidates = score_candidates(candidate_selection.eligible)
+    scored_candidates = score_candidates(candidate_selection.eligible, config)
     optimization = optimize_portfolio(scored_candidates, config)
     return PortfolioDraftBuildPreview(portfolio, candidate_selection, optimization)
 
@@ -221,7 +221,7 @@ async def publish_model_portfolio_version(
             "allow_internal_alpha_relaxed=True."
         )
 
-    config = get_risk_profile_config(portfolio.risk_profile)
+    config = get_portfolio_config(portfolio.slug, portfolio.risk_profile)
     allocation_stats_result = await db.execute(
         select(
             func.count(ModelPortfolioAllocation.id),

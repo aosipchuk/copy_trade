@@ -43,6 +43,9 @@ class ModelPortfolio(Base):
     status: Mapped[str] = mapped_column(
         Text, default="draft", server_default="draft", nullable=False
     )
+    live_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     description: Mapped[str | None] = mapped_column(Text)
     methodology_version: Mapped[str] = mapped_column(Text, nullable=False)
     rebalance_cadence: Mapped[str] = mapped_column(Text, nullable=False)

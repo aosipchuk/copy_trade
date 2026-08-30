@@ -83,6 +83,7 @@ def raw_candidate_from_models(trader: Trader, stat: TraderStat) -> RawTraderCand
 def _config_snapshot(config: RiskProfileConfig) -> dict[str, Any]:
     return {
         "risk_profile": config.risk_profile,
+        "selection_profile": config.selection_profile,
         "min_composite_score": config.min_composite_score,
         "min_trade_count": config.min_trade_count,
         "min_active_trading_days": config.min_active_trading_days,
@@ -90,6 +91,7 @@ def _config_snapshot(config: RiskProfileConfig) -> dict[str, Any]:
         "max_leverage": config.max_leverage,
         "require_avg_leverage": config.require_avg_leverage,
         "max_avg_trades_per_day": config.max_avg_trades_per_day,
+        "min_avg_position_size_usd": config.min_avg_position_size_usd,
     }
 
 
@@ -108,6 +110,7 @@ def _candidate_snapshot(
             "max_drawdown_pct": metrics.max_drawdown_pct,
             "avg_leverage": metrics.avg_leverage,
             "avg_trades_per_day": metrics.avg_trades_per_day,
+            "avg_position_size_usd": metrics.avg_position_size_usd,
         },
     }
 
@@ -130,6 +133,8 @@ def _missing_metrics(metrics: CandidateMetrics, config: RiskProfileConfig) -> li
     required_metrics = list(ESSENTIAL_METRICS)
     if config.require_avg_leverage:
         required_metrics.append("avg_leverage")
+    if config.min_avg_position_size_usd is not None:
+        required_metrics.append("avg_position_size_usd")
     return [
         field_name
         for field_name in required_metrics
@@ -178,6 +183,7 @@ def apply_candidate_filters(
         max_drawdown = metrics.max_drawdown_pct or 0.0
         avg_leverage = metrics.avg_leverage
         avg_trades_per_day = metrics.avg_trades_per_day or 0.0
+        avg_position_size_usd = metrics.avg_position_size_usd
 
         if composite_score < config.min_composite_score:
             rejected.append(
@@ -236,6 +242,20 @@ def apply_candidate_filters(
                     config,
                     "trade_frequency_too_high",
                     "Trader trade frequency is too high for reliable copy trading.",
+                )
+            )
+            continue
+        if (
+            config.min_avg_position_size_usd is not None
+            and avg_position_size_usd is not None
+            and avg_position_size_usd < config.min_avg_position_size_usd
+        ):
+            rejected.append(
+                _reject(
+                    raw,
+                    config,
+                    "position_size_too_small",
+                    "Trader average position size is too small for reliable copying.",
                 )
             )
             continue

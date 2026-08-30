@@ -61,6 +61,7 @@ async def _seed_published_portfolio(db_session) -> str:
         name=f"Balanced API {index}",
         risk_profile="balanced",
         status="active",
+        live_enabled=True,
         description="Balanced model portfolio.",
         methodology_version="balanced-mvp-v1",
         rebalance_cadence="weekly",
@@ -256,6 +257,7 @@ class TestPortfoliosReadOnly:
         assert response.status_code == 200
         items = response.json()
         portfolio = next(item for item in items if item["slug"] == slug)
+        assert portfolio["live_enabled"] is True
         assert portfolio["current_version"]["version_no"] == 1
         assert portfolio["current_version"]["target_weight_sum_pct"] == 100.0
         assert portfolio["latest_backtest"]["assumptions_json"]["fees_bps"] == 4.0

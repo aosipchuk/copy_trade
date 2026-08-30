@@ -93,7 +93,7 @@ def main() -> None:
         action="store_true",
         help=(
             "Relax sparse-data gates for an internal draft only. "
-            "Default Balanced methodology remains strict."
+            "The selected portfolio methodology remains strict by default."
         ),
     )
     parser.add_argument(

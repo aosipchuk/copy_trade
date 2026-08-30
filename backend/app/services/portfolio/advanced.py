@@ -1,7 +1,11 @@
 from collections.abc import Sequence
 from typing import Any
 
-from app.services.portfolio.types import CandidateMetrics, OptimizedAllocation
+from app.services.portfolio.types import (
+    CandidateMetrics,
+    OptimizedAllocation,
+    RiskProfileConfig,
+)
 
 JsonDict = dict[str, Any]
 
@@ -124,7 +128,10 @@ def classify_strategy_profile(metrics: CandidateMetrics) -> JsonDict:
     }
 
 
-def detect_candidate_anomalies(metrics: CandidateMetrics) -> JsonDict:
+def detect_candidate_anomalies(
+    metrics: CandidateMetrics,
+    config: RiskProfileConfig,
+) -> JsonDict:
     flags: list[JsonDict] = []
 
     def add(
@@ -155,48 +162,66 @@ def detect_candidate_anomalies(metrics: CandidateMetrics) -> JsonDict:
         )
 
     if metrics.avg_leverage is not None:
-        if metrics.avg_leverage >= 10.0:
+        if metrics.avg_leverage >= config.max_leverage:
             add(
                 "extreme_leverage",
                 "high",
                 10.0,
-                "Average leverage is high for a model portfolio allocation.",
-                {"avg_leverage": metrics.avg_leverage},
+                "Average leverage is at the selected portfolio limit.",
+                {
+                    "avg_leverage": metrics.avg_leverage,
+                    "profile_limit": config.max_leverage,
+                },
             )
-        elif metrics.avg_leverage >= 6.0:
+        elif metrics.avg_leverage >= config.max_leverage * 0.75:
             add(
                 "elevated_leverage",
                 "medium",
                 4.0,
-                "Average leverage is close to the Balanced risk boundary.",
-                {"avg_leverage": metrics.avg_leverage},
+                "Average leverage is close to the selected portfolio limit.",
+                {
+                    "avg_leverage": metrics.avg_leverage,
+                    "profile_limit": config.max_leverage,
+                },
             )
 
-    if metrics.max_drawdown_pct is not None and metrics.max_drawdown_pct >= 30.0:
+    if (
+        metrics.max_drawdown_pct is not None
+        and metrics.max_drawdown_pct >= config.max_drawdown_pct * 0.8
+    ):
         add(
             "drawdown_near_limit",
             "medium",
             6.0,
-            "Max drawdown is near the Balanced hard limit.",
-            {"max_drawdown_pct": metrics.max_drawdown_pct},
+            "Max drawdown is near the selected portfolio limit.",
+            {
+                "max_drawdown_pct": metrics.max_drawdown_pct,
+                "profile_limit": config.max_drawdown_pct,
+            },
         )
 
     if metrics.avg_trades_per_day is not None:
-        if metrics.avg_trades_per_day >= 20.0:
+        if metrics.avg_trades_per_day >= config.max_avg_trades_per_day:
             add(
                 "copy_frequency_limit",
                 "high",
                 8.0,
                 "Trade frequency is high enough to make copying fragile.",
-                {"avg_trades_per_day": metrics.avg_trades_per_day},
+                {
+                    "avg_trades_per_day": metrics.avg_trades_per_day,
+                    "profile_limit": config.max_avg_trades_per_day,
+                },
             )
-        elif metrics.avg_trades_per_day >= 12.0:
+        elif metrics.avg_trades_per_day >= config.max_avg_trades_per_day * 0.6:
             add(
                 "elevated_trade_frequency",
                 "medium",
                 4.0,
                 "Trade frequency may increase missed fills and slippage.",
-                {"avg_trades_per_day": metrics.avg_trades_per_day},
+                {
+                    "avg_trades_per_day": metrics.avg_trades_per_day,
+                    "profile_limit": config.max_avg_trades_per_day,
+                },
             )
 
     if (

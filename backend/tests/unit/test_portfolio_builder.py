@@ -8,6 +8,7 @@ from app.services.portfolio.types import (
     RawTraderCandidate,
     ScoredCandidate,
     get_internal_alpha_relaxed_config,
+    get_portfolio_config,
 )
 
 
@@ -20,6 +21,7 @@ def _metrics(
     trade_count: int = 80,
     avg_leverage: float = 3.0,
     avg_trades_per_day: float = 4.0,
+    avg_position_size_usd: float | None = 4_000.0,
     daily_pnl_by_day: dict[str, float] | None = None,
 ) -> CandidateMetrics:
     return CandidateMetrics(
@@ -39,7 +41,7 @@ def _metrics(
         avg_trades_per_day=avg_trades_per_day,
         daily_pnl_std_dev=900.0,
         long_ratio_pct=52.0,
-        avg_position_size_usd=4_000.0,
+        avg_position_size_usd=avg_position_size_usd,
         fees_paid_usd=400.0,
         calmar_ratio=1.7,
         composite_score=composite_score,
@@ -173,17 +175,79 @@ def test_candidate_filters_reject_known_high_leverage_in_internal_alpha_mode() -
     assert result.rejected[0].reason_code == "leverage_too_high"
 
 
+def test_starter_rejects_hard_to_copy_small_positions() -> None:
+    config = get_portfolio_config("starter", "balanced")
+    result = apply_candidate_filters(
+        [_raw_candidate(1, metrics=_metrics(avg_position_size_usd=499.0))],
+        config,
+    )
+
+    assert result.eligible == ()
+    assert result.rejected[0].reason_code == "position_size_too_small"
+
+
+def test_starter_requires_position_size_metric() -> None:
+    config = get_portfolio_config("starter", "balanced")
+    result = apply_candidate_filters(
+        [_raw_candidate(1, metrics=_metrics(avg_position_size_usd=None))],
+        config,
+    )
+
+    assert result.eligible == ()
+    assert result.rejected[0].reason_code == "missing_metrics"
+    assert "avg_position_size_usd" in result.rejected[0].reason_text
+
+
+def test_risk_profiles_enforce_distinct_candidate_limits() -> None:
+    balanced_candidate = _raw_candidate(
+        1,
+        metrics=_metrics(
+            composite_score=75.0,
+            max_drawdown_pct=30.0,
+            active_trading_days=30,
+            avg_leverage=7.0,
+        ),
+    )
+    aggressive_only_candidate = _raw_candidate(
+        2,
+        metrics=_metrics(
+            composite_score=67.0,
+            max_drawdown_pct=45.0,
+            active_trading_days=25,
+            avg_leverage=12.0,
+        ),
+    )
+
+    conservative = apply_candidate_filters(
+        [balanced_candidate], RISK_PROFILE_CONFIGS["conservative"]
+    )
+    balanced = apply_candidate_filters(
+        [balanced_candidate], RISK_PROFILE_CONFIGS["balanced"]
+    )
+    aggressive = apply_candidate_filters(
+        [aggressive_only_candidate], RISK_PROFILE_CONFIGS["aggressive"]
+    )
+
+    assert conservative.eligible == ()
+    assert conservative.rejected[0].reason_code == "low_composite_score"
+    assert [candidate.trader_id for candidate in balanced.eligible] == [1]
+    assert [candidate.trader_id for candidate in aggressive.eligible] == [2]
+
+
 def test_portfolio_score_is_stable_and_preserves_source_facts() -> None:
     candidate = _candidate(1)
+    config = RISK_PROFILE_CONFIGS["balanced"]
 
-    first = score_candidate(candidate)
-    second = score_candidate(candidate)
+    first = score_candidate(candidate, config)
+    second = score_candidate(candidate, config)
 
     assert first.portfolio_score == second.portfolio_score
     assert first.score_snapshot == second.score_snapshot
     assert first.score_snapshot["source_metrics"]["composite_score"] == 82.0
     assert first.score_snapshot["component_scores"]["copyability_score"] > 0
     assert first.score_snapshot["methodology_version"] == "balanced-advanced-v2"
+    assert first.score_snapshot["selection_profile"] == "balanced"
+    assert sum(first.score_snapshot["score_weights"].values()) == 1.0
     assert first.score_snapshot["strategy_profile"]["strategy_bucket"]
     assert first.score_snapshot["anomaly_detection"]["severity"] in {
         "none",
@@ -204,13 +268,65 @@ def test_portfolio_score_applies_anomaly_penalty() -> None:
         ),
     )
 
-    scored = score_candidate(candidate)
+    scored = score_candidate(candidate, RISK_PROFILE_CONFIGS["balanced"])
 
     anomaly = scored.score_snapshot["anomaly_detection"]
     assert anomaly["severity"] == "medium"
     assert anomaly["penalty"] > 0
     assert any(flag["code"] == "short_history_high_roi" for flag in anomaly["flags"])
     assert scored.portfolio_score < scored.score_snapshot["base_portfolio_score"]
+
+
+def test_risk_profiles_apply_distinct_scoring_objectives() -> None:
+    candidate = _candidate(
+        1,
+        metrics=_metrics(roi_pct=50.0, max_drawdown_pct=18.0),
+    )
+
+    conservative = score_candidate(
+        candidate, RISK_PROFILE_CONFIGS["conservative"]
+    )
+    balanced = score_candidate(candidate, RISK_PROFILE_CONFIGS["balanced"])
+    aggressive = score_candidate(candidate, RISK_PROFILE_CONFIGS["aggressive"])
+    starter = score_candidate(candidate, get_portfolio_config("starter", "balanced"))
+
+    assert (
+        conservative.score_snapshot["score_weights"]["risk_adjusted_score"]
+        > balanced.score_snapshot["score_weights"]["risk_adjusted_score"]
+    )
+    assert (
+        aggressive.score_snapshot["score_weights"]["return_score"]
+        > balanced.score_snapshot["score_weights"]["return_score"]
+    )
+    assert (
+        starter.score_snapshot["score_weights"]["copyability_score"]
+        > balanced.score_snapshot["score_weights"]["copyability_score"]
+    )
+    assert starter.score_snapshot["selection_profile"] == "starter"
+
+
+def test_portfolio_config_rejects_invalid_starter_risk_profile() -> None:
+    try:
+        get_portfolio_config("starter", "aggressive")
+    except ValueError as exc:
+        assert str(exc) == "Starter portfolio must use balanced risk profile."
+    else:
+        raise AssertionError("Expected invalid Starter configuration to be rejected.")
+
+
+def test_starter_account_size_profiles_begin_at_minimum_equity() -> None:
+    config = get_portfolio_config("starter", "balanced")
+    candidates = tuple(
+        _scored_candidate(trader_id, 95.0 - trader_id)
+        for trader_id in range(1, 7)
+    )
+
+    result = optimize_portfolio(candidates, config)
+
+    account_profiles = result.summary["account_size_profiles"]
+    assert account_profiles[0]["tier"] == "starter"
+    assert account_profiles[0]["total_allocation_usd"] == 500.0
+    assert account_profiles[0]["low_allocation_trader_count"] == 0
 
 
 def test_optimizer_weights_sum_to_100_and_respect_max_weight() -> None:

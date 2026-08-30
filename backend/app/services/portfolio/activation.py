@@ -451,6 +451,12 @@ async def activate_user_portfolio_subscription(
     portfolio, version = await _load_published_version(
         db, data.portfolio_id, data.active_version_id
     )
+    minimum_equity = _decimal(portfolio.min_equity_usd)
+    if _total_allocation(data.total_allocation_usd) < minimum_equity:
+        raise ValueError(
+            "Portfolio allocation must be at least "
+            f"${minimum_equity.quantize(Decimal('0.01'))}."
+        )
     allocations = _sorted_allocations(version.allocations)
     _validate_allocations(allocations)
     conflicts = await detect_manual_live_conflicts(
@@ -458,6 +464,10 @@ async def activate_user_portfolio_subscription(
     )
 
     if not data.is_demo:
+        if not portfolio.live_enabled:
+            raise ValueError(
+                "Live activation is not enabled for this portfolio. Try demo mode."
+            )
         if conflicts:
             raise ValueError(
                 "Live activation has manual subscription conflicts that must be "

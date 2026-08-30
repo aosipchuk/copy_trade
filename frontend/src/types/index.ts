@@ -345,6 +345,7 @@ export interface ModelPortfolioListItem {
   name: string
   risk_profile: RiskProfile
   status: ModelPortfolioStatus
+  live_enabled: boolean
   description: string | null
   methodology_version: string
   rebalance_cadence: string

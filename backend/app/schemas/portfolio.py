@@ -41,6 +41,7 @@ class ModelPortfolioResponse(BaseModel):
     name: str
     risk_profile: RiskProfile
     status: ModelPortfolioStatus
+    live_enabled: bool
     description: str | None
     methodology_version: str
     rebalance_cadence: str

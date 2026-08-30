@@ -10,7 +10,7 @@ from app.schemas.portfolio import (
     ModelPortfolioVersionDetailResponse,
     PortfolioBacktestResponse,
 )
-from scripts.seed_model_portfolios import BALANCED_PORTFOLIO
+from scripts.seed_model_portfolios import BALANCED_PORTFOLIO, MODEL_PORTFOLIOS
 
 
 def test_portfolio_models_are_registered_in_metadata() -> None:
@@ -36,6 +36,10 @@ def test_portfolio_models_are_registered_in_metadata() -> None:
     assert subscription_columns.source_type.server_default is not None
     assert subscription_columns.managed_by_portfolio.server_default is not None
 
+    portfolio_columns = Base.metadata.tables["model_portfolios"].c
+    assert "live_enabled" in portfolio_columns
+    assert portfolio_columns.live_enabled.server_default is not None
+
 
 def test_portfolio_schema_serializes_orm_like_objects() -> None:
     now = datetime(2026, 7, 2, 12, 0, 0)
@@ -45,6 +49,7 @@ def test_portfolio_schema_serializes_orm_like_objects() -> None:
         name="Balanced",
         risk_profile="balanced",
         status="active",
+        live_enabled=True,
         description="Balanced model portfolio.",
         methodology_version="balanced-mvp-v1",
         rebalance_cadence="weekly",
@@ -59,6 +64,7 @@ def test_portfolio_schema_serializes_orm_like_objects() -> None:
 
     assert response.slug == "balanced"
     assert response.risk_profile == "balanced"
+    assert response.live_enabled is True
     assert response.monthly_price_usd == 19.0
 
 
@@ -141,3 +147,27 @@ def test_balanced_seed_matches_phase_zero_decisions() -> None:
     assert BALANCED_PORTFOLIO["status"] == "active"
     assert BALANCED_PORTFOLIO["monthly_price_usd"] == Decimal("19.00")
     assert BALANCED_PORTFOLIO["methodology_version"] == "balanced-mvp-v1"
+
+
+def test_model_portfolio_seed_catalog_is_complete() -> None:
+    assert [portfolio["slug"] for portfolio in MODEL_PORTFOLIOS] == [
+        "starter",
+        "conservative",
+        "balanced",
+        "aggressive",
+    ]
+    assert {portfolio["risk_profile"] for portfolio in MODEL_PORTFOLIOS} == {
+        "conservative",
+        "balanced",
+        "aggressive",
+    }
+    assert all(portfolio["status"] == "active" for portfolio in MODEL_PORTFOLIOS)
+    by_slug = {str(portfolio["slug"]): portfolio for portfolio in MODEL_PORTFOLIOS}
+    assert by_slug["balanced"]["live_enabled"] is True
+    assert by_slug["starter"]["live_enabled"] is False
+    assert by_slug["conservative"]["live_enabled"] is False
+    assert by_slug["aggressive"]["live_enabled"] is False
+    assert all(
+        "do not guarantee future" in str(portfolio["description"]).lower()
+        for portfolio in MODEL_PORTFOLIOS
+    )

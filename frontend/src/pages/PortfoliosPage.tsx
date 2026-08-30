@@ -2,7 +2,24 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchPortfolios } from '../api/portfolios'
 import { FullPageSpinner } from '../components/LoadingSpinner'
-import type { ModelPortfolioListItem, PortfolioBacktestSummary } from '../types'
+import type {
+  ModelPortfolioListItem,
+  PortfolioBacktestSummary,
+  RiskProfile,
+} from '../types'
+
+const portfolioOrder: Record<string, number> = {
+  starter: 0,
+  conservative: 1,
+  balanced: 2,
+  aggressive: 3,
+}
+
+const riskLabels: Record<RiskProfile, string> = {
+  conservative: 'Lower risk',
+  balanced: 'Balanced',
+  aggressive: 'High risk',
+}
 
 function money(value: number): string {
   return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
@@ -48,6 +65,12 @@ export function PortfoliosPage() {
     )
   }
 
+  const orderedPortfolios = [...portfolios].sort((left, right) => {
+    const leftOrder = portfolioOrder[left.slug] ?? Number.MAX_SAFE_INTEGER
+    const rightOrder = portfolioOrder[right.slug] ?? Number.MAX_SAFE_INTEGER
+    return leftOrder - rightOrder || left.name.localeCompare(right.name)
+  })
+
   return (
     <div className="h-full overflow-y-auto pb-20">
       <div className="px-4 pb-3 pt-4">
@@ -60,7 +83,7 @@ export function PortfoliosPage() {
         </div>
       ) : (
         <div className="space-y-3 px-4">
-          {portfolios.map((portfolio) => (
+          {orderedPortfolios.map((portfolio) => (
             <PortfolioCard key={portfolio.id} portfolio={portfolio} />
           ))}
         </div>
@@ -92,8 +115,15 @@ function PortfolioCard({ portfolio }: { portfolio: ModelPortfolioListItem }) {
               {portfolio.name}
             </h2>
             <span className="shrink-0 rounded-md bg-tg-button px-1.5 py-0.5 text-[10px] font-semibold uppercase text-tg-button-text">
-              {portfolio.risk_profile}
+              {portfolio.slug === 'starter'
+                ? 'Small account'
+                : riskLabels[portfolio.risk_profile]}
             </span>
+            {!portfolio.live_enabled && (
+              <span className="shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-600">
+                Demo only
+              </span>
+            )}
           </div>
           <p className="mt-1 text-xs text-tg-hint">
             {version
@@ -110,6 +140,12 @@ function PortfolioCard({ portfolio }: { portfolio: ModelPortfolioListItem }) {
           </div>
         </div>
       </div>
+
+      {portfolio.description && (
+        <p className="mb-3 text-xs leading-5 text-tg-hint">
+          {portfolio.description}
+        </p>
+      )}
 
       <div className="grid grid-cols-4 gap-2 text-center">
         <Metric label="Return" value={pct(backtest?.total_return_pct ?? null)} />

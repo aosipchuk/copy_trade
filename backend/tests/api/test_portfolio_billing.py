@@ -73,6 +73,7 @@ async def _seed_published_portfolio(db_session) -> SeededPortfolio:
         name=f"Balanced Billing {index}",
         risk_profile="balanced",
         status="active",
+        live_enabled=True,
         description="Balanced billing test portfolio.",
         methodology_version="balanced-mvp-v1",
         rebalance_cadence="weekly",
@@ -164,6 +165,53 @@ def _stripe_signature(payload: bytes, secret: str, timestamp: int | None = None)
 
 
 class TestPortfolioBillingGate:
+    async def test_demo_only_portfolio_status_disables_live_activation(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        portfolio = await db_session.get(ModelPortfolio, seed.portfolio_id)
+        assert portfolio is not None
+        portfolio.live_enabled = False
+        await db_session.commit()
+        headers, _ = await _auth_user(client, user_id=92007)
+
+        response = await client.get(
+            "/api/portfolio-subscriptions/billing/status",
+            params={
+                "portfolio_id": seed.portfolio_id,
+                "active_version_id": seed.version_id,
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["can_activate_live"] is False
+        assert body["message"] == (
+            "This portfolio is currently available in demo mode only."
+        )
+
+    async def test_demo_only_portfolio_rejects_checkout(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        portfolio = await db_session.get(ModelPortfolio, seed.portfolio_id)
+        assert portfolio is not None
+        portfolio.live_enabled = False
+        await db_session.commit()
+        headers, _ = await _auth_user(client, user_id=92008)
+
+        response = await client.post(
+            "/api/portfolio-subscriptions/billing/checkout",
+            json=_checkout_body(seed),
+            headers=headers,
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            "This portfolio is currently available in demo mode only."
+        )
+
     async def test_checkout_creates_live_billing_holder_without_generated_items(
         self, client, db_session, monkeypatch
     ) -> None:

@@ -55,6 +55,10 @@ class BillingPaymentRequiredError(ValueError):
     pass
 
 
+class PortfolioLiveDisabledError(ValueError):
+    pass
+
+
 def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
@@ -230,7 +234,9 @@ async def get_portfolio_billing_status(
     portfolio_id: int,
     active_version_id: int,
 ) -> PortfolioBillingStatusResponse:
-    await _load_published_portfolio(db, portfolio_id, active_version_id)
+    portfolio, _ = await _load_published_portfolio(
+        db, portfolio_id, active_version_id
+    )
     subscription = await _latest_live_billing_subscription(
         db,
         user.id,
@@ -242,13 +248,16 @@ async def get_portfolio_billing_status(
     paid = beta_override or is_paid_billing_status(
         subscription.status if subscription else None
     )
+    can_activate_live = portfolio.live_enabled and paid
     can_rebalance = paid and (
         beta_override
         or subscription is None
         or subscription.status not in REBALANCE_BLOCKING_STATUSES
     )
 
-    if beta_override:
+    if not portfolio.live_enabled:
+        message = "This portfolio is currently available in demo mode only."
+    elif beta_override:
         message = "Beta billing override is active for this Telegram account."
     elif subscription is None:
         message = "Payment is required before live model portfolio activation."
@@ -264,7 +273,7 @@ async def get_portfolio_billing_status(
         portfolio_id=portfolio_id,
         active_version_id=active_version_id,
         paid=paid,
-        can_activate_live=paid,
+        can_activate_live=can_activate_live,
         can_rebalance=can_rebalance,
         beta_override=beta_override,
         provider=_provider(subscription.billing_provider if subscription else None),
@@ -340,7 +349,13 @@ async def create_portfolio_billing_checkout(
     user: User,
     data: PortfolioBillingCheckoutCreate,
 ) -> PortfolioBillingCheckoutResponse:
-    await _load_published_portfolio(db, data.portfolio_id, data.active_version_id)
+    portfolio, _ = await _load_published_portfolio(
+        db, data.portfolio_id, data.active_version_id
+    )
+    if not portfolio.live_enabled:
+        raise PortfolioLiveDisabledError(
+            "This portfolio is currently available in demo mode only."
+        )
     await lock_user_portfolio_subscription_slot(
         db,
         user_id=user.id,

@@ -11,6 +11,7 @@ from app.services.portfolio.billing import (
     BillingConfigurationError,
     BillingProviderError,
     BillingSignatureError,
+    PortfolioLiveDisabledError,
     create_portfolio_billing_checkout,
     get_portfolio_billing_status,
     handle_stripe_webhook,
@@ -50,6 +51,10 @@ async def checkout(
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except PortfolioLiveDisabledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
     except BillingConfigurationError as exc:
         raise HTTPException(

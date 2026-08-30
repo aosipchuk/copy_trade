@@ -35,6 +35,7 @@ import type {
   PortfolioRebalanceEvent,
   PortfolioRebalancePreview,
   PortfolioWeeklyReport,
+  RiskProfile,
   UserPortfolioSubscriptionDetail,
 } from '../types'
 
@@ -51,6 +52,13 @@ function pct(value: number | null | undefined, signed = true): string {
 
 function ratio(value: number | null | undefined): string {
   return value == null ? 'n/a' : value.toFixed(2)
+}
+
+function portfolioBadgeLabel(slug: string, riskProfile: RiskProfile): string {
+  if (slug === 'starter') return 'Small account'
+  if (riskProfile === 'conservative') return 'Lower risk'
+  if (riskProfile === 'aggressive') return 'High risk'
+  return 'Balanced'
 }
 
 function dateText(value: string | null | undefined): string {
@@ -424,9 +432,14 @@ export function PortfolioDetailPage() {
             </p>
           </div>
           <div className="shrink-0 rounded-md bg-tg-button px-2 py-1 text-[10px] font-semibold uppercase text-tg-button-text">
-            {portfolio.risk_profile}
+            {portfolioBadgeLabel(portfolio.slug, portfolio.risk_profile)}
           </div>
         </div>
+        {portfolio.description && (
+          <p className="mt-3 text-xs leading-5 text-tg-hint">
+            {portfolio.description}
+          </p>
+        )}
       </div>
 
       <div className="space-y-4 px-4 pt-4">
@@ -440,26 +453,41 @@ export function PortfolioDetailPage() {
           onGenerate={handleGenerateWeeklyReport}
         />
         <PortfolioExplanationPanel explanations={explanations} />
-        <BillingPanel
-          portfolio={portfolio}
-          billingStatus={billingStatus}
-          busy={billingBusy}
-          error={billingError}
-          notice={billingNotice}
-          onCheckout={handleCreateCheckout}
-        />
-        <LiveActivationPanel
-          portfolio={portfolio}
-          portfolioSubscription={livePortfolioSubscription}
-          billingStatus={billingStatus}
-          walletStatus={walletStatus}
-          busy={liveActivationBusy}
-          error={liveActivationError}
-          notice={liveActivationNotice}
-          onActivate={handleActivateLive}
-          onCancel={handleCancelLive}
-          onWalletSetup={() => navigate('/wallet')}
-        />
+        {!portfolio.live_enabled && (
+          <section
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3"
+          >
+            <div className="text-sm font-semibold text-amber-600">Demo-first launch</div>
+            <p className="mt-1 text-xs leading-5 text-tg-hint">
+              This portfolio is available in demo mode while its execution quality and
+              risk limits are validated. Live activation will be enabled separately.
+            </p>
+          </section>
+        )}
+        {portfolio.live_enabled && (
+          <BillingPanel
+            portfolio={portfolio}
+            billingStatus={billingStatus}
+            busy={billingBusy}
+            error={billingError}
+            notice={billingNotice}
+            onCheckout={handleCreateCheckout}
+          />
+        )}
+        {(portfolio.live_enabled || livePortfolioSubscription != null) && (
+          <LiveActivationPanel
+            portfolio={portfolio}
+            portfolioSubscription={livePortfolioSubscription}
+            billingStatus={billingStatus}
+            walletStatus={walletStatus}
+            busy={liveActivationBusy}
+            error={liveActivationError}
+            notice={liveActivationNotice}
+            onActivate={handleActivateLive}
+            onCancel={handleCancelLive}
+            onWalletSetup={() => navigate('/wallet')}
+          />
+        )}
         {livePortfolioSubscription && livePortfolioSubscription.status !== 'canceled' && (
           <ExecutionStatusCard
             status={livePortfolioSubscription.execution_status}

@@ -276,6 +276,7 @@ def optimize_portfolio(
         selected, config.max_weight_pct
     )
     allocations: list[OptimizedAllocation] = []
+    profile_label = config.selection_profile.replace("_", " ").title()
     for index, candidate in enumerate(selected, start=1):
         trader_id = candidate.candidate.trader_id
         metrics = candidate.candidate.metrics
@@ -294,9 +295,9 @@ def optimize_portfolio(
                 sizing_mode="fixed_ratio",
                 max_per_coin_usd=None,
                 allowed_coins=None,
-                reason_code="balanced_advanced_score",
+                reason_code=f"{config.selection_profile}_advanced_score",
                 reason_text=(
-                    "Selected by deterministic Balanced advanced methodology: "
+                    f"Selected by deterministic {profile_label} methodology: "
                     f"portfolio_score={candidate.portfolio_score:.2f}, "
                     f"drawdown={metrics.max_drawdown_pct:.2f}%, "
                     f"avg_leverage={avg_leverage_text}."
@@ -322,10 +323,16 @@ def optimize_portfolio(
     if total_weight != 100.0:
         raise PortfolioOptimizationError(f"Optimized weights sum to {total_weight}%.")
 
-    account_size_profiles = build_account_size_profiles(allocations)
+    account_size_profiles = build_account_size_profiles(
+        allocations,
+        tiers=config.account_size_tiers,
+    )
     exposure_heatmap = build_exposure_heatmap(allocations)
     summary = {
         "risk_profile": config.risk_profile,
+        "selection_profile": config.selection_profile,
+        "methodology_version": config.methodology_version,
+        "score_weights": config.score_weights.as_dict(),
         "trader_count": len(allocations),
         "target_weight_sum_pct": total_weight,
         "max_weight_pct": config.max_weight_pct,

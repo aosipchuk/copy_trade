@@ -150,6 +150,7 @@ async def _seed_published_portfolio(db_session) -> SeededPortfolio:
         name=f"Balanced Activation {index}",
         risk_profile="balanced",
         status="active",
+        live_enabled=True,
         description="Balanced demo activation test portfolio.",
         methodology_version="balanced-mvp-v1",
         rebalance_cadence="weekly",
@@ -358,6 +359,23 @@ class TestDemoPortfolioActivation:
         )
 
         assert response.status_code == 401
+
+    async def test_rejects_allocation_below_portfolio_minimum(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        headers, _ = await _auth_user(client, user_id=91000)
+
+        response = await client.post(
+            "/api/portfolio-subscriptions",
+            headers=headers,
+            json=_activation_body(seed, total=999.99),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "Portfolio allocation must be at least $1000.00."
+        )
 
     async def test_demo_activation_creates_generated_subscriptions_and_items(
         self, client, db_session
@@ -791,6 +809,27 @@ class TestPortfolioRebalance:
 
 
 class TestLivePortfolioActivation:
+    async def test_live_activation_is_blocked_for_demo_only_portfolio(
+        self, client, db_session
+    ) -> None:
+        seed = await _seed_published_portfolio(db_session)
+        portfolio = await db_session.get(ModelPortfolio, seed.portfolio_id)
+        assert portfolio is not None
+        portfolio.live_enabled = False
+        await db_session.commit()
+        headers, _ = await _auth_user(client, user_id=91109)
+
+        response = await client.post(
+            "/api/portfolio-subscriptions",
+            json=_live_activation_body(seed),
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "Live activation is not enabled for this portfolio. Try demo mode."
+        )
+
     async def test_live_activation_requires_payment(self, client, db_session) -> None:
         seed = await _seed_published_portfolio(db_session)
         headers, user_id = await _auth_user(client, user_id=91101)
