@@ -110,9 +110,7 @@ async def _seed_portfolios(portfolios: tuple[JsonDict, ...]) -> list[int]:
 
             await db.flush()
             portfolio_ids.append(portfolio.id)
-            print(
-                f"model portfolio {action}: id={portfolio.id} slug={portfolio.slug}"
-            )
+            print(f"model portfolio {action}: id={portfolio.id} slug={portfolio.slug}")
     return portfolio_ids
 
 

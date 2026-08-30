@@ -234,9 +234,7 @@ async def get_portfolio_billing_status(
     portfolio_id: int,
     active_version_id: int,
 ) -> PortfolioBillingStatusResponse:
-    portfolio, _ = await _load_published_portfolio(
-        db, portfolio_id, active_version_id
-    )
+    portfolio, _ = await _load_published_portfolio(db, portfolio_id, active_version_id)
     subscription = await _latest_live_billing_subscription(
         db,
         user.id,

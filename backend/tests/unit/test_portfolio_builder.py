@@ -283,9 +283,7 @@ def test_risk_profiles_apply_distinct_scoring_objectives() -> None:
         metrics=_metrics(roi_pct=50.0, max_drawdown_pct=18.0),
     )
 
-    conservative = score_candidate(
-        candidate, RISK_PROFILE_CONFIGS["conservative"]
-    )
+    conservative = score_candidate(candidate, RISK_PROFILE_CONFIGS["conservative"])
     balanced = score_candidate(candidate, RISK_PROFILE_CONFIGS["balanced"])
     aggressive = score_candidate(candidate, RISK_PROFILE_CONFIGS["aggressive"])
     starter = score_candidate(candidate, get_portfolio_config("starter", "balanced"))
@@ -317,8 +315,7 @@ def test_portfolio_config_rejects_invalid_starter_risk_profile() -> None:
 def test_starter_account_size_profiles_begin_at_minimum_equity() -> None:
     config = get_portfolio_config("starter", "balanced")
     candidates = tuple(
-        _scored_candidate(trader_id, 95.0 - trader_id)
-        for trader_id in range(1, 7)
+        _scored_candidate(trader_id, 95.0 - trader_id) for trader_id in range(1, 7)
     )
 
     result = optimize_portfolio(candidates, config)
